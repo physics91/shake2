@@ -1,0 +1,29 @@
+# Copyrighted originals and everything extracted or rendered from them
+# (installers, archived site, game files, Shake1 art, gm.dls audio, fonts).
+# They stay local; see game/README.md.
+/original/wayback/
+/original/wayback_site/
+/original/extracted/
+/assets/
+/game/public/assets/
+
+# Dependencies and build output
+node_modules/
+/game/dist/
+
+# Local server data (the friends list holds player names)
+/game/data/
+
+# Tool caches and local agent output
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.benchmarks/
+/.playwright-mcp/
+
+# Task worktrees
+/.worktrees/
+
+# Local environment files
+.env
+.env.*

@@ -1,0 +1,1649 @@
+import type { Manifest } from "../assets/types.ts";
+import { cutBytes, typeable } from "../server/cp949.ts";
+import type { ClientMessage, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
+import { START_BARS, typingPacketDue } from "../server/protocol.ts";
+import {
+  chatLine,
+  fromWireState,
+  gameChatLine,
+  PROTOCOL_VERSION,
+  RANDOM_MAP,
+  ROOM_CHAT_LIMIT,
+} from "../server/protocol.ts";
+import { MAX_PLAYERS, MEDALS_TO_WIN } from "../sim/constants.ts";
+import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
+import { isTeamMode, MODE_NAMES, TEAM_COUNT, teamName } from "../sim/modes.ts";
+import type { GameMode, InputFrame, LevelLayout, MatchState, SimEvent } from "../sim/types.ts";
+import { teamColor } from "./hudLayout.ts";
+import type { MusicTrack } from "./audio.ts";
+import { loadImage } from "./assets.ts";
+import { CaretBlink } from "./chat.ts";
+import { ChatLine } from "./chatLine.ts";
+import { GameView } from "./gameView.ts";
+import { Balloons, closesExitBox, enterOpensChat, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
+import { FrameRate, PingMeter } from "./panelBars.ts";
+import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
+import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
+import { startPracticeGame } from "./practiceGame.ts";
+import type { ChatDraw } from "./renderer.ts";
+import { addReply, deleteReply } from "./friends.ts";
+import { connectedPad, padFrame } from "./gamepad.ts";
+import type { KeyBinding } from "./input.ts";
+import { attachKeyboard, boundCodes, KeyState, soloKeys, soloKeysHelp, VERSUS_KEYS } from "./input.ts";
+import { banSlot, ChatTimers, chatSubmit } from "./chatCommand.ts";
+import type { LocalPlayer } from "./localGame.ts";
+import { startLocalGame } from "./localGame.ts";
+import type { LocalLists } from "./localRoom.ts";
+import { answerLocal, LOCAL_IDS, localLists, localRoom, nextCharacter, VERSUS_RULES } from "./localRoom.ts";
+import { macroOpens, macroSlot } from "./macro.ts";
+import { mapChoices, mapTitle, portraitCanvas } from "./menu.ts";
+import type { MyProfile } from "./lobbyScreen.ts";
+import type { LobbyState } from "./lobbyView.ts";
+import { LobbyView } from "./lobbyView.ts";
+import { listedTrack, playWaitingMusic } from "./music.ts";
+import { MENU_SOUNDS } from "./presentation.ts";
+import { chatEntry, chatLineClass, kickLine, shownChat, usersLine, whisperAllowLine, whisperLines } from "./roomChat.ts";
+import { KICKED_TEXT, NOTICE } from "./roomLayout.ts";
+import { loadRoomAssets, RoomScreen } from "./roomScreen.ts";
+import { loadSceneAssets } from "./scene.ts";
+import { attachCapture } from "./screenCapture.ts";
+import type { GameScreen } from "./shell.ts";
+import { fadeOver, freezeCanvas } from "./screenKit.ts";
+import { gameScreen, mount, settings, sounds } from "./shell.ts";
+import { newSlide } from "./startLayout.ts";
+import type { ServerList, ServerRow, StartScene } from "./startScreen.ts";
+import { defaultServerUrl, StartView } from "./startView.ts";
+import { newStatusState } from "./statusScreen.ts";
+import { choiceGroup, h, readPreference, writePreference } from "./ui.ts";
+
+/** The match's keys as the option window set them. */
+function keysHelp(): string {
+  const { keys, control } = settings.current;
+  return (
+    `${soloKeysHelp(soloKeys(keys), control === 1)} · 채팅: Enter(보내기), Esc(취소), ↑(이전 줄), F2~F10(단축 메시지) · 도움말: F1 · ` +
+    "나가기: Esc(첫 라운드 대기 화면에서는 바로, 그 밖에는 손님만 확인 상자). 위의 나가기 버튼은 언제나 됩니다."
+  );
+}
+
+/** Practice's keys (scene 9), for the screen reader's key help. */
+function practiceKeysHelp(): string {
+  const { keys, control } = settings.current;
+  return `${soloKeysHelp(soloKeys(keys), control === 1)} · 채팅: Enter(보내기 Enter, 취소 Esc), F2~F10(단축 메시지) · 종료 상자: Esc · 도움말: F1 · 상자: ←/→와 Enter, Y/N 또는 마우스`;
+}
+
+/** Two players on one keyboard (VERSUS_KEYS). */
+const VERSUS_KEYS_HELP = `1P: WASD · 폭탄 Space(왼쪽 Shift) · 공격용 Q · 회피용 E / 2P: 방향키 · 폭탄 Enter(오른쪽 Shift) · 공격용 오른쪽 Ctrl(.) · 회피용 ,(쉼표) · 먼저 ${MEDALS_TO_WIN}승 · 나가기: Esc`;
+
+/** The server list's row for two players on this PC, under the server's (AGENTS.md: a remake row, R). */
+const LOCAL_ROW: ServerRow = { name: "2인 대전", load: 0, ping: 0, local: true };
+
+/** The logo and loading have shown in this page load. */
+let startShown = false;
+/** The load query's wait; the original's thread has none. */
+const QUERY_TIMEOUT_MS = 5000;
+/** 0x46abbc. */
+const NETWORK_PROBLEM = "network problem!";
+
+/** The row's name when the server does not answer: its address. */
+function serverName(url: string): string {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
+interface Welcome {
+  playerId: number;
+  maps: { id: string; title: string }[];
+  music: string[];
+}
+
+/** Keep what the room's editors take: cp949 text under `limit` bytes. */
+function fitBytes(input: HTMLInputElement, limit: number): void {
+  const kept = cutBytes(typeable(input.value), limit - 1);
+  if (kept !== input.value) input.value = kept;
+}
+
+/** Online mode: connection, lobby/room screens and the snapshot-driven game screen. */
+export function mountOnline(manifest: Manifest): () => void {
+  const session = new OnlineSession(manifest);
+  session.showStart();
+  return () => session.dispose();
+}
+
+class OnlineSession {
+  private readonly manifest: Manifest;
+  private socket: WebSocket | null = null;
+  private welcome: Welcome | null = null;
+  private lobby: LobbyState | null = null;
+  /** Left the room for "network problem!"; its news is ignored until the server lets go of it. */
+  private leftForProblem = false;
+  /** Put out of the room (S->C 0x44): its screen stays under the message box until that closes. */
+  private kicked = false;
+  private lobbyView: LobbyView | null = null;
+  /** The lobby's chat log (listbox 0x48c220), apart from the room's; cleared on each entry (0x418c60). */
+  private lobbyLog: string[] = [];
+  /** WAIT GAME: off on logging in, kept on the way back from a room (0x448c50, 0x449e50). */
+  private lobbyWaitingOnly = false;
+  /** The next lobby is the first since hello: it shows the F1 notice, a room's return does not. */
+  private firstLobby = true;
+  private room: RoomInfo | null = null;
+  private roomView: RoomView | null = null;
+  /** The room's chat log: kept across a match, cleared on create or join (0x418c60). */
+  private chatLog: string[] = [];
+  /** One set of send timers for the canvas line and the page's chat form (0x446200). */
+  private readonly timers = new ChatTimers();
+  /** The last room request, so a joiner gets the F1 notice (a creator does not, 0x444ddc). */
+  private lastAct: ClientMessage["type"] | null = null;
+  private game: OnlineGame | null = null;
+  private startView: StartView | null = null;
+  /** The server list's slide, rows and choice, kept like the original's statics. */
+  private readonly list: ServerList = { slide: newSlide(), rows: [], selected: -1 };
+  /** Scene 5's character, check and guild list place, kept like the original's statics. */
+  private readonly status = newStatusState(readPreference("p1"));
+  /** The list is fading out toward the lobby. */
+  private leavingStart = false;
+  /** The my-info window's data: the character as sent in hello, the rest kept by this browser. */
+  private profile: MyProfile = { character: "", greeting: "", useId: false };
+  private errorLine: HTMLElement | null = null;
+  private disposed = false;
+  /** The fade over the screen mounted last (screenKit.fadeOver). */
+  private stopVeil: (() => void) | null = null;
+  /** Two players on one PC: the room kept in the page, whose choices last the session, and its chat. */
+  private local: { room: RoomInfo; lists: LocalLists; log: string[] } | null = null;
+  /** Practice or a two-player match running on this PC. */
+  private localGame: { stop(): void } | null = null;
+
+  constructor(manifest: Manifest) {
+    this.manifest = manifest;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.stopVeil?.();
+    this.stopGame();
+    this.socket?.close();
+    this.socket = null;
+  }
+
+  // Screens
+
+  /**
+   * The start (logo 0xe → loading 1 → login 3 → server list 2). The logo and loading show once a
+   * page load, as once a program start; later entries begin at the login.
+   */
+  showStart(options: { begin?: StartScene; fadeFrom?: HTMLCanvasElement; message?: string } = {}): void {
+    this.stopVeil?.();
+    this.roomView?.dispose();
+    this.roomView = null;
+    this.lobbyView?.dispose();
+    this.lobbyView = null;
+    this.startView?.dispose();
+    const begin = options.begin ?? (startShown ? "login" : "logo");
+    startShown = true;
+    this.startView = new StartView({
+      manifest: this.manifest,
+      list: this.list,
+      status: this.status,
+      begin,
+      fadeFrom: options.fadeFrom,
+      message: options.message,
+      actions: {
+        startMusic: () => playWaitingMusic(sounds, this.manifest, "lobby"),
+        loggedIn: (id) => writePreference("online.name", id),
+        listServers: () => this.listServer(),
+        practice: (character) => this.startPractice(character),
+        saveProfile: ({ nick, greeting }) => {
+          writePreference("online.name", nick);
+          writePreference("online.greeting", greeting);
+        },
+        characterChanged: (character) => writePreference("p1", character),
+        connect: () => {
+          if (this.list.rows[this.list.selected]?.local) this.openLocalRoom();
+          else this.enter(this.helloProfile());
+        },
+        local: () => this.openLocalRoom(),
+        enter: (profile) => {
+          writePreference("online.name", profile.name);
+          writePreference("p1", profile.character);
+          this.enter({ name: profile.name || "플레이어", character: profile.character });
+        },
+        // A page cannot close its window: the program starts over, silent, from its logo.
+        exit: () => {
+          sounds.stopMusic();
+          this.showStart({ begin: "logo" });
+        },
+      },
+    });
+    this.errorLine = this.startView.errorLine;
+    mount(this.startView.root);
+  }
+
+  /** Scene 5's Go game: the rows' load and ping zeroed and asked for, as the login's reply does (0x448be3). */
+  private listServer(): void {
+    this.list.rows = [{ name: serverName(this.serverUrl), load: 0, ping: 0 }, { ...LOCAL_ROW }];
+    this.list.selected = -1;
+    this.queryServer();
+  }
+
+  /**
+   * The load query (thread 0x448410): its own connection, one question, the ping from the send to
+   * the answer. Every failure shows as the connect failure's (−1 ms, 1000 %), which keeps the row
+   * selectable so that connecting tells what is wrong.
+   */
+  private queryServer(): void {
+    const url = this.serverUrl;
+    const fallback = serverName(url);
+    let answered = false;
+    let socket: WebSocket | null = null;
+    const report = (row: ServerRow) => {
+      if (answered) return;
+      answered = true;
+      clearTimeout(timer);
+      socket?.close();
+      this.list.rows[0] = row;
+      this.startView?.serverInfo(row);
+    };
+    const fail = () => report({ name: fallback, load: 1000, ping: -1 });
+    const timer = setTimeout(fail, QUERY_TIMEOUT_MS);
+    try {
+      socket = new WebSocket(url);
+    } catch {
+      fail();
+      return;
+    }
+    let sentAt = 0;
+    socket.addEventListener("open", () => {
+      sentAt = performance.now();
+      socket?.send(JSON.stringify({ type: "server-info" } satisfies ClientMessage));
+    });
+    socket.addEventListener("message", (event) => {
+      try {
+        const message = JSON.parse(String(event.data)) as ServerMessage;
+        if (message.type === "server-info") report({ name: message.name || fallback, load: message.load, ping: Math.round(performance.now() - sentAt) });
+      } catch {
+        fail();
+      }
+    });
+    socket.addEventListener("close", fail);
+  }
+
+  private get serverUrl(): string {
+    const url = this.startView?.serverUrl ?? readPreference("online.server") ?? defaultServerUrl();
+    writePreference("online.server", url);
+    return url;
+  }
+
+  /** hello's name and character: the login's ID and the character the my-info window saved. */
+  private helloProfile(): { name: string; character: string } {
+    let character = readPreference("p1") ?? "bobo";
+    if (!this.manifest.characters.includes(character)) character = this.manifest.characters[0];
+    return { name: readPreference("online.name") || "플레이어", character };
+  }
+
+  private showRoom(room: RoomInfo): void {
+    const welcome = this.welcome;
+    if (!welcome) return;
+    if (this.roomView?.code !== room.code) {
+      const entering = this.roomView === null && this.lastAct === "join-room";
+      this.lastAct = null;
+      const from = this.shownPicture();
+      this.lobbyView?.dispose();
+      this.lobbyView = null;
+      this.roomView?.dispose();
+      this.roomView = new RoomView(this.manifest, welcome, room, this.chatLog, {
+        send: (message) => this.send(message),
+        say: (text) => this.say(text),
+        kickedOut: () => this.leaveKicked(),
+      });
+      if (entering) this.roomView.showNotice(NOTICE.joinText);
+      this.errorLine = this.roomView.errorLine;
+      mount(this.roomView.root);
+      // Create, join (0x444e4b, 0x449e1b) and the final result's return (0x44fc09) fade.
+      this.fadeTo(this.roomView.root, from);
+      playWaitingMusic(sounds, this.manifest, "room");
+    }
+    this.roomView.update(room);
+  }
+
+  /**
+   * The lobby (scene 4): shown after hello and on leaving a room (0x449fa6). From the server list
+   * it comes with the fade (0x449172): the list fades out, the lobby fades in.
+   */
+  private showLobby(fadeIn = false, music = true): void {
+    // Put out of a room, the lobby waits for the message box (0x44a1db).
+    if (this.kicked) return;
+    const { welcome, lobby } = this;
+    if (!welcome || !lobby || this.room || this.game) return;
+    if (this.lobbyView) {
+      this.lobbyView.update(lobby);
+      return;
+    }
+    const startView = this.startView;
+    if (startView) {
+      if (this.leavingStart) return;
+      this.leavingStart = true;
+      this.lobbyLog = [];
+      startView.leave(() => {
+        this.leavingStart = false;
+        if (this.startView !== startView) return;
+        startView.dispose();
+        this.startView = null;
+        this.showLobby(true);
+      });
+      return;
+    }
+    // From a room or a match: the leave reply (0x44a015) and EXITGAME (0x44f8f9) fade.
+    const from = fadeIn ? null : this.shownPicture();
+    this.roomView?.dispose();
+    this.roomView = null;
+    // Chat that came during the fade from the list is kept; a room's return starts empty (0x449e50).
+    if (!fadeIn) this.lobbyLog = [];
+    this.lobbyView = new LobbyView(welcome, lobby, this.lobbyLog, this.lobbyWaitingOnly, {
+      send: (message) => this.send(message),
+      say: (text) => this.say(text),
+      exit: (askServers) => this.exit(askServers),
+      filterChanged: (waitingOnly) => {
+        this.lobbyWaitingOnly = waitingOnly;
+      },
+      profile: this.profile,
+      saveCharacter: (character) => this.send({ type: "set-character", character }),
+      profileChanged: () => {
+        writePreference("online.greeting", this.profile.greeting);
+        writePreference("online.useId", this.profile.useId ? "1" : "0");
+      },
+      settings,
+    }, fadeIn);
+    if (this.firstLobby) this.lobbyView.showNotice(NOTICE.joinText);
+    this.firstLobby = false;
+    this.errorLine = this.lobbyView.errorLine;
+    mount(this.lobbyView.root);
+    if (!fadeIn) this.fadeTo(this.lobbyView.root, from);
+    if (music) playWaitingMusic(sounds, this.manifest, "lobby");
+  }
+
+  /**
+   * EXIT (0x459d4b), 채널변경 (0x459b2c) or Esc (0x46181e): disconnect and fade back to the server
+   * list. EXIT alone then zeroes every row's load and ping and asks again (0x459d94); the others keep them.
+   */
+  private exit(askServers: boolean): void {
+    const socket = this.socket;
+    this.socket = null;
+    this.welcome = null;
+    this.lobby = null;
+    this.room = null;
+    socket?.close();
+    this.backToList(undefined, askServers);
+  }
+
+  /** Scene 2 with fade(1) from whatever screen is up (0x459d8c, FD_CLOSE 0x460eb7); the row let go. */
+  private backToList(message?: string, askServers = false): void {
+    const fadeFrom = this.shownPicture() ?? undefined;
+    this.stopGame();
+    this.list.selected = -1;
+    this.showStart({ begin: "servers", fadeFrom, message });
+    // The page's form skips the login that fills the list; the row is still needed to connect again.
+    if (this.list.rows.length === 0) this.listServer();
+    else if (askServers) {
+      for (const row of this.list.rows) Object.assign(row, { load: 0, ping: 0 });
+      this.queryServer();
+    }
+  }
+
+  /** A line typed in the lobby or the room (0x446200): chat, or a command. */
+  private say(text: string): void {
+    const line = chatLine(text);
+    if (line === null) return;
+    const now = performance.now();
+    const submit = chatSubmit(line, this.room !== null);
+    switch (submit.kind) {
+      case "chat":
+        if (this.timers.chat(submit.text, now)) this.send({ type: "chat", text: submit.text });
+        break;
+      case "whisper":
+        if (this.timers.whisper(now) && submit.line) this.send({ type: "whisper", ...submit.line });
+        break;
+      case "clear":
+        this.clearChat();
+        break;
+      case "users":
+        if (this.timers.users(now)) this.send({ type: "users" });
+        break;
+      case "whisper-allow":
+        this.send({ type: "whisper-allow", on: submit.on });
+        break;
+      case "go":
+        this.send({ type: "join-number", number: submit.index });
+        break;
+      case "ban":
+        this.ban(submit.name);
+        break;
+    }
+  }
+
+  /** /ban (0x4464e3): the room's host only; the first slot whose ID matches, and the busy cursor (0x4465ae). */
+  private ban(name: string): void {
+    const room = this.room;
+    if (!room || this.game || room.hostId !== this.welcome?.playerId) return;
+    const slot = banSlot(room.players, name);
+    if (slot === null) return;
+    this.send({ type: "kick", slot });
+    this.roomView?.waitForKick();
+  }
+
+  /** S->C 0x44 (0x44a040): for the own slot the message box, for another its line; the room's update drops the slot. */
+  private kickArrived(slot: number): void {
+    const out = this.room?.players.find((p) => p.slot === slot);
+    if (!out) return;
+    if (out.id === this.welcome?.playerId) {
+      this.kicked = true;
+      this.roomView?.showKicked();
+    } else {
+      this.addLine(kickLine(out.name));
+    }
+  }
+
+  /**
+   * The kick notice's button or Esc (0x4588f3, 0x461686): the lobby's lists asked again with both
+   * logs cleared (0x44b2b0), then the lobby with the fade; no music call, so the room's tune plays on.
+   */
+  private leaveKicked(): void {
+    if (!this.kicked) return;
+    this.kicked = false;
+    this.room = null;
+    this.chatLog = [];
+    this.showLobby(false, false);
+  }
+
+  /** /cls, /clear (0x418c60): the lobby's log and the room's, both. */
+  private clearChat(): void {
+    this.lobbyLog.length = 0;
+    this.chatLog.length = 0;
+    this.lobbyView?.clearChat();
+    this.roomView?.clearChat();
+  }
+
+  /** CHAT_addLine (0x418a80): to the lobby's log in the lobby, the room's in the room; lost anywhere else. */
+  private addLine(line: string): void {
+    if (this.game) return;
+    if (this.roomView) {
+      this.chatLog.push(line);
+      this.roomView.addChat(line);
+    } else if (this.lobbyView) {
+      this.lobbyLog.push(line);
+      this.lobbyView.addChat(line);
+    }
+  }
+
+  private showError(text: string): void {
+    if (this.errorLine) this.errorLine.textContent = text;
+  }
+
+  // Connection
+
+  /** Connect and send hello (0x4441c0, C->S 0x47/0x0a); the server answers with welcome, then the lobby. */
+  private enter(profile: { name: string; character: string }): void {
+    const url = this.serverUrl;
+    sounds.unlock();
+    this.showError("");
+    const hello: ClientMessage = { type: "hello", version: PROTOCOL_VERSION, ...profile };
+    this.profile.character = profile.character;
+    this.profile.greeting = readPreference("online.greeting") ?? "";
+    this.profile.useId = readPreference("online.useId") === "1";
+    this.firstLobby = true;
+    this.lobbyWaitingOnly = false;
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.send(hello);
+      return;
+    }
+    if (this.socket) return; // still connecting; hello goes out on open
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(url);
+    } catch (error) {
+      this.showError(`서버 주소가 올바르지 않습니다: ${(error as Error).message}`);
+      this.startView?.connectFailed();
+      return;
+    }
+    this.socket = socket;
+    this.showError("서버에 연결하는 중…");
+    let opened = false;
+    socket.addEventListener("open", () => {
+      opened = true;
+      this.showError("");
+      this.send(hello);
+    });
+    socket.addEventListener("message", (event) => {
+      try {
+        this.receive(JSON.parse(String(event.data)) as ServerMessage);
+      } catch (error) {
+        console.error("bad server message", error);
+      }
+    });
+    socket.addEventListener("close", () => {
+      if (this.socket !== socket) return;
+      this.socket = null;
+      this.welcome = null;
+      this.lobby = null;
+      this.room = null;
+      this.leftForProblem = false;
+      this.kicked = false;
+      this.leavingStart = false;
+      if (this.disposed) return;
+      // FD_CONNECT's error (0x460edc), or FD_CLOSE (0x460dbe) on the list or on any later screen.
+      if (this.startView) {
+        if (opened) this.startView.disconnected();
+        else this.startView.connectFailed();
+        return;
+      }
+      this.backToList("서버로 부터 접속이\n끊어졌습니다");
+    });
+  }
+
+  private send(message: ClientMessage): void {
+    // Out of the room, nothing more goes from its screen; the page's leave button closes the notice.
+    if (this.kicked) {
+      if (message.type === "leave-room") this.leaveKicked();
+      return;
+    }
+    if (message.type === "create-room" || message.type === "join-room" || message.type === "join-number") {
+      this.lastAct = message.type === "create-room" ? "create-room" : "join-room";
+      // SEND_create and SEND_join (0x448790, 0x448800) lock the input and show the busy cursor until the answer.
+      this.lobbyView?.waitForRoom();
+    }
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
+  }
+
+  private receive(message: ServerMessage): void {
+    if (this.disposed) return;
+    // Any data from the host resets its silence clock (0x4471d3); the server is the host here.
+    this.game?.heard(performance.now());
+    switch (message.type) {
+      case "welcome":
+        this.welcome = { playerId: message.playerId, maps: message.maps, music: message.music };
+        break;
+      case "lobby":
+        // Lobby news goes only to players in no room: the room left for "network problem!" is gone.
+        this.leftForProblem = false;
+        this.lobby = { channel: message.channel, rooms: message.rooms, users: message.users };
+        this.showLobby();
+        break;
+      case "lobby-chat":
+        this.lobbyLog.push(chatEntry({ kind: "talk", name: message.name, text: message.text }));
+        this.lobbyView?.addChat(this.lobbyLog.at(-1)!);
+        break;
+      case "room-info":
+        this.lobbyView?.showRoomInfo(message);
+        break;
+      case "friends":
+        this.lobbyView?.friendsAnswered(message.friends);
+        break;
+      case "friend-added":
+        this.lobbyView?.friendReplied(addReply(message.result, message.name));
+        break;
+      case "friend-deleted":
+        this.lobbyView?.friendReplied(deleteReply(message.result, message.name));
+        break;
+      case "whisper":
+        for (const line of whisperLines(message.from, message.text)) this.addLine(line);
+        break;
+      case "users":
+        this.addLine(usersLine(message.count));
+        break;
+      case "whisper-allowed":
+        this.addLine(whisperAllowLine(message.on));
+        break;
+      case "kick":
+        // S->C 0x44 (0x4452e0): the busy cursor goes off whatever it says.
+        this.roomView?.refused();
+        if (message.ok) this.kickArrived(message.slot);
+        break;
+      case "profile":
+        this.profile.character = message.character;
+        writePreference("p1", message.character);
+        this.lobbyView?.profileSaved();
+        break;
+      case "room":
+        // Put out, the room's screen stays under the message box; the server has let go of the player.
+        if (this.kicked) {
+          if (!message.room) this.room = null;
+          break;
+        }
+        // After "network problem!" the room stays left, whatever the server still says of it.
+        if (this.leftForProblem) {
+          if (message.room) break;
+          this.leftForProblem = false;
+        }
+        if (message.room && message.room.code !== this.room?.code) this.chatLog = [];
+        this.room = message.room;
+        if (!message.room) {
+          this.stopGame();
+          this.showLobby();
+        } else if (!this.game) {
+          this.showRoom(message.room);
+        } else {
+          this.game.hostChanged(message.room.hostId);
+        }
+        break;
+      case "match-start":
+        if (this.room && this.welcome) this.startGame(message.layout, message.music, this.room, this.welcome.playerId);
+        break;
+      case "snapshot":
+        this.game?.snapshot(message.state, message.events, message.typing, message.bars);
+        break;
+      case "pong":
+        this.game?.pong(message.at);
+        break;
+      case "game-chat":
+        this.game?.chatReceived(message.playerId, message.text);
+        break;
+      case "chat":
+        // Room lines that come during a match are lost (0x444e9b, 0x418a80).
+        if (this.game) break;
+        this.chatLog.push(chatEntry(message));
+        this.roomView?.addChat(this.chatLog.at(-1)!);
+        break;
+      case "match-end":
+        this.stopGame();
+        if (this.room) this.showRoom(this.room);
+        break;
+      case "error":
+        // hello refused (S->C 0x0a's failure, 0x444b58): the message, the row let go, the socket gone.
+        if (this.startView && !this.welcome) {
+          const socket = this.socket;
+          this.socket = null;
+          socket?.close();
+          this.startView.refused(message.message);
+          break;
+        }
+        this.showError(message.message);
+        this.lobbyView?.showMessage(message.message);
+        // In the room the server's refusals come as system lines of the chat log (0x44a260).
+        if (this.roomView) {
+          this.chatLog.push(`sys${message.message}`);
+          this.roomView.addChat(this.chatLog.at(-1)!);
+          this.roomView.refused();
+        }
+        break;
+    }
+  }
+
+  private startGame(layout: LevelLayout, music: number, room: RoomInfo, playerId: number): void {
+    const from = this.shownPicture();
+    this.stopGame();
+    this.roomView?.dispose();
+    this.roomView = null;
+    const screen = gameScreen(`온라인 대전 · 방 ${room.code}`, keysHelp(), () => this.send({ type: "leave-room" }));
+    this.errorLine = null;
+    mount(screen.root);
+    // 0x44a424: the room's last frame stays while the world loads, then fades to the wait screen.
+    this.fadeTo(screen.root, from);
+    const track = listedTrack(this.manifest, this.welcome?.music ?? [], music);
+    this.game = new OnlineGame(screen, layout, room, playerId, track, (message) => this.send(message), () => this.networkProblem());
+  }
+
+  private stopGame(keepMusic = false): void {
+    this.game?.stop(keepMusic);
+    this.game = null;
+    this.localGame?.stop();
+  }
+
+  // This PC: practice and two players on one keyboard
+
+  /**
+   * Practice (0x4542d0, scene 9) with the character scene 5 chose. Its Esc box's YES goes to the
+   * server list (0x458bc5) and its time limit to scene 5 (0x406235), each with the fade.
+   */
+  private startPractice(character: string): void {
+    this.runLocal("혼자 연습", practiceKeysHelp(), this.shownPicture(), () => this.backToList(), (screen, finish) =>
+      startPracticeGame({
+        canvas: screen.canvas,
+        local: { id: 1, name: readPreference("online.name") || "1P", character },
+        sounds,
+        settings: settings.current,
+        announce: screen.announce,
+        onExit: () => finish(() => this.backToList()),
+        onTimeUp: () => finish(() => this.backToStatus()),
+      }),
+    );
+  }
+
+  /** Practice's time limit (0x406224): scene 5 again (0x41f030) with the fade. */
+  private backToStatus(): void {
+    const fadeFrom = this.shownPicture() ?? undefined;
+    this.stopGame();
+    this.showStart({ begin: "status", fadeFrom });
+  }
+
+  /** The "2인 대전" row chosen twice: the list fades out and the room in, as 2→4 does for the lobby. */
+  private openLocalRoom(): void {
+    const startView = this.startView;
+    if (!startView) {
+      this.showLocalRoom(this.shownPicture());
+      return;
+    }
+    if (this.leavingStart) return;
+    this.leavingStart = true;
+    startView.leave(() => {
+      this.leavingStart = false;
+      if (this.startView !== startView) return;
+      startView.dispose();
+      this.startView = null;
+      this.showLocalRoom(null);
+    });
+  }
+
+  /** The local room on the GAME ROOM screen, faded in from `from` (or from black). */
+  private showLocalRoom(from: HTMLCanvasElement | null): void {
+    const saved = (key: string, fallback: string) => {
+      const name = readPreference(key) ?? fallback;
+      return this.manifest.characters.includes(name) ? name : this.manifest.characters[0];
+    };
+    const lists = localLists(this.manifest);
+    this.local ??= { lists, room: localRoom(lists, [saved("p1", "bobo"), saved("p2", "doona")]), log: [] };
+    const local = this.local;
+    const welcome: Welcome = { playerId: LOCAL_IDS[0], maps: local.lists.maps, music: local.lists.music };
+    this.roomView?.dispose();
+    this.roomView = new RoomView(this.manifest, welcome, structuredClone(local.room), local.log, {
+      send: (message) => this.localSend(message),
+      say: (text) => this.localSay(text),
+      kickedOut: () => undefined,
+      pickCharacter: (slot) => this.pickLocalCharacter(slot),
+    });
+    this.errorLine = this.roomView.errorLine;
+    mount(this.roomView.root);
+    this.fadeTo(this.roomView.root, from);
+    playWaitingMusic(sounds, this.manifest, "room");
+  }
+
+  /** What the room's screen sends, answered as the server's room would (localRoom.ts). */
+  private localSend(message: ClientMessage): void {
+    const local = this.local;
+    if (!local) return;
+    const answer = answerLocal(local.room, local.lists, message);
+    // A refusal also ends the busy cursor a slot click set.
+    if (!answer) this.roomView?.refused();
+    else if (answer.kind === "changed") this.roomView?.update(structuredClone(local.room));
+    else if (answer.kind === "start") this.startLocalMatch(answer.mapId, answer.music);
+    else {
+      // The EXIT box's YES: back to the server list, with the waiting tune of the list (0x460add).
+      this.backToList();
+      playWaitingMusic(sounds, this.manifest, "lobby");
+    }
+  }
+
+  /** The room's chat stays on this PC: 1P speaks, and /cls clears the log. */
+  private localSay(text: string): void {
+    const local = this.local;
+    const line = chatLine(text);
+    if (!local || line === null) return;
+    const submit = chatSubmit(line, true);
+    if (submit.kind === "clear") {
+      local.log = [];
+      this.roomView?.clearChat();
+      return;
+    }
+    if (submit.kind !== "chat" || !this.timers.chat(submit.text, performance.now())) return;
+    const entry = chatEntry({ kind: "talk", name: local.room.players[0].name, text: submit.text });
+    local.log.push(entry);
+    this.roomView?.addChat(entry);
+  }
+
+  /** A seated slot clicked: that player's next character, kept for the next time (R). */
+  private pickLocalCharacter(slot: number): void {
+    const local = this.local;
+    const player = local?.room.players.find((p) => p.slot === slot);
+    if (!local || !player) return;
+    player.character = nextCharacter(this.manifest.characters, player.character);
+    writePreference(slot === 0 ? "p1" : "p2", player.character);
+    // The secondary click, as scene 5's character arrows sound (0x26).
+    sounds.play(MENU_SOUNDS.secondary);
+    this.roomView?.update(structuredClone(local.room));
+  }
+
+  /** START: the room fades to the match; its end (5 s into the final result) or Esc fades back to the room. */
+  private startLocalMatch(mapId: string, music: number): void {
+    const local = this.local;
+    if (!local) return;
+    const from = this.shownPicture();
+    this.roomView?.dispose();
+    this.roomView = null;
+    const players: LocalPlayer[] = local.room.players.map((p, i) => ({
+      setup: { id: p.id, name: p.name, character: p.character },
+      binding: VERSUS_KEYS[i],
+    }));
+    const back = () => this.showLocalRoom(this.shownPicture());
+    this.runLocal("2인 대전", VERSUS_KEYS_HELP, from, back, (screen, finish) =>
+      startLocalGame({
+        canvas: screen.canvas,
+        levelId: mapId,
+        players,
+        rules: VERSUS_RULES,
+        sounds,
+        music: listedTrack(this.manifest, local.lists.music, music),
+        announce: screen.announce,
+        onExit: () => finish(back),
+      }),
+    );
+  }
+
+  /**
+   * A game screen for a match on this PC, faded in from `from`. `start` runs it and calls `finish`
+   * with what comes next when it ends; the page's hidden exit button finishes it with `leave`.
+   */
+  private runLocal(
+    title: string,
+    keys: string,
+    from: HTMLCanvasElement | null,
+    leave: () => void,
+    start: (screen: GameScreen, finish: (then: () => void) => void) => Promise<() => void>,
+  ): void {
+    this.stopGame();
+    this.startView?.dispose();
+    this.startView = null;
+    let running: (() => void) | null = null;
+    let over = false;
+    const finish = (then: () => void) => {
+      if (over) return;
+      over = true;
+      running?.();
+      if (this.localGame === entry) this.localGame = null;
+      then();
+    };
+    const entry = { stop: () => finish(() => undefined) };
+    const screen = gameScreen(title, keys, () => finish(leave));
+    this.localGame = entry;
+    this.errorLine = null;
+    mount(screen.root);
+    this.fadeTo(screen.root, from);
+    start(screen, finish).then(
+      (stop) => {
+        if (over) stop();
+        else {
+          running = stop;
+          screen.loaded();
+        }
+      },
+      (error: unknown) => screen.failed(`시작하지 못했습니다: ${(error as Error).message}`),
+    );
+  }
+
+  /**
+   * The host silent 5 s in play (0x40bf99-0x40c003): leave the room (C->S 0x4e, 0x05), clean up
+   * with no music call (0x44f4e0, so the game's tune goes on), "network problem!" (0x46abbc) and the
+   * lobby with its fade, before any answer.
+   */
+  private networkProblem(): void {
+    this.send({ type: "leave-room" });
+    this.leftForProblem = true;
+    this.stopGame(true);
+    this.room = null;
+    this.chatLog = [];
+    this.showLobby(false, false);
+    this.lobbyView?.showMessage(NETWORK_PROBLEM);
+  }
+
+  /** The screen shown now, frozen for the fade to the next: the fade out does not redraw it (0x405e08). */
+  private shownPicture(): HTMLCanvasElement | null {
+    const canvas = document.querySelector<HTMLCanvasElement>("canvas.game-canvas");
+    return canvas ? freezeCanvas(canvas) : null;
+  }
+
+  /** fade(1) onto the screen just mounted. */
+  private fadeTo(root: HTMLElement, from: HTMLCanvasElement | null): void {
+    this.stopVeil?.();
+    const stage = root.querySelector<HTMLElement>(".stage");
+    this.stopVeil = stage ? fadeOver(stage, from) : null;
+  }
+}
+
+/**
+ * The room as page controls. The original's room is a mouse screen; these stay as the keyboard and
+ * screen reader path. Only the host has START; a guest's START is ready (0x45a412).
+ */
+interface RoomActions {
+  send(message: ClientMessage): void;
+  /** A chat line, through the session's send rule. */
+  say(text: string): void;
+  /** The kick notice closed: on to the lobby. */
+  kickedOut(): void;
+  /** Two players on one PC only: the next character for a seated slot. */
+  pickCharacter?(slot: number): void;
+}
+
+class RoomView {
+  readonly root: HTMLElement;
+  readonly errorLine: HTMLElement;
+  readonly code: string;
+  private readonly welcome: Welcome;
+  private readonly manifest: Manifest;
+  private readonly send: (message: ClientMessage) => void;
+  private readonly canvas = h("canvas", {
+    width: SCREEN_W,
+    height: SCREEN_H,
+    class: "game-canvas",
+    role: "img",
+    "aria-label": "대기실 화면. 마우스로 조작하며, 같은 기능이 아래 버튼에도 있습니다.",
+  });
+  private readonly loading = h("p", { class: "loading", role: "status" }, "대기실을 불러오는 중…");
+  private readonly stage = h("div", { class: "stage" }, this.canvas, this.loading);
+  private screen: RoomScreen | null = null;
+  private room: RoomInfo | null = null;
+  private notice: string | null = null;
+  private kicked = false;
+  private disposed = false;
+  private readonly heading = h("span", {});
+  private readonly slots = h("ul", { class: "roster", "aria-label": "자리" });
+  private readonly mapSection = h("div", {});
+  private readonly musicSection = h("div", {});
+  private readonly modeSection = h("div", {});
+  private readonly teamNote = h("p", { class: "note" });
+  /** SELECTTEAM's six buttons, built once so focus stays put across room updates. */
+  private readonly teamButtons = Array.from({ length: TEAM_COUNT }, (_, i) =>
+    h(
+      "button",
+      {
+        class: "btn small team-button",
+        type: "button",
+        style: `--team: ${teamColor(i + 1)}`,
+        "aria-pressed": "false",
+        onclick: () => this.send({ type: "set-team", team: i + 1 }),
+      },
+      teamName(i + 1),
+    ),
+  );
+  private readonly teamSection = h(
+    "fieldset",
+    { class: "choices" },
+    h("legend", {}, "팀"),
+    h("div", { class: "team-grid" }, ...this.teamButtons),
+    this.teamNote,
+  );
+  private readonly readyButton = h("button", { class: "btn", type: "button", "aria-pressed": "false" }, "준비");
+  private readonly startButton = h("button", { class: "btn primary", type: "button" }, "시작");
+  private readonly startHint = h("p", { class: "note", role: "status" });
+  private readonly chatList = h("ol", { class: "chat-log", "aria-label": "채팅", "aria-live": "polite" });
+  private readonly chatInput = h("input", { id: "room-chat", autocomplete: "off" });
+  private ownName = "";
+  private hostId = -1;
+  private ready = false;
+  private readonly pickCharacter: ((slot: number) => void) | undefined;
+
+  constructor(manifest: Manifest, welcome: Welcome, room: RoomInfo, chatLog: readonly string[], actions: RoomActions) {
+    const { send, say } = actions;
+    this.pickCharacter = actions.pickCharacter;
+    this.manifest = manifest;
+    this.welcome = welcome;
+    this.code = room.code;
+    this.send = send;
+    this.errorLine = h("p", { class: "error", role: "alert" });
+    this.readyButton.addEventListener("click", () => send({ type: "set-ready", ready: !this.ready }));
+    this.startButton.addEventListener("click", () => send({ type: "start" }));
+    this.chatInput.addEventListener("input", () => fitBytes(this.chatInput, ROOM_CHAT_LIMIT));
+    const submitChat = (event: Event) => {
+      event.preventDefault();
+      say(this.chatInput.value);
+      this.chatInput.value = "";
+    };
+    this.root = h(
+      "main",
+      { class: "screen lobby shake" },
+      h(
+        "header",
+        { class: "toolbar" },
+        h("button", { class: "btn small", type: "button", onclick: () => send({ type: "leave-room" }) }, "← 방 나가기"),
+        h(
+          "h1",
+          { tabindex: "-1" },
+          this.heading,
+          " · 코드 ",
+          h("span", { class: "room-code", "data-testid": "room-code" }, room.code),
+        ),
+      ),
+      this.stage,
+      h(
+        "p",
+        { class: "keys" },
+        `친구에게 방 코드 ${room.code}를 알려 주세요. 대기실 화면에서 바로 채팅할 수 있고, F2~F10은 옵션의 단축 메시지를 채팅 줄에 넣습니다. F1은 도움말 화면(다시 F1이나 Esc로 닫기), Esc는 나가기 확인 상자(예 Y·아니오 N)입니다. ${keysHelp()}`,
+      ),
+      this.slots,
+      this.modeSection,
+      this.teamSection,
+      this.mapSection,
+      this.musicSection,
+      h("div", { class: "actions" }, this.readyButton, this.startButton),
+      this.startHint,
+      this.errorLine,
+      h(
+        "section",
+        { class: "chat", "aria-label": "채팅" },
+        this.chatList,
+        h(
+          "form",
+          { class: "row", onsubmit: submitChat },
+          h("div", { class: "field" }, h("label", { for: "room-chat" }, "채팅"), this.chatInput),
+          h("button", { class: "btn small", type: "submit" }, "보내기"),
+        ),
+      ),
+    );
+    this.update(room);
+    for (const line of chatLog) this.addChat(line);
+    loadRoomAssets().then(
+      (assets) => {
+        if (this.disposed) return;
+        this.screen = new RoomScreen(
+          {
+            canvas: this.canvas,
+            stage: this.stage,
+            assets,
+            playerId: welcome.playerId,
+            maps: welcome.maps,
+            music: welcome.music,
+            sounds,
+            settings,
+            send,
+            say,
+            leave: () => send({ type: "leave-room" }),
+            kickedOut: () => actions.kickedOut(),
+            pickCharacter: actions.pickCharacter,
+          },
+          this.room ?? room,
+        );
+        this.screen.setLog(chatLog);
+        if (this.notice) this.screen.showNotice(this.notice);
+        if (this.kicked) this.screen.showKicked();
+        this.loading.remove();
+      },
+      (error: Error) => {
+        this.loading.textContent = `대기실 그림을 불러오지 못했습니다: ${error.message}`;
+      },
+    );
+  }
+
+  addChat(line: string): void {
+    const item = h("li", { class: `chat-${chatLineClass(line, this.ownName)}` }, shownChat(line));
+    this.chatList.append(item);
+    this.chatList.scrollTop = this.chatList.scrollHeight;
+    this.screen?.addLine(line);
+  }
+
+  showNotice(text: string): void {
+    this.notice = text;
+    this.screen?.showNotice(text);
+  }
+
+  /** /cls, /clear (0x418c60). */
+  clearChat(): void {
+    this.chatList.replaceChildren();
+    this.screen?.setLog([]);
+  }
+
+  refused(): void {
+    this.screen?.refused();
+  }
+
+  waitForKick(): void {
+    this.screen?.waitForKick();
+  }
+
+  /** S->C 0x44 for the own slot: the canvas's message box, and the page's alert line. */
+  showKicked(): void {
+    this.kicked = true;
+    this.errorLine.textContent = `${KICKED_TEXT} 방 나가기 단추나 캔버스의 확인·Esc로 로비에 갑니다.`;
+    this.screen?.showKicked();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.screen?.dispose();
+    this.screen = null;
+  }
+
+  update(room: RoomInfo): void {
+    this.room = room;
+    this.screen?.update(room);
+    const me = this.welcome.playerId;
+    const isHost = room.hostId === me;
+    const own = room.players.find((p) => p.id === me);
+    this.ownName = own?.name ?? this.ownName;
+    this.ready = own?.ready ?? false;
+    this.heading.textContent = `방 ${String(room.number + 1).padStart(3, "0")} ${room.title}`;
+    this.readyButton.hidden = isHost;
+    this.readyButton.setAttribute("aria-pressed", String(this.ready));
+    this.readyButton.textContent = this.ready ? "준비 취소" : "준비";
+
+    const teams = isTeamMode(room.mode);
+    this.slots.replaceChildren(...Array.from({ length: MAX_PLAYERS }, (_, slot) => this.slotItem(room, slot, isHost, teams)));
+    this.updateTeams(room, isHost);
+
+    const guests = room.players.filter((p) => p.id !== room.hostId);
+    const allReady = room.players.length >= 2 && guests.every((p) => p.ready);
+    const teamsFit = !teams || new Set(room.players.map((p) => p.team)).size >= 2;
+    this.startButton.hidden = !isHost;
+    this.startButton.toggleAttribute("disabled", !allReady || !teamsFit);
+    this.startHint.textContent = !allReady
+      ? `${room.players.length}명 참가 중 · 2명 이상이고 방장 말고 모두 준비하면 방장이 시작할 수 있습니다.`
+      : !teamsFit
+        ? "팀 구성이 적합하지 않습니다. 두 팀 이상으로 나누어야 시작할 수 있습니다."
+        : isHost
+          ? "모두 준비되었습니다. 시작을 누르세요."
+          : "방장이 시작하기를 기다리는 중입니다.";
+
+    if (room.hostId !== this.hostId) {
+      this.hostId = room.hostId;
+      this.renderChoices(room, isHost);
+    } else if (!isHost) {
+      this.renderChoices(room, false);
+    } else {
+      // The host may have changed them on the canvas: keep the radios in step without rebuilding them.
+      syncChoice(this.modeSection, String(room.mode));
+      syncChoice(this.mapSection, room.mapId);
+      syncChoice(this.musicSection, String(room.music));
+    }
+  }
+
+  private slotItem(room: RoomInfo, slot: number, isHost: boolean, teams: boolean): HTMLElement {
+    const me = this.welcome.playerId;
+    const p = room.players.find((player) => player.slot === slot);
+    if (!p) {
+      const closed = room.closed[slot];
+      return h(
+        "li",
+        {},
+        h("span", {}, `${slot + 1}번 자리: ${closed ? "닫힘" : "빈 자리"}`),
+        isHost
+          ? h(
+              "button",
+              { class: "btn small", type: "button", onclick: () => this.send({ type: "set-slot", slot, open: closed }) },
+              closed ? "열기" : "닫기",
+            )
+          : null,
+      );
+    }
+    return h(
+      "li",
+      {},
+      portraitCanvas(p.character, 40),
+      h("span", {}, p.name, p.id === me ? " (나)" : "", p.id === room.hostId ? " · 방장" : ""),
+      teams ? h("span", { class: "team-chip", style: `--team: ${teamColor(p.team)}` }, teamName(p.team)) : null,
+      p.id === room.hostId ? null : h("span", { class: "ready" }, p.ready ? "준비 완료" : "대기"),
+      this.pickCharacter
+        ? h("button", { class: "btn small", type: "button", onclick: () => this.pickCharacter?.(slot) }, `${p.name} 캐릭터 바꾸기 (지금 ${p.character})`)
+        : null,
+    );
+  }
+
+  /**
+   * The team buttons show in the team modes only. A ready player cannot change team (0x448970),
+   * and the host only while another player is not ready (0x428108).
+   */
+  private updateTeams(room: RoomInfo, isHost: boolean): void {
+    const me = this.welcome.playerId;
+    const own = room.players.find((p) => p.id === me)?.team;
+    const hostLocked = isHost && !room.players.some((p) => p.id !== me && !p.ready);
+    this.teamSection.hidden = !isTeamMode(room.mode);
+    this.teamButtons.forEach((button, i) => {
+      button.setAttribute("aria-pressed", String(own === i + 1));
+      button.toggleAttribute("disabled", this.ready || hostLocked);
+    });
+    this.teamNote.textContent = this.ready
+      ? "준비를 풀어야 팀을 바꿀 수 있습니다."
+      : hostLocked
+        ? "방장은 준비하지 않은 참가자가 있을 때만 팀을 바꿀 수 있습니다."
+        : "같은 팀끼리도 폭탄에 맞습니다.";
+  }
+
+  private renderChoices(room: RoomInfo, isHost: boolean): void {
+    this.renderModes(room, isHost);
+    this.renderMaps(room, isHost);
+    this.renderMusic(room, isHost);
+  }
+
+  private renderModes(room: RoomInfo, isHost: boolean): void {
+    if (isHost) {
+      const choices = MODE_NAMES.map((label, mode) => ({ value: String(mode), label }));
+      this.modeSection.replaceChildren(
+        choiceGroup("게임 방식", "online-mode", choices, String(room.mode), (value) =>
+          this.send({ type: "set-mode", mode: Number(value) as GameMode }),
+        ),
+      );
+      return;
+    }
+    this.modeSection.replaceChildren(h("p", { class: "keys" }, `게임 방식: ${MODE_NAMES[room.mode]} (방장이 고릅니다)`));
+  }
+
+  /** The list is RANDOM, then the maps in the server's order (0x404200). */
+  private renderMaps(room: RoomInfo, isHost: boolean): void {
+    if (isHost) {
+      const images = new Map(mapChoices(this.manifest).map((c) => [c.value, c.image]));
+      const choices = [
+        { value: RANDOM_MAP, label: RANDOM_MAP },
+        ...this.welcome.maps.map((m) => ({ value: m.id, label: mapTitle(m.title), image: images.get(m.id) })),
+      ];
+      this.mapSection.replaceChildren(
+        choiceGroup("맵", "online-map", choices, room.mapId, (mapId) => this.send({ type: "set-map", mapId })),
+      );
+      return;
+    }
+    const title = this.welcome.maps.find((m) => m.id === room.mapId)?.title;
+    this.mapSection.replaceChildren(h("p", { class: "keys" }, `맵: ${title ? mapTitle(title) : room.mapId} (방장이 고릅니다)`));
+  }
+
+  private renderMusic(room: RoomInfo, isHost: boolean): void {
+    const names = [RANDOM_MAP, ...this.welcome.music];
+    if (isHost) {
+      const choices = names.map((label, music) => ({ value: String(music), label }));
+      this.musicSection.replaceChildren(
+        choiceGroup("배경음악", "online-music", choices, String(room.music), (value) =>
+          this.send({ type: "set-music", music: Number(value) }),
+        ),
+      );
+      return;
+    }
+    this.musicSection.replaceChildren(h("p", { class: "keys" }, `배경음악: ${names[room.music] ?? "RANDOM"} (방장이 고릅니다)`));
+  }
+}
+
+function syncChoice(section: HTMLElement, value: string): void {
+  for (const input of section.querySelectorAll<HTMLInputElement>('input[type="radio"]')) input.checked = input.value === value;
+}
+
+class OnlineGame {
+  private readonly screen: GameScreen;
+  private readonly layout: LevelLayout;
+  private readonly playerId: number;
+  private hostId: number;
+  private readonly music: MusicTrack | null;
+  private readonly send: (message: ClientMessage) => void;
+  private readonly keys = new KeyState();
+  /** Key1..Key3 and the device as the option window left them (0x4699ac, control +0x218). */
+  private readonly binding: KeyBinding = soloKeys(settings.current.keys);
+  private readonly joystick = settings.current.control === 1;
+  private readonly detachKeyboard: () => void;
+  private readonly detachCapture: () => void;
+  private readonly listeners: [EventTarget, string, EventListener][] = [];
+  private view: GameView | null = null;
+  private state: MatchState | null = null;
+  private queued: SimEvent[] = [];
+  private lastSent: Required<InputFrame> = { dir: null, bomb: false, attack: false, evade: false };
+  private frame = 0;
+  private stopped = false;
+  /** The chat line ([0x48c0e8]): closed at the start (0x44a3db); what the server was last told of it. */
+  private readonly chat: ChatLine;
+  private typingSent = false;
+  private readonly blink = new CaretBlink();
+  private readonly balloons = new Balloons();
+  /** The last line sent (0x497d00), recalled with the up key. */
+  private recall = "";
+  /** The other players whose line is open, from the last snapshot. */
+  private typing: readonly number[] = [];
+  /** The panel's bars from the last snapshot, and the own frame rate and ping behind them. */
+  private bars = new Map<number, Omit<PanelBar, "id">>();
+  private readonly frameRate = new FrameRate();
+  private readonly pingMeter = new PingMeter();
+  private statsSent = { fps: -1, ping: -1 };
+  /** The own bar A (+0x234): 30 from the world load, then the frame count at each state packet (0x40c5ca). */
+  private ownFps: number = START_BARS.fps;
+  private ownPacketMs = Number.NEGATIVE_INFINITY;
+  /** The F1 help ([0x492856]) and the exit box (0x484698) with its button under the mouse. */
+  private help = false;
+  private box: PracticeBox | null = null;
+  private hover: 0 | 1 | 2 = 0;
+  private pressed = false;
+  private boxImages: BoxImages | null = null;
+  /** The last data from the host (+0x25c), and the one call made when it has been silent too long. */
+  private lastHeard = performance.now();
+  private readonly hostLost: () => void;
+  private hostGone = false;
+
+  constructor(
+    screen: GameScreen,
+    layout: LevelLayout,
+    room: RoomInfo,
+    playerId: number,
+    music: MusicTrack | null,
+    send: (message: ClientMessage) => void,
+    hostLost: () => void,
+  ) {
+    this.hostLost = hostLost;
+    this.screen = screen;
+    this.layout = layout;
+    this.playerId = playerId;
+    this.hostId = room.hostId;
+    this.music = music;
+    this.send = send;
+    this.chat = new ChatLine(screen.stage);
+    // With the joystick the keyboard's game keys are not read (0x402520 mode 1), but a browser
+    // shows no pad until one of its buttons is pressed, so the keys play until then.
+    this.detachKeyboard = attachKeyboard(this.keys, boundCodes([this.binding]), () => this.syncInput());
+    this.listen(window, "keydown", (event) => this.onKey(event as KeyboardEvent));
+    this.detachCapture = attachCapture(
+      screen.canvas,
+      () => this.box !== null,
+      () => this.view?.composition ?? screen.canvas,
+    );
+    this.listen(screen.canvas, "pointermove", (event) => this.onPointer(event as PointerEvent));
+    this.listen(screen.canvas, "pointerdown", () => (this.pressed = true));
+    this.listen(screen.canvas, "pointerup", (event) => this.onRelease(event as PointerEvent));
+    void this.load(room);
+  }
+
+  private listen(target: EventTarget, type: string, listener: EventListener): void {
+    target.addEventListener(type, listener);
+    this.listeners.push([target, type, listener]);
+  }
+
+  private async load(room: RoomInfo): Promise<void> {
+    try {
+      // The room may say RANDOM; the layout is the map the server rolled.
+      const [assets, panel, messageBox, buttons] = await Promise.all([
+        loadSceneAssets(
+          this.layout.id,
+          room.players.map((p) => p.character),
+        ),
+        loadImage("image/images.png"),
+        loadImage("image/new_messagebox.png"),
+        loadImage("image/new_button2.png"),
+      ]);
+      if (this.stopped) return;
+      this.boxImages = { panel, messageBox, buttons };
+      // Shadows and the invisible blend read the screen back each frame (0x413620 works on the surface).
+      const ctx = this.screen.canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) throw new Error("canvas 2d context unavailable");
+      this.view = new GameView(ctx, assets, sounds, {
+        localPlayerIds: [this.playerId],
+        hostId: this.hostId,
+        music: this.music,
+        announce: this.screen.announce,
+      });
+      this.screen.loaded();
+      if (this.state) {
+        this.view.ingest(this.state, this.queued);
+        this.queued = [];
+      }
+      const draw = () => {
+        if (this.stopped) return;
+        this.render();
+        this.frame = requestAnimationFrame(draw);
+      };
+      this.frame = requestAnimationFrame(draw);
+    } catch (error) {
+      this.screen.failed(`에셋을 불러오지 못했습니다: ${(error as Error).message}`);
+    }
+  }
+
+  snapshot(wire: Parameters<typeof fromWireState>[0], events: SimEvent[], typing: readonly number[], bars: readonly PanelBar[]): void {
+    const state = fromWireState(wire, this.layout);
+    this.state = state;
+    this.typing = typing;
+    this.bars = new Map(bars.map(({ id, ...bar }) => [id, bar]));
+    // The next round's world load frees every balloon (0x44d740 → 0x44feb0) and clears the ping table (0x44ef7b).
+    if (events.some((event) => event.type === "round-start")) {
+      this.balloons.clear();
+      this.pingMeter.reset();
+      this.ownFps = START_BARS.fps;
+    }
+    // Browser checks read the latest snapshot in development; production builds drop this.
+    if (import.meta.env.DEV) {
+      const own = { fps: this.frameRate.value, ping: this.pingMeter.value };
+      Object.assign(window, { shakeMatch: { ...state, events }, shakeBars: { bars, own } });
+    }
+    if (this.view) this.view.ingest(state, events);
+    else this.queued.push(...events);
+    const stage = this.screen.stage.dataset;
+    stage.phase = state.phase;
+    stage.round = String(state.round);
+    stage.medals = state.players.map((p) => `${p.id}:${p.medals}`).join(",");
+    stage.alive = state.players.map((p) => `${p.id}:${p.alive ? 1 : 0}`).join(",");
+    stage.me = String(this.playerId);
+  }
+
+  /** A line said in the match, the own one back from the server too: it goes in the speaker's balloon (0x45ec00). */
+  chatReceived(playerId: number, text: string): void {
+    const speaker = this.state?.players.find((p) => p.id === playerId);
+    if (!speaker) return;
+    this.balloons.say(speaker.slot, text, performance.now());
+    if (playerId !== this.playerId) this.screen.announce(`${speaker.name}: ${text}`);
+  }
+
+  /** The room's host changed during the match (the host left). */
+  hostChanged(hostId: number): void {
+    this.hostId = hostId;
+    this.view?.setHost(hostId);
+  }
+
+  private get isHost(): boolean {
+    return this.playerId === this.hostId;
+  }
+
+  /** The keys go unread under the chat line, the box and the help (0x45aec8); a walk goes on. */
+  private get frozen(): boolean {
+    return this.chat.isOpen || this.box !== null || this.help;
+  }
+
+  /**
+   * Tell the server what changed: the chat line first, then the keys. Taps are dropped each
+   * time, so a Space typed into the line does not become a bomb when it closes.
+   */
+  private syncInput(): void {
+    const typing = this.chat.isOpen;
+    if (typing !== this.typingSent) {
+      this.typingSent = typing;
+      this.send({ type: "typing", on: typing });
+    }
+    const pad = this.joystick ? connectedPad() : null;
+    const next = pad ? padFrame(pad) : this.keys.sample(this.binding);
+    this.keys.endTick();
+    if (this.frozen) return;
+    const same = (Object.keys(next) as (keyof InputFrame)[]).every((key) => next[key] === this.lastSent[key]);
+    if (same) return;
+    this.lastSent = next;
+    this.send({ type: "input", ...next });
+  }
+
+  private onKey(event: KeyboardEvent): void {
+    if (event.code === "F1") event.preventDefault();
+    // Keys the IME takes for its composition.
+    if (event.isComposing || event.keyCode === 229) return;
+    const state = this.state;
+    const slot = macroSlot(event.code);
+    if (slot !== null) {
+      event.preventDefault();
+      // 0x461a50: a match takes the macro in every phase; the exit box takes F2..F9 first.
+      if (macroOpens(slot, { box: this.box !== null, blocked: false })) {
+        this.chat.open();
+        this.chat.text = settings.current.macros[slot];
+        this.screen.announce("채팅 입력: 단축 메시지가 들어갔습니다. Enter로 보내기, Esc로 취소");
+        this.syncInput();
+        return;
+      }
+    }
+    if (this.box) {
+      // Any key clears the help while the box is up (0x460097); Enter answers the box, not the line.
+      this.help = false;
+      if (event.key === "Enter") event.preventDefault();
+      const result = boxKey(this.box, event.key);
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        this.hover = boxKeyCursor(this.box);
+        this.screen.announce(this.box.selection === 1 ? "예" : "아니오");
+      }
+      if (result) this.answer(result);
+      return;
+    }
+    if (event.code === "F1") {
+      this.help = !this.help; // 0x460264
+    } else if (event.code === "Escape") {
+      if (state) this.escape(state);
+    } else if (event.key === "Enter") {
+      // Enter sends and closes the line (0x45fb47), or opens it off the result screens (0x45fec8).
+      event.preventDefault();
+      if (this.chat.isOpen) this.say(this.chat.close());
+      else if (state && enterOpensChat(state.phase)) {
+        this.chat.open();
+        this.screen.announce("채팅 입력: Enter로 보내기, Esc로 취소");
+      }
+    } else if (event.key === "ArrowUp" && this.chat.isOpen) {
+      this.chat.text = this.recall; // 0x4600d9
+    }
+    this.syncInput();
+  }
+
+  private escape(state: MatchState): void {
+    const action = matchEscape({ help: this.help, chatOpen: this.chat.isOpen, host: this.isHost, round: state.round, phase: state.phase });
+    switch (action) {
+      case "help":
+        this.help = false;
+        break;
+      case "chat":
+        this.chat.close(); // 0x4618e1: the text is dropped.
+        break;
+      case "leave":
+        this.send({ type: "leave-room" });
+        break;
+      case "box":
+        this.box = openBox("esc");
+        this.hover = 0;
+        this.screen.announce("종료하시겠습니까? 예(Y), 아니오(N)");
+        break;
+      case "none":
+        break;
+    }
+  }
+
+  /** 0x446200: the recall buffer takes the line as typed; a blank line, or one on the wait and result screens, goes nowhere. */
+  private say(raw: string): void {
+    if (raw) this.recall = raw;
+    const state = this.state;
+    const text = gameChatLine(raw);
+    if (!text || !state || !sendsChat(state.phase)) return;
+    this.send({ type: "game-chat", text });
+    const own = state.players.find((p) => p.id === this.playerId);
+    if (own) this.balloons.say(own.slot, text, performance.now());
+  }
+
+  /** YES leaves for the lobby (0x461bc0 → 0x448870, 0x44f6b0); NO closes the box. */
+  private answer(result: BoxResult): void {
+    this.closeBox();
+    if (result === "exit") this.send({ type: "leave-room" });
+  }
+
+  private closeBox(): void {
+    this.box = null;
+    this.hover = 0;
+    this.pressed = false;
+    this.syncInput();
+  }
+
+  private toScreen(event: PointerEvent): { x: number; y: number } {
+    const rect = this.screen.canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) * SCREEN_W) / rect.width,
+      y: ((event.clientY - rect.top) * SCREEN_H) / rect.height,
+    };
+  }
+
+  private onPointer(event: PointerEvent): void {
+    if (!this.box) return;
+    const { x, y } = this.toScreen(event);
+    this.hover = boxPointer(this.box, x, y);
+    this.pressed = (event.buttons & 1) !== 0;
+  }
+
+  private onRelease(event: PointerEvent): void {
+    this.pressed = false;
+    if (!this.box || this.help) return;
+    const { x, y } = this.toScreen(event);
+    const result = boxClick(this.box, x, y);
+    if (!result) return;
+    // A click on the box's buttons sounds menu2 (0x4589a9); its keys are silent (0x461bc0).
+    sounds.play(MENU_SOUNDS.primary);
+    this.answer(result);
+  }
+
+  private render(): void {
+    const { state, view } = this;
+    if (!state || !view) return;
+    // The joystick is polled each frame, as DirectInput's device state was.
+    if (this.joystick) this.syncInput();
+    if (!this.hostGone && hostSilent(state.phase, performance.now(), this.lastHeard)) {
+      this.hostGone = true;
+      this.hostLost();
+      return;
+    }
+    this.measure(state);
+    if (this.box && closesExitBox(state.phase, state.round)) this.closeBox();
+    const box = this.box;
+    const images = this.boxImages;
+    this.chat.locked = box !== null;
+    const overlay = box && images ? (ctx: CanvasRenderingContext2D) => drawPracticeBox(ctx, images, box, this.hover, this.pressed) : undefined;
+    view.render(state, { overlay, help: this.help, chat: this.chatDraw(state), bars: this.ownBars() });
+  }
+
+  /**
+   * The balloons are dropped after 5 s only while the field is drawn (0x40c254). The others'
+   * "chat" marks come with the state packets, which the countdown does not send and the world
+   * load clears (0x44fc50), so they show only in play.
+   */
+  private chatDraw(state: MatchState): ChatDraw {
+    const field = state.phase === "countdown" || state.phase === "playing";
+    if (!field) return { balloons: [], line: null };
+    const now = performance.now();
+    const typing = state.phase === "playing" ? this.typing.filter((id) => id !== this.playerId) : [];
+    const balloons = this.balloons.shown(now);
+    if (!this.chat.isOpen) return { balloons, line: null, typing };
+    const line = this.chat.view();
+    return { balloons, line: { text: line.text, caret: this.blink.shown(now) ? line.caret : null }, typing };
+  }
+
+  /** A word from the server, which plays the host. */
+  heard(now: number): void {
+    this.lastHeard = now;
+  }
+
+  /** The ping record back (0x44497c): the trip goes into the own bar B at once. */
+  pong(at: number): void {
+    this.pingMeter.answered(at, Math.floor(performance.now()));
+  }
+
+  /**
+   * The others' bars as the server last took them from their state packets; the own ones as this
+   * screen holds them, B straight from the last answer (0x44499f), A from the last state packet.
+   */
+  private ownBars(): ReadonlyMap<number, Omit<PanelBar, "id">> {
+    const bars = new Map(this.bars);
+    bars.set(this.playerId, { fps: this.ownFps, ping: this.pingMeter.value });
+    return bars;
+  }
+
+  /**
+   * Once a frame: count it for bar A, send the ping record every 5 s while in play and not gone
+   * (0x40c646-0x40c69c), and tell the server when the values the state packet carries change.
+   */
+  private measure(state: MatchState): void {
+    const now = performance.now();
+    this.frameRate.draw(state.tick, now);
+    const me = state.players.find((p) => p.id === this.playerId);
+    if (state.phase === "playing" && me && !me.gone && this.pingMeter.due(now)) {
+      this.send({ type: "ping", at: Math.floor(now) });
+    }
+    if (me && typingPacketDue(state.phase, me, now, this.ownPacketMs)) {
+      this.ownPacketMs = now;
+      this.ownFps = this.frameRate.value;
+    }
+    const stats = { fps: this.frameRate.value, ping: this.pingMeter.value };
+    if (stats.fps === this.statsSent.fps && stats.ping === this.statsSent.ping) return;
+    this.statsSent = stats;
+    this.send({ type: "stats", ...stats });
+  }
+
+  stop(keepMusic = false): void {
+    this.stopped = true;
+    cancelAnimationFrame(this.frame);
+    this.view?.dispose(keepMusic);
+    this.chat.dispose();
+    this.detachKeyboard();
+    this.detachCapture();
+    for (const [target, type, listener] of this.listeners) target.removeEventListener(type, listener);
+  }
+}

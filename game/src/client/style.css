@@ -1,0 +1,575 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1230;
+  --bg-2: #1a1f4a;
+  --panel: #232a63;
+  --line: #3a4390;
+  --text: #eef0ff;
+  --muted: #aab1e0;
+  --accent: #ffd23f;
+  --accent-text: #1a1433;
+  --focus: #7fe3ff;
+  --danger: #ff6b6b;
+  font-family: system-ui, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #000;
+  color: var(--text);
+}
+
+.screen {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+h1:focus {
+  outline: none;
+}
+
+h1 small {
+  color: var(--accent);
+  font-size: 0.6em;
+  vertical-align: middle;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Classes that set display must not bring back an element hidden by its attribute. */
+[hidden] {
+  display: none !important;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 18px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn.small {
+  min-height: 36px;
+  padding: 4px 12px;
+  font-size: 0.9rem;
+}
+
+.btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.toolbar h1 {
+  flex: 1;
+  font-size: 1.3rem;
+}
+
+.keys {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.choices {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.choices legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+}
+
+.choices:has(img) .choice-grid {
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+}
+
+.choice {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: var(--bg-2);
+  cursor: pointer;
+}
+
+.choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.choice:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+.choice:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.choice img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+}
+
+.choice-label {
+  font-size: 0.85rem;
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.portrait {
+  width: 56px;
+  height: 56px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.game,
+.viewer {
+  max-width: 1100px;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  max-width: calc((100vh - 140px) * 4 / 3);
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.game-canvas {
+  /* The game draws its own cursor (cursor.spr) over the screen. */
+  cursor: none;
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  image-rendering: pixelated;
+  border-radius: 8px;
+  background: #000;
+}
+
+/* Practice's chat line: the game draws the text and caret; this input only takes the keys and the IME. */
+.chat-line {
+  position: absolute;
+  width: 1px;
+  height: 13px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  font: 13px GulimChe, monospace;
+}
+
+/* screenKit.fadeOver: the old screen darkening over the new one, then the dark lifting. */
+.fade-veil {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.stage .loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+}
+
+.sr-only {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.viewer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viewer-controls select {
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.viewer-info,
+.viewer-status {
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.anim-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.anim-card {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  border-radius: 10px;
+  background: repeating-conic-gradient(#2b3170 0% 25%, #232a63 0% 50%) 0 0 / 16px 16px;
+}
+
+.anim-card canvas {
+  max-width: 100%;
+  image-rendering: pixelated;
+}
+
+.anim-card figcaption {
+  font-size: 0.8rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.anim-card.empty {
+  opacity: 0.6;
+}
+
+.sheet-image {
+  overflow-x: auto;
+  padding: 8px;
+  border-radius: 10px;
+  background: repeating-conic-gradient(#2b3170 0% 25%, #232a63 0% 50%) 0 0 / 16px 16px;
+}
+
+.sheet-image img {
+  display: block;
+  max-width: none;
+  image-rendering: pixelated;
+}
+
+.sound-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.lobby {
+  display: grid;
+  gap: 12px;
+}
+
+.lobby form,
+.lobby .row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+/* A picker in a form row takes a line of its own; shrunk to its content, its grid is one column. */
+.lobby form > .choices {
+  flex: 1 1 100%;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+/* The lobby's option section: checks and radios on a line each, the key and macro fields in a grid. */
+.option-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.option-panel .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-right: 16px;
+}
+
+.option-panel .check input {
+  width: 20px;
+  height: 20px;
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.option-grid legend {
+  grid-column: 1 / -1;
+}
+
+.option-panel .field input,
+.option-panel .field select {
+  min-width: 0;
+}
+
+.field input,
+.field select {
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.roster {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.roster li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+
+/* The lobby's room rows: the buttons keep their label on one line; the text beside them wraps. */
+.room-list li > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.room-list li .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+/* The room's team colours (new_teambar, 0x48be40) as a swatch before the name. */
+.team-button::before,
+.team-chip::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  border: 1px solid #000;
+  border-radius: 3px;
+  background: var(--team);
+}
+
+.team-button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.team-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.roster .ready {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* The room's chat log; the line colours are the original's (0x427810). */
+.chat-log {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  max-height: 10rem;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: var(--bg-2);
+  overflow-wrap: anywhere;
+}
+
+.chat-log:empty {
+  display: none;
+}
+
+.chat-system {
+  color: #00ff12;
+}
+
+.chat-own {
+  color: #ffff00;
+}
+
+.chat-police {
+  color: #ffc000;
+}
+
+.error {
+  color: var(--danger);
+}
+
+@media (max-width: 600px) {
+  .choice-grid {
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  }
+
+  .choice-label {
+    font-size: 0.8rem;
+  }
+}
+
+.room-code {
+  color: var(--accent);
+  letter-spacing: 0.15em;
+}
+
+.code-input {
+  width: 7em;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/*
+ * Shake2 screens (AGENTS.md): only the original screen shows, as large as the window
+ * allows at 4:3. Everything else on the page stays for screen readers and the keyboard only.
+ */
+.screen.shake {
+  position: relative;
+  display: grid;
+  place-items: center;
+  max-width: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 0;
+}
+
+.screen.shake > :not(.stage),
+.screen.shake .stage > .loading {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.screen.shake .stage {
+  width: min(100vw, calc(100dvh * 4 / 3));
+  max-width: none;
+}
+
+.screen.shake .game-canvas,
+.screen.shake .fade-veil {
+  border-radius: 0;
+}
