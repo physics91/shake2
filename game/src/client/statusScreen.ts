@@ -529,7 +529,7 @@ export class StatusPage {
     if (this.editing && this.caret.shown(now)) {
       const line = [nick, greeting, password][this.focus];
       ctx.fillStyle = CARET.colour;
-      ctx.fillRect(caretX(CARET.x, cp949Bytes(line.text.slice(0, line.caret))), FIELDS[this.focus].caretY, 1, CARET.height);
+      ctx.fillRect(caretX(CARET.x, line.caret), FIELDS[this.focus].caretY, 1, CARET.height);
     }
   }
 
@@ -602,7 +602,7 @@ export class StatusPage {
       const line = this.macroLine.view();
       const at = macroAt(option.line);
       ctx.fillStyle = CARET.colour;
-      ctx.fillRect(caretX(at.x, cp949Bytes(line.text.slice(0, line.caret))), at.y, 1, CARET.height);
+      ctx.fillRect(caretX(at.x, line.caret), at.y, 1, CARET.height);
     }
   }
 
@@ -614,7 +614,7 @@ export class StatusPage {
     if (line.text) plainText(ctx, line.text, RANKING.field.text.x, RANKING.field.text.y, LIGHT_BLUE, FONT_13);
     if (this.caret.shown(now)) {
       ctx.fillStyle = CARET.colour;
-      ctx.fillRect(caretX(RANKING.field.text.x, cp949Bytes(line.text.slice(0, line.caret))), RANKING.field.text.y, 1, CARET.height);
+      ctx.fillRect(caretX(RANKING.field.text.x, line.caret), RANKING.field.text.y, 1, CARET.height);
     }
     if (mouse) this.drawHover(ctx, [RANKING.up, RANKING.down, RANKING.search], mouse);
   }
