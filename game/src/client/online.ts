@@ -594,6 +594,9 @@ class OnlineSession {
       case "whisper-allowed":
         this.addLine(whisperAllowLine(message.on));
         break;
+      case "join-password":
+        this.lobbyView?.passwordAsked(message.code);
+        break;
       case "kick":
         // S->C 0x44 (0x4452e0): the busy cursor goes off whatever it says.
         this.roomView?.refused();

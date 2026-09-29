@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import type { RoomSummary } from "../server/protocol.ts";
 import {
+  createPopupAt,
   createTitle,
   LOBBY_SCROLL,
   lobbyHelpAt,
   messageLines,
+  passwordMask,
+  passwordPopupAt,
   remoteButtonAt,
   roomCountText,
+  roomDoorIcon,
   roomIconRect,
   roomInfoStatus,
   roomPage,
@@ -29,6 +33,7 @@ const room = (number: number, playing = false): RoomSummary => ({
   players: 1,
   max: 6,
   playing,
+  secret: false,
 });
 
 describe("lobby room list (0x42c6b0)", () => {
@@ -72,6 +77,12 @@ describe("lobby room list (0x42c6b0)", () => {
     expect(roomRowAt(300, 131, true)).toBe(1);
   });
 
+  it("shows a waiting secret room's door as icon 5; a playing room's is 3 either way", () => {
+    expect(roomDoorIcon(room(0))).toBe(10);
+    expect(roomDoorIcon({ ...room(0), secret: true })).toBe(5);
+    expect(roomDoorIcon({ ...room(0, true), secret: true })).toBe(3);
+  });
+
   it("cuts icon k of the strip at (1 + 21 k, 85), 20 px square", () => {
     expect(roomIconRect(0)).toEqual([1, 85, 21, 105]);
     expect(roomIconRect(9)).toEqual([190, 85, 210, 105]);
@@ -87,6 +98,36 @@ describe("lobby user list (0x42d1d0)", () => {
     expect(userRowAt(749, 178)).toBe(0);
     expect(userRowAt(700, 180)).toBe(1);
     expect(userRowAt(618, 170)).toBe(-1);
+  });
+});
+
+describe("create popup clicks (0x459800)", () => {
+  it("takes 취소, OK, the secret icon or check, then the title and password fields", () => {
+    expect(createPopupAt(519, 362)).toBe("cancel");
+    expect(createPopupAt(272, 394)).toBe("ok");
+    expect(createPopupAt(373, 309)).toBe("secret");
+    expect(createPopupAt(418, 330)).toBe("secret");
+    expect(createPopupAt(402, 320)).toBeNull();
+    expect(createPopupAt(384, 260)).toBe("title");
+    expect(createPopupAt(381, 283)).toBe("password");
+    expect(createPopupAt(515, 302)).toBe("password");
+    // The highlight and betting checks need items 6 and 7, which nobody has.
+    expect(createPopupAt(460, 320)).toBeNull();
+  });
+
+  it("shows a password as one '*' a cp949 byte (0x42e46f)", () => {
+    expect(passwordMask("")).toBe("");
+    expect(passwordMask("ab1")).toBe("***");
+    expect(passwordMask("비밀")).toBe("****");
+  });
+});
+
+describe("password popup (0x42ea30, 0x459942)", () => {
+  it("takes OK and 취소, inclusive, and nothing else", () => {
+    expect(passwordPopupAt(198, 292)).toBe("ok");
+    expect(passwordPopupAt(229, 323)).toBe("ok");
+    expect(passwordPopupAt(416, 323)).toBe("cancel");
+    expect(passwordPopupAt(300, 250)).toBeNull();
   });
 });
 
@@ -173,5 +214,9 @@ describe("lobby balloons (0x42b450)", () => {
     expect(lobbyHelpAt(100, 350, { ...base, popup: "create" })).toBeNull();
     expect(lobbyHelpAt(500, 330, { ...base, popup: "remote" })?.text).toBe("랭킹을 확인");
     expect(lobbyHelpAt(400, 380, { ...base, popup: "roomInfo" })?.text).toBe("창닫기(esc)");
+    expect(lobbyHelpAt(300, 250, { ...base, popup: "password", message: true })?.text).toBe("비밀번호 입력창");
+    expect(lobbyHelpAt(200, 300, { ...base, popup: "password" })?.text).toBe("입력 확인(enter)");
+    expect(lobbyHelpAt(400, 300, { ...base, popup: "password" })?.text).toBe("취소 버튼(esc)");
+    expect(lobbyHelpAt(300, 110, { ...base, popup: "password" })).toBeNull();
   });
 });

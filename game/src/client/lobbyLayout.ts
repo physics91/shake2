@@ -2,6 +2,7 @@
 // [left, top, right, bottom]; blits exclude right and bottom, hit tests include them.
 // Evidence: re_work/findings_room4.md, findings_room4b.md and original/FIDELITY.md §14.
 import type { Rect } from "../assets/types.ts";
+import { cp949Bytes } from "../server/cp949.ts";
 import type { LobbyUser, RoomSummary } from "../server/protocol.ts";
 import type { Button, Point, ScrollGeometry } from "./roomLayout.ts";
 import { inside, ROOM_EDITOR_LIMIT } from "./roomLayout.ts";
@@ -57,6 +58,11 @@ export const ROOM_ICONS = {
   playing: { mode: [2, 0, 1, 14, 12, 13, 18, 19], door: 3, disc: 4 },
   waiting: { mode: [9, 7, 8, 17, 15, 16, 20, 21], door: 10, secretDoor: 5, disc: 11 },
 };
+/** The door icon (+0x28): a waiting secret room's is locked; a playing room shows one door either way. */
+export function roomDoorIcon(room: Pick<RoomSummary, "playing" | "secret">): number {
+  if (room.playing) return ROOM_ICONS.playing.door;
+  return room.secret ? ROOM_ICONS.waiting.secretDoor : ROOM_ICONS.waiting.door;
+}
 /** Where each part of a row goes, from its top (x absolute, dy from the row's y). */
 export const ROOM_PARTS = {
   number: { x: 68, dy: 7 },
@@ -245,7 +251,7 @@ export function roomInfoStatus(info: { status: "round" | "over" | "waiting"; rou
 // Help balloons (0x42b450), shown while the 풍선 도움말 option is on (on by default)
 
 export interface LobbyHelpContext {
-  popup: "create" | "remote" | "roomInfo" | null;
+  popup: "create" | "password" | "remote" | "roomInfo" | null;
   /** The message box is up: the lobby's own balloons stop, a popup's go on. */
   message: boolean;
   waitingOnly: boolean;
@@ -294,6 +300,12 @@ const REMOTE_HELP: HelpEntry[] = [
 
 const ROOM_INFO_HELP: HelpEntry[] = [{ rect: ROOM_INFO.close.hit, text: "창닫기(esc)" }];
 
+const PASSWORD_HELP: HelpEntry[] = [
+  { rect: [249, 241, 369, 257], text: "비밀번호 입력창" },
+  { rect: [198, 292, 229, 323], text: "입력 확인(enter)" },
+  { rect: [385, 292, 416, 323], text: "취소 버튼(esc)" },
+];
+
 /** The message box's own balloon on its button (0x443947). */
 export const MESSAGE_HELP = "확인(esc)";
 
@@ -305,6 +317,7 @@ function firstHelp(entries: readonly HelpEntry[], x: number, y: number) {
 /** The balloon under the mouse (0x42b450), or null. */
 export function lobbyHelpAt(x: number, y: number, context: LobbyHelpContext): { text: string; x: number; y: number } | null {
   if (context.popup === "create") return firstHelp(CREATE_HELP, x, y);
+  if (context.popup === "password") return firstHelp(PASSWORD_HELP, x, y);
   if (context.popup === "roomInfo") return firstHelp(ROOM_INFO_HELP, x, y);
   if (context.popup === "remote") return firstHelp(REMOTE_HELP, x, y);
   if (context.message) return null;
@@ -332,7 +345,62 @@ export const CREATE_POPUP = {
   titleColour: "#ffffff",
   ok: { hit: [241, 363, 272, 394] as Rect, pressed: [35, 110, 67, 142] as Rect, at: { x: 241, y: 363 } },
   cancel: { hit: [519, 362, 550, 393] as Rect, pressed: [68, 110, 100, 142] as Rect, at: { x: 519, y: 362 } },
+  /**
+   * Item 5's secret check, all new_button art: the icon, and while checked ([0x495392]) the check,
+   * PASSWORD and the field. The password shows as one '*' a byte, in the title's colours.
+   */
+  secret: {
+    icon: { src: [1, 77, 30, 107] as Rect, at: { x: 372, y: 308 }, hit: [373, 309, 401, 337] as Rect },
+    check: { src: [125, 94, 140, 109] as Rect, at: { x: 403, y: 315 }, hit: [403, 315, 418, 330] as Rect },
+    label: { src: [1, 40, 104, 55] as Rect, at: { x: 273, y: 286 } },
+    field: { src: [1, 56, 138, 76] as Rect, at: { x: 381, y: 283 } },
+  },
+  password: { hit: [381, 283, 515, 302] as Rect, text: { x: 386, y: 287 } },
 };
+/** The password editor is set to 11 (0x42ff40): 10 bytes. */
+export const CREATE_PASSWORD_LIMIT = 11;
+
+export type CreateHit = "cancel" | "ok" | "secret" | "title" | "password";
+
+/** A release on the create popup (0x459800): 취소, OK, the secret check (0x42ff40), then the fields (0x4302d0). */
+export function createPopupAt(x: number, y: number): CreateHit | null {
+  const popup = CREATE_POPUP;
+  if (inside(popup.cancel.hit, x, y)) return "cancel";
+  if (inside(popup.ok.hit, x, y)) return "ok";
+  if (inside(popup.secret.icon.hit, x, y) || inside(popup.secret.check.hit, x, y)) return "secret";
+  if (inside(popup.title.hit, x, y)) return "title";
+  if (inside(popup.password.hit, x, y)) return "password";
+  return null;
+}
+
+/** A password as the popups show it (0x42e46f, 0x42ebc8): one '*' for each byte. */
+export function passwordMask(text: string): string {
+  return "*".repeat(cp949Bytes(text));
+}
+
+// Password popup (a secret room's line or join reply 3; open 0x42f500, draw 0x42ea30, OK 0x459962)
+
+/** new_basicwindow, the lock (new_button), the label and the pressed OK and 취소 (new_button2); '*' plain in #c8e5fd. */
+export const PASSWORD_POPUP = {
+  window: { src: [2, 2, 240, 181] as Rect, at: { x: 191, y: 151 } },
+  lock: { src: [1, 77, 30, 107] as Rect, at: { x: 242, y: 206 } },
+  label: { src: [178, 204, 281, 219] as Rect, at: { x: 278, y: 215 } },
+  field: { hit: [249, 241, 369, 257] as Rect, text: { x: 248, y: 242 } },
+  colour: "#c8e5fd",
+  ok: { hit: [198, 292, 229, 323] as Rect, pressed: [1, 147, 33, 179] as Rect, at: { x: 198, y: 292 } },
+  cancel: { hit: [385, 292, 416, 323] as Rect, pressed: [34, 146, 66, 178] as Rect, at: { x: 385, y: 292 } },
+};
+/** The editor is set to 16 (0x42f500): 15 bytes. */
+export const PASSWORD_LIMIT = 16;
+/** OK with nothing typed (0x42fe60): the box, and the popup stays. */
+export const PASSWORD_EMPTY = "비밀번호를 입력하세요";
+
+/** A release on the password popup: OK, then 취소; the field takes no click. */
+export function passwordPopupAt(x: number, y: number): "ok" | "cancel" | null {
+  if (inside(PASSWORD_POPUP.ok.hit, x, y)) return "ok";
+  if (inside(PASSWORD_POPUP.cancel.hit, x, y)) return "cancel";
+  return null;
+}
 
 /** What OK does with the title (0x4300d0): a leading space asks for one, an empty title does nothing. */
 export function createTitle(text: string): { title: string } | { message: string } | null {

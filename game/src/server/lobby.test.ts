@@ -5,7 +5,7 @@ import { msvcRand } from "../sim/rng.ts";
 import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
 import { FriendBook } from "./friends.ts";
 import type { LobbyConfig } from "./lobby.ts";
-import { Lobby } from "./lobby.ts";
+import { Lobby, WRONG_PASSWORD_DELAY_MS } from "./lobby.ts";
 import type { RoomInfo, ServerMessage } from "./protocol.ts";
 import { PROTOCOL_VERSION, START_BARS, TYPING_PACKET_MS, typingPacketDue } from "./protocol.ts";
 import { PING_ECHO_MS } from "./room.ts";
@@ -724,7 +724,7 @@ describe("Lobby (scene 4)", () => {
     t.connect(2, "둘");
     t.lobby.handle(1, { type: "create-room", title: "빨리" });
     expect(t.lobbyOf(2)).toMatchObject({
-      rooms: [{ code: "ABCD", number: 0, title: "빨리", mapId: "arena", mode: 0, players: 1, max: 6, playing: false }],
+      rooms: [{ code: "ABCD", number: 0, title: "빨리", mapId: "arena", mode: 0, players: 1, max: 6, playing: false, secret: false }],
       users: [{ id: 2, name: "둘" }],
     });
   });
@@ -898,6 +898,88 @@ describe("Lobby (scene 4)", () => {
   });
 });
 
+describe("secret rooms (+0x28)", () => {
+  it("makes a room secret when it is made with a password, and lets nobody see the password", () => {
+    const t = makeLobby();
+    t.connect(1, "하나");
+    t.connect(2, "둘");
+    t.connect(3, "셋");
+    t.lobby.handle(1, { type: "create-room", title: "비밀", password: "zq9!" });
+    t.lobby.handle(3, { type: "create-room", title: "열린 방" });
+    expect(t.room(1)?.code).toBe("ABCD");
+    expect(t.lobbyOf(2)?.rooms.map((r) => [r.title, r.secret])).toEqual([
+      ["비밀", true],
+      ["열린 방", false],
+    ]);
+    t.lobby.handle(2, { type: "room-info", code: "ABCD" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "zq9!" });
+    // A password to a room without one is not asked for.
+    t.lobby.handle(2, { type: "join-room", code: "EFGH", password: "x" });
+    expect(t.room(2)?.code).toBe("EFGH");
+    for (const id of [1, 2, 3]) expect(JSON.stringify(t.inbox.get(id))).not.toContain("zq9!");
+  });
+
+  it("answers a join without the password with the password popup's reply, and lets the password in (S->C 0x04 failure 3)", () => {
+    const t = makeLobby();
+    t.connect(1);
+    t.connect(2);
+    t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD" });
+    expect(t.last(2, "join-password")).toEqual({ type: "join-password", code: "ABCD" });
+    expect(t.last(2, "error")).toBeUndefined();
+    expect(t.room(2)).toBeUndefined();
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    expect(t.room(2)?.players.map((p) => p.id)).toEqual([1, 2]);
+  });
+
+  it("answers a wrong password only after 500 ms, and checks no password until then", () => {
+    const t = makeLobby();
+    t.connect(1);
+    t.connect(2);
+    t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    t.lobby.tick();
+    expect(t.count(2, "join-password")).toBe(0);
+    t.clock.now = WRONG_PASSWORD_DELAY_MS - 1;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    t.lobby.tick();
+    expect(t.count(2, "join-password")).toBe(0);
+    expect(t.room(2)).toBeUndefined();
+    t.clock.now = WRONG_PASSWORD_DELAY_MS;
+    t.lobby.tick();
+    expect(t.count(2, "join-password")).toBe(1);
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    expect(t.room(2)?.code).toBe("ABCD");
+    t.lobby.tick();
+    expect(t.count(2, "join-password")).toBe(1);
+  });
+
+  it("drops the wrong password's reply when the player goes", () => {
+    const t = makeLobby();
+    t.connect(1);
+    t.connect(2);
+    t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    t.lobby.disconnect(2);
+    t.clock.now = WRONG_PASSWORD_DELAY_MS;
+    t.lobby.tick();
+    expect(t.count(2, "join-password")).toBe(0);
+  });
+
+  it("asks for the password before the room says it is full", () => {
+    const t = makeLobby();
+    t.connect(1);
+    t.connect(2);
+    t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
+    for (const slot of [1, 2, 3, 4, 5]) t.lobby.handle(1, { type: "set-slot", slot, open: false });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD" });
+    expect(t.last(2, "join-password")?.code).toBe("ABCD");
+    expect(t.last(2, "error")).toBeUndefined();
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    expect(t.last(2, "error")?.message).toBe("정원 초과 입니다.");
+  });
+});
+
 describe("chat commands", () => {
   it("passes a whisper to the named player only, with no copy to the sender (S->C 0x07)", () => {
     const t = makeLobby();
@@ -961,6 +1043,18 @@ describe("chat commands", () => {
     t.lobby.handle(2, { type: "join-number", number: 1 });
     expect(t.last(2, "error")?.message).toBe("방을 찾을 수 없습니다");
     t.lobby.handle(2, { type: "join-number", number: 0 });
+    expect(t.room(2)?.code).toBe("ABCD");
+  });
+
+  it("answers /go to a secret room with its password popup, and joins it with the password (S->C 0x04 failure 3)", () => {
+    const t = makeLobby();
+    t.connect(1, "하나");
+    t.connect(2, "둘");
+    t.lobby.handle(1, { type: "create-room", title: "비밀", password: "1234" });
+    t.lobby.handle(2, { type: "join-number", number: 0 });
+    expect(t.last(2, "join-password")).toEqual({ type: "join-password", code: "ABCD" });
+    expect(t.room(2)).toBeUndefined();
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
     expect(t.room(2)?.code).toBe("ABCD");
   });
 

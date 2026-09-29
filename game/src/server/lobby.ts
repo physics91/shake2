@@ -8,6 +8,12 @@ import { chatAllowed, Room } from "./room.ts";
 
 type LobbyMessage = Extract<ServerMessage, { type: "lobby" }>;
 
+/**
+ * A wrong password is answered this late, and no password of that player is checked meanwhile:
+ * a remake's guard against guessing (R). The client waits for the answer anyway (0x448800).
+ */
+export const WRONG_PASSWORD_DELAY_MS = 500;
+
 export interface PlayableMap {
   id: string;
   title: string;
@@ -47,6 +53,8 @@ export class Lobby {
   private readonly whispered = new Map<number, number>();
   /** Players who turned whispers off with /wno. */
   private readonly noWhispers = new Set<number>();
+  /** Players whose wrong password waits for its answer: the room's code and when it goes. */
+  private readonly passwordWaits = new Map<number, { code: string; at: number }>();
   /** Something the lobby shows may have changed since it was last sent. */
   private dirty = false;
   /** The lobby as last sent, to send it again only when it changes. */
@@ -85,6 +93,7 @@ export class Lobby {
     this.lobbyChat.delete(peerId);
     this.whispered.delete(peerId);
     this.noWhispers.delete(peerId);
+    this.passwordWaits.delete(peerId);
     this.dirty = true;
     this.flushLobby();
   }
@@ -116,14 +125,15 @@ export class Lobby {
     const room = this.roomOf.get(peerId);
     switch (message.type) {
       case "create-room":
-        fail(this.createRoom(peer, profile, message.title));
+        fail(this.createRoom(peer, profile, message.title, message.password ?? ""));
         break;
       case "join-room":
-        fail(this.joinRoom(peer, profile, message.code));
+        fail(this.joinRoom(peer, profile, message.code, message.password ?? ""));
         break;
       case "join-number": {
+        // /go sends no password (0x446747): a secret room answers with its password popup.
         const asked = [...this.rooms.values()].find((r) => r.number === message.number);
-        fail(asked ? this.joinRoom(peer, profile, asked.code) : "방을 찾을 수 없습니다");
+        fail(asked ? this.joinRoom(peer, profile, asked.code, "") : "방을 찾을 수 없습니다");
         break;
       }
       case "leave-room":
@@ -218,6 +228,7 @@ export class Lobby {
 
   tick(): void {
     for (const room of this.rooms.values()) room.tick();
+    this.answerWrongPasswords();
     this.flushLobby();
   }
 
@@ -270,13 +281,14 @@ export class Lobby {
     return null;
   }
 
-  private createRoom(peer: Peer, profile: Profile, title: string): string | null {
+  private createRoom(peer: Peer, profile: Profile, title: string, password: string): string | null {
     this.leaveRoom(peer.id);
     if (this.rooms.size >= this.config.maxRooms) return "서버의 방이 가득 찼습니다.";
     const code = this.uniqueCode();
     if (!code) return "방 코드를 만들지 못했습니다.";
     // The original popup sends nothing without a title; this remake's default names the creator (R).
-    const identity = { code, number: this.freeNumber(), title: title || roomTitle(`${profile.name}의 방`) };
+    // The original server's rule for a secret room is not known (I): here, one made with a password.
+    const identity = { code, number: this.freeNumber(), title: title || roomTitle(`${profile.name}의 방`), password };
     const room = new Room(identity, peer, profile, this.roomDeps);
     this.rooms.set(code, room);
     this.roomOf.set(peer.id, room);
@@ -284,15 +296,39 @@ export class Lobby {
     return null;
   }
 
-  private joinRoom(peer: Peer, profile: Profile, code: string): string | null {
+  private joinRoom(peer: Peer, profile: Profile, code: string, password: string): string | null {
     const room = this.rooms.get(code);
     if (!room) return "방을 찾을 수 없습니다"; // 0x46ed00, no full stop
     if (this.roomOf.get(peer.id) === room) return null;
+    // The password comes before the room's own refusals (I: the server's order is not known).
+    if (room.secret && !this.passwordOpens(peer, room, password)) return null;
     this.leaveRoom(peer.id);
     const error = room.join(peer, profile);
     if (!error) this.roomOf.set(peer.id, room);
     this.dirty = true;
     return error;
+  }
+
+  /**
+   * A secret room's join: none asks for the password at once (join reply 3); a wrong one is
+   * answered after WRONG_PASSWORD_DELAY_MS, and until then this player's passwords go unchecked.
+   */
+  private passwordOpens(peer: Peer, room: Room, password: string): boolean {
+    if (this.passwordWaits.has(peer.id)) return false;
+    if (room.admits(password)) return true;
+    if (password === "") peer.send({ type: "join-password", code: room.code });
+    else this.passwordWaits.set(peer.id, { code: room.code, at: this.config.now() + WRONG_PASSWORD_DELAY_MS });
+    return false;
+  }
+
+  /** The wrong passwords' answers that are due, to players still in the lobby. */
+  private answerWrongPasswords(): void {
+    const now = this.config.now();
+    for (const [id, wait] of this.passwordWaits) {
+      if (now < wait.at) continue;
+      this.passwordWaits.delete(id);
+      if (!this.roomOf.has(id)) this.peers.get(id)?.send({ type: "join-password", code: wait.code });
+    }
   }
 
   private leaveRoom(peerId: number): void {

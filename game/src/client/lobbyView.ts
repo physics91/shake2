@@ -6,7 +6,7 @@ import { RANDOM_MAP, ROOM_CHAT_LIMIT, ROOM_CODE_LENGTH } from "../server/protoco
 import { MODE_NAMES } from "../sim/modes.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
 import type { FriendReply } from "./friends.ts";
-import { CREATE_TITLE_LIMIT, createTitle, roomCountText, roomInfoStatus } from "./lobbyLayout.ts";
+import { CREATE_PASSWORD_LIMIT, CREATE_TITLE_LIMIT, createTitle, roomCountText, roomInfoStatus } from "./lobbyLayout.ts";
 import type { MyProfile } from "./lobbyScreen.ts";
 import { loadLobbyAssets, LobbyScreen } from "./lobbyScreen.ts";
 import { mapTitle } from "./menu.ts";
@@ -112,6 +112,14 @@ export class LobbyView {
 
     const title = h("input", { id: "lobby-title", autocomplete: "off" });
     title.addEventListener("input", () => fitBytes(title, CREATE_TITLE_LIMIT));
+    // The create popup's secret check and its password (item 5, 0x42ff40): unchecking clears it.
+    const secret = h("input", { id: "lobby-secret", type: "checkbox" });
+    const password = h("input", { id: "lobby-password", autocomplete: "off", disabled: true });
+    password.addEventListener("input", () => fitBytes(password, CREATE_PASSWORD_LIMIT));
+    secret.addEventListener("change", () => {
+      password.disabled = !secret.checked;
+      if (!secret.checked) password.value = "";
+    });
     const create = (event: Event) => {
       event.preventDefault();
       // The create popup's OK (0x4300d0): a leading space asks for a title; an empty one does nothing there.
@@ -121,7 +129,8 @@ export class LobbyView {
         title.focus();
         return;
       }
-      send({ type: "create-room", title: result.title });
+      const typed = secret.checked ? password.value : "";
+      send({ type: "create-room", title: result.title, ...(typed && { password: typed }) });
     };
     const code = h("input", {
       id: "lobby-code",
@@ -180,6 +189,8 @@ export class LobbyView {
         "form",
         { class: "row", onsubmit: create },
         h("div", { class: "field" }, h("label", { for: "lobby-title" }, `방 제목 (최대 ${CREATE_TITLE_LIMIT - 1}바이트)`), title),
+        h("div", { class: "field" }, secret, h("label", { for: "lobby-secret" }, "비밀방")),
+        h("div", { class: "field" }, h("label", { for: "lobby-password" }, `비밀번호 (최대 ${CREATE_PASSWORD_LIMIT - 1}바이트)`), password),
         h("button", { class: "btn primary", type: "submit" }, "방 만들기"),
       ),
       h(
@@ -265,14 +276,15 @@ export class LobbyView {
               h(
                 "span",
                 {},
-                `${roomNumberText(room.number)} ${room.title} · ${MODE_NAMES[room.mode]} · ${room.mapId === RANDOM_MAP ? RANDOM_MAP : (maps.get(room.mapId) ?? room.mapId)} · ${roomCountText(room)} · ${room.playing ? "게임 중" : "대기 중"}`,
+                `${roomNumberText(room.number)} ${room.title} · ${MODE_NAMES[room.mode]} · ${room.mapId === RANDOM_MAP ? RANDOM_MAP : (maps.get(room.mapId) ?? room.mapId)} · ${roomCountText(room)} · ${room.playing ? "게임 중" : "대기 중"}${room.secret ? " · 비밀방" : ""}`,
               ),
               h(
                 "button",
                 {
                   class: "btn small",
                   type: "button",
-                  onclick: () => this.actions.send({ type: "join-room", code: room.code }),
+                  // What a click on the room's line does; before the canvas is up, the server asks for a password.
+                  onclick: () => (this.screen ? this.screen.joinRoom(room) : this.actions.send({ type: "join-room", code: room.code })),
                 },
                 "참가",
               ),
@@ -318,6 +330,11 @@ export class LobbyView {
   /** A create or join went out: the canvas waits for the answer. */
   waitForRoom(): void {
     this.screen?.waitForRoom();
+  }
+
+  /** Join reply 3: the canvas's password popup takes the keys (its editor is the page's password field). */
+  passwordAsked(code: string): void {
+    this.screen?.passwordAsked(code);
   }
 
   /** S->C 0x55: the canvas's popup, and the page's line when its 정보 button asked. */

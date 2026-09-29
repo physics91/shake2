@@ -5,8 +5,8 @@ import { isGameMode, TEAM_COUNT } from "../sim/modes.ts";
 import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEvent } from "../sim/types.ts";
 import { cp949Bytes, cutBytes, trimChat, typeable } from "./cp949.ts";
 
-/** 9: the panel bars (ping, pong, stats and the snapshot's bars). */
-export const PROTOCOL_VERSION = 9;
+/** 10: secret rooms (the passwords, the rooms' secret flag and join-password). */
+export const PROTOCOL_VERSION = 10;
 export const MAX_MESSAGE_BYTES = 4096;
 export const MAX_NAME_LENGTH = 12;
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -21,6 +21,10 @@ export const ROOM_CHAT_LIMIT = 45;
 export const GAME_CHAT_LIMIT = 37;
 /** The create popup trims the title and cuts it to 19 bytes (0x4300d0). */
 export const ROOM_TITLE_BYTES = 19;
+/** The create popup's password editor is set to 11 (0x42ff40) and holds 10 bytes. */
+export const ROOM_PASSWORD_BYTES = 10;
+/** The password popup's editor is set to 16 (0x42f500) and holds 15 bytes. */
+export const JOIN_PASSWORD_BYTES = 15;
 /** A line is not sent within 2000 ms of the last one (0x43f7a0). */
 export const CHAT_INTERVAL_MS = 2000;
 /** The friend popup's ID editor holds 10 bytes (0x422c40: 0xb). */
@@ -30,9 +34,10 @@ export const MAX_FRIENDS = 12;
 
 export type ClientMessage =
   | { type: "hello"; version: number; name: string; character: string }
-  /** Title from the create popup; empty for the server's default. */
-  | { type: "create-room"; title: string }
-  | { type: "join-room"; code: string }
+  /** Title from the create popup; empty for the server's default. A password makes the room secret (C->S 0x03). */
+  | { type: "create-room"; title: string; password?: string }
+  /** A room's line, or the password popup's OK with the password typed (C->S 0x04). */
+  | { type: "join-room"; code: string; password?: string }
   /** /go n (0x446747): C->S 0x04 with the room's index, n - 1, as the list's own join sends it. */
   | { type: "join-number"; number: number }
   /** A right click on a room's line: its status and players (C->S 0x55). */
@@ -147,6 +152,8 @@ export interface RoomSummary {
   max: number;
   /** +0x24 = 0. */
   playing: boolean;
+  /** +0x28: a password guards it; the password itself never leaves the server. */
+  secret: boolean;
 }
 
 /** A player in the lobby's user list (0x470bf0 + 0xe0 i). */
@@ -218,6 +225,8 @@ export type ServerMessage =
    * host alone. Either way it ends the host's busy cursor.
    */
   | { type: "kick"; slot: number; ok: boolean }
+  /** Join reply 3 (S->C 0x04, 0x444ffd): the room wants its password; the password popup opens for it. */
+  | { type: "join-password"; code: string }
   | { type: "error"; message: string };
 
 export function toWireState(state: MatchState): WireState {
@@ -256,6 +265,15 @@ export function sanitizeName(raw: string): string {
 /** A room title as the create popup sends it: cp949 text, trimmed, at most 19 bytes. */
 export function roomTitle(raw: string): string {
   return cutBytes(typeable(raw).trim(), ROOM_TITLE_BYTES).trim();
+}
+
+/**
+ * A password as an editor holds it (cp949, at most `limit` bytes, not trimmed); "" for none, and
+ * null for anything that is not a string of at most 64 characters.
+ */
+function password(raw: unknown, limit: number): string | null {
+  if (raw === undefined) return "";
+  return typeof raw === "string" && raw.length <= 64 ? cutBytes(typeable(raw), limit) : null;
 }
 
 /** A chat line the room's editor could have held, trailing blanks cut; null if there is nothing to send. */
@@ -302,15 +320,22 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return { type: "hello", version: data.version, name: sanitizeName(data.name), character: data.character };
     case "create-room": {
       const title = data.title ?? "";
-      return typeof title === "string" && title.length <= 64 ? { type: "create-room", title: roomTitle(title) } : null;
+      const secret = password(data.password, ROOM_PASSWORD_BYTES);
+      if (typeof title !== "string" || title.length > 64 || secret === null) return null;
+      return { type: "create-room", title: roomTitle(title), ...(secret && { password: secret }) };
     }
     case "leave-room":
     case "start":
       return { type: data.type };
-    case "join-room":
+    case "join-room": {
+      const code = typeof data.code === "string" ? data.code.trim().toUpperCase() : null;
+      const secret = password(data.password, JOIN_PASSWORD_BYTES);
+      if (!isRoomCode(code) || secret === null) return null;
+      return { type: "join-room", code, ...(secret && { password: secret }) };
+    }
     case "room-info": {
       const code = typeof data.code === "string" ? data.code.trim().toUpperCase() : null;
-      return isRoomCode(code) ? { type: data.type, code } : null;
+      return isRoomCode(code) ? { type: "room-info", code } : null;
     }
     case "set-ready":
       return typeof data.ready === "boolean" ? { type: "set-ready", ready: data.ready } : null;

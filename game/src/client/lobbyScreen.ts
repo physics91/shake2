@@ -18,8 +18,10 @@ import {
   CHANNEL_AT,
   CHANNEL_COLOUR,
   CREATE,
+  CREATE_PASSWORD_LIMIT,
   CREATE_POPUP,
   CREATE_TITLE_LIMIT,
+  createPopupAt,
   createTitle,
   EXIT,
   LOBBY_CHAT,
@@ -30,6 +32,11 @@ import {
   MESSAGE_HELP,
   messageLines,
   MY_INFO,
+  PASSWORD_EMPTY,
+  PASSWORD_LIMIT,
+  PASSWORD_POPUP,
+  passwordMask,
+  passwordPopupAt,
   REMOTE,
   REMOTE_POPUP,
   remoteButtonAt,
@@ -42,6 +49,7 @@ import {
   ROOM_ROW,
   ROOM_ROW_ART,
   roomCountText,
+  roomDoorIcon,
   roomIconRect,
   roomInfoRow,
   roomInfoStatus,
@@ -208,7 +216,7 @@ interface MyInfo {
 }
 
 /** The popup open over the lobby; the message box is apart and may sit on the create popup. My-info is scene 10, option 13. */
-type Popup = "create" | "remote" | "roomInfo" | "myInfo" | "option" | null;
+type Popup = "create" | "password" | "remote" | "roomInfo" | "myInfo" | "option" | null;
 
 interface RoomInfoView {
   status: RoomStatus;
@@ -225,6 +233,10 @@ export class LobbyScreen {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly chat: ChatLine;
   private readonly title: ChatLine;
+  /** The create popup's password, open while its secret check is on. */
+  private readonly secretLine: ChatLine;
+  /** The password popup's editor (0x42f500). */
+  private readonly passwordLine: ChatLine;
   /** The greeting popup's editor (0x43ea00: 36 bytes). */
   private readonly greetingLine: ChatLine;
   private myInfo: MyInfo | null = null;
@@ -243,6 +255,12 @@ export class LobbyScreen {
   /** A create or join is waiting for the server's answer. */
   private roomAsked = false;
   private popup: Popup = null;
+  /** The create popup's secret check ([0x495392]); item 5, which it needs, is everyone's here. */
+  private secret = false;
+  /** The create popup's editor is on the password, not the title ([0x46e7e4] = 0). */
+  private onPassword = false;
+  /** The room the password popup is for ([0x46e7d4]). */
+  private passwordRoom: string | null = null;
   private roomInfo: RoomInfoView = ZEROED_INFO;
   /** MSGBOX ([0x48c248]): its text and when it opened; it closes itself after 2 s. */
   private message: { text: string; since: number } | null = null;
@@ -271,6 +289,10 @@ export class LobbyScreen {
     this.chat = new ChatLine(options.stage, { limit: LOBBY_CHAT.limit, at: CHAT_INPUT, trapFocus: false });
     this.title = new ChatLine(options.stage, { limit: CREATE_TITLE_LIMIT, at: CREATE_POPUP.title.text, trapFocus: false });
     this.title.element.setAttribute("aria-label", "방 제목");
+    this.secretLine = new ChatLine(options.stage, { limit: CREATE_PASSWORD_LIMIT, at: CREATE_POPUP.password.text, trapFocus: false });
+    this.secretLine.element.setAttribute("aria-label", "비밀방 비밀번호");
+    this.passwordLine = new ChatLine(options.stage, { limit: PASSWORD_LIMIT, at: PASSWORD_POPUP.field.text, trapFocus: false });
+    this.passwordLine.element.setAttribute("aria-label", "방 비밀번호 (Enter 확인, Esc 취소)");
     this.greetingLine = new ChatLine(options.stage, { limit: GREETING_LIMIT, at: GREETING_POPUP.text, trapFocus: false });
     this.greetingLine.element.setAttribute("aria-label", "인사말");
     this.chat.open();
@@ -338,6 +360,19 @@ export class LobbyScreen {
     this.option?.friendReplied(reply);
   }
 
+  /** Join reply 3 (0x444ffd): the password popup again, empty, then the wait ends; no message. */
+  passwordAsked(code: string): void {
+    this.askPassword(code);
+    this.roomAsked = false;
+  }
+
+  /** A room's line (0x459e06): a playing room says so, a secret one asks for its password, any other is joined. */
+  joinRoom(room: RoomSummary): void {
+    if (room.playing) this.showMessage("이미 시작 되었습니다.");
+    else if (room.secret) this.askPassword(room.code);
+    else this.options.send({ type: "join-room", code: room.code });
+  }
+
   /** S->C 0x55: the room info popup's record, whichever room it answers (the original does not check). */
   showRoomInfo(info: RoomInfoView): void {
     if (this.popup === "roomInfo") this.roomInfo = info;
@@ -348,6 +383,8 @@ export class LobbyScreen {
     cancelAnimationFrame(this.frame);
     this.chat.dispose();
     this.title.dispose();
+    this.secretLine.dispose();
+    this.passwordLine.dispose();
     this.greetingLine.dispose();
     this.option?.dispose();
     this.status.remove();
@@ -439,9 +476,11 @@ export class LobbyScreen {
       return;
     }
     if (this.popup === "create") {
-      if (inside(CREATE_POPUP.ok.hit, x, y)) this.submitCreate();
-      else if (inside(CREATE_POPUP.cancel.hit, x, y)) this.closePopup(true);
-      else if (inside(CREATE_POPUP.title.hit, x, y)) this.title.focus();
+      this.createRelease(x, y);
+      return;
+    }
+    if (this.popup === "password") {
+      this.passwordRelease(x, y);
       return;
     }
     if (this.popup === "remote") {
@@ -474,7 +513,7 @@ export class LobbyScreen {
   }
 
   private lobbyRelease(x: number, y: number): void {
-    const { send, sounds } = this.options;
+    const { sounds } = this.options;
     if (inside(WAIT_GAME.off.hit, x, y)) {
       // 0x42fcc0: the filter asks the server for the waiting rooms, off asks for page 1.
       this.waitingOnly = !this.waitingOnly;
@@ -504,8 +543,7 @@ export class LobbyScreen {
     const row = roomRowAt(x, y);
     const room = row >= 0 ? this.rows[row] : null;
     if (room?.title) {
-      if (room.playing) this.showMessage("이미 시작 되었습니다.");
-      else send({ type: "join-room", code: room.code });
+      this.joinRoom(room);
       return;
     }
     const count = this.log.length;
@@ -691,16 +729,103 @@ export class LobbyScreen {
     this.status.textContent = "";
   }
 
-  /** CREATE (0x42f340): the title editor takes the keys; the chat line closes until the popup does. */
+  /** CREATE (0x42f340): the title editor takes the keys, the secret check is off; the chat line closes until the popup does. */
   private openCreate(): void {
     this.chat.close();
+    this.secret = false;
+    this.onPassword = false;
     this.openPopup("create", "방 만들기 창: 방 제목을 입력하고 Enter, 닫으려면 Esc.");
     this.title.open();
   }
 
-  /** Closes the popup; the create and room info popups open the chat line again, the remote's X too. */
+  /** A release on the create popup (0x459800); no sounds. */
+  private createRelease(x: number, y: number): void {
+    switch (createPopupAt(x, y)) {
+      case "cancel":
+        this.closePopup(true);
+        break;
+      case "ok":
+        this.submitCreate();
+        break;
+      case "secret":
+        this.toggleSecret();
+        break;
+      case "title":
+        this.editCreate(false);
+        break;
+      case "password":
+        // The field takes the editor only while the secret check is on (0x4302d0).
+        if (this.secret) this.editCreate(true);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** The secret check (0x42ff40): off clears the password and puts the editor back on the title; on leaves it where it is. */
+  private toggleSecret(): void {
+    this.secret = !this.secret;
+    if (this.secret) this.secretLine.open();
+    else this.secretLine.close();
+    this.editCreate(this.secret && this.onPassword);
+    this.status.textContent = this.secret ? "비밀방: 비밀번호 칸이 생겼습니다. Tab으로 옮겨 갑니다." : "비밀방 해제";
+  }
+
+  /** The create popup's editor on the password or the title (0x42f3f0). */
+  private editCreate(password: boolean): void {
+    this.onPassword = password;
+    (password ? this.secretLine : this.title).focus();
+  }
+
+  /**
+   * The password popup (0x42f500): the chat line closes and the popup's editor takes the keys,
+   * empty. Anything open over the lobby closes first: only the page's buttons reach here with one.
+   */
+  private askPassword(code: string): void {
+    if (this.myInfo) this.closeMyInfo();
+    if (this.option) this.closeOption();
+    if (this.popup) this.closePopup(false);
+    this.chat.close();
+    this.passwordRoom = code;
+    const room = this.state.rooms.find((r) => r.code === code);
+    const name = room ? `${roomNumberText(room.number)}번 방은 ` : "";
+    this.openPopup("password", `${name}비밀방입니다. 비밀번호를 입력하고 Enter, 닫으려면 Esc.`);
+    this.passwordLine.open();
+  }
+
+  /** A release on the password popup (0x459942): OK, then 취소; no sounds. The field takes the page's focus back. */
+  private passwordRelease(x: number, y: number): void {
+    const hit = passwordPopupAt(x, y);
+    if (hit === "ok") this.submitPassword();
+    else if (hit === "cancel") this.closePopup(true);
+    else if (inside(PASSWORD_POPUP.field.hit, x, y)) this.passwordLine.focus();
+  }
+
+  /** OK or Enter (0x42fe60): nothing typed asks for it and the popup stays; else the join goes with it and the popup closes. */
+  private submitPassword(): void {
+    const code = this.passwordRoom;
+    if (code === null) return;
+    const password = this.passwordLine.view().text;
+    if (password === "") {
+      this.passwordLine.text = "";
+      this.showMessage(PASSWORD_EMPTY);
+      return;
+    }
+    this.options.send({ type: "join-room", code, password });
+    this.closePopup(true);
+  }
+
+  /** Closes the popup; the create, password and room info popups open the chat line again, the remote's X too. */
   private closePopup(reopenChat: boolean): void {
-    if (this.popup === "create") this.title.close();
+    if (this.popup === "create") {
+      this.title.close();
+      this.secretLine.close();
+      this.secret = false;
+      this.onPassword = false;
+    } else if (this.popup === "password") {
+      this.passwordLine.close();
+      this.passwordRoom = null;
+    }
     this.popup = null;
     this.roomInfo = ZEROED_INFO;
     this.status.textContent = "";
@@ -721,19 +846,31 @@ export class LobbyScreen {
       this.showMessage(result.message);
       return;
     }
+    // The check itself is not sent (C->S 0x03 has the title and the password only).
+    const password = this.secret ? this.secretLine.view().text : "";
     this.closePopup(true);
-    this.options.send({ type: "create-room", title: result.title });
+    this.options.send({ type: "create-room", title: result.title, ...(password && { password }) });
   }
 
   /** Keys (0x45fa70): Enter sends or submits, Esc closes the top thing or leaves, F1 shows the help screen. */
   private key(event: KeyboardEvent): void {
     const active = document.activeElement;
+    const editors = [this.chat, this.title, this.secretLine, this.passwordLine, this.greetingLine].map((line) => line.element);
     const ours =
-      [this.chat.element, this.title.element, this.greetingLine.element, this.options.canvas, document.body].includes(active as HTMLElement) ||
+      [...editors, this.options.canvas, document.body].includes(active as HTMLElement) ||
       (this.option?.owns(active) ?? false) ||
       active === null;
-    // Tab moves on to the page's controls, which do everything the canvas does; a key change takes it.
-    if (!ours || (event.key === "Tab" && !(this.option && this.option.window.changing >= 0))) return;
+    if (!ours) return;
+    // Tab moves on to the page's controls, which do everything the canvas does; a key change takes
+    // it, and so does the create popup with the secret check on, where it swaps the fields (0x45fa70).
+    if (event.key === "Tab") {
+      if (this.popup === "create" && this.secret) {
+        event.preventDefault();
+        this.editCreate(!this.onPassword);
+        return;
+      }
+      if (!(this.option && this.option.window.changing >= 0)) return;
+    }
     if (event.code === "F1") {
       event.preventDefault();
       this.helpScreen = !this.helpScreen;
@@ -833,6 +970,8 @@ export class LobbyScreen {
       }
     } else if (this.popup === "create") {
       this.submitCreate();
+    } else if (this.popup === "password") {
+      this.submitPassword();
     } else if (this.myInfo?.greeting) {
       this.submitGreeting();
     } else if (this.myInfo) {
@@ -951,7 +1090,7 @@ export class LobbyScreen {
       const icons = ROOM_ICONS[style];
       const icon = (k: number, part: { x: number; dy: number }) => blit(ctx, assets.roomButton, roomIconRect(k), part.x, y + part.dy);
       icon(icons.mode[room.mode], ROOM_PARTS.mode);
-      icon(icons.door, ROOM_PARTS.door);
+      icon(roomDoorIcon(room), ROOM_PARTS.door);
       icon(icons.disc, ROOM_PARTS.disc);
       const title = room.mapId === RANDOM_MAP ? RANDOM_MAP : maps.find((m) => m.id === room.mapId)?.title;
       if (title) outlinedText(ctx, shownMapName(title), ROOM_PARTS.map.x, y + ROOM_PARTS.map.dy, mapFill, FONT_13, "left", mapOutline);
@@ -972,15 +1111,21 @@ export class LobbyScreen {
   }
 
   /**
-   * The caret (0x42eef0) of the editor in use: the title while the create popup is open, else the
-   * chat line's, shown even while it is closed. The remote, the room info and the message box hide it.
+   * The caret (0x42eef0) of the editor in use: the create popup's field, the password popup's, else
+   * the chat line's, shown even while it is closed. The remote, the room info and the message box hide it.
    */
   private drawEditorCaret(now: number): void {
     if (this.message || this.popup === "remote" || this.popup === "roomInfo") return;
     if (!this.caret.shown(now)) return;
     if (this.popup === "create") {
-      const at = CREATE_POPUP.title.text;
-      drawCaret(this.ctx, at.x + 7 * this.title.view().caret, at.y);
+      const at = this.onPassword ? CREATE_POPUP.password.text : CREATE_POPUP.title.text;
+      const line = this.onPassword ? this.secretLine : this.title;
+      drawCaret(this.ctx, at.x + 7 * line.view().caret, at.y);
+      return;
+    }
+    if (this.popup === "password") {
+      const at = PASSWORD_POPUP.field.text;
+      drawCaret(this.ctx, at.x + 7 * this.passwordLine.view().caret, at.y);
       return;
     }
     const caret = this.chat.isOpen ? this.chat.view().caret : 0;
@@ -991,19 +1136,46 @@ export class LobbyScreen {
     const { ctx } = this;
     const { assets } = this.options;
     if (this.popup === "create") {
-      // 0x42e130: the right half of new_gameinfo; the secret, highlight and betting checks need items.
+      // 0x42e130: the right half of new_gameinfo, then item 5's secret check; the highlight and
+      // betting checks need items 6 and 7, which nobody has.
       blit(ctx, assets.gameInfo, CREATE_POPUP.src, CREATE_POPUP.at.x, CREATE_POPUP.at.y);
-      const at = CREATE_POPUP.title.text;
-      outlinedText(ctx, this.title.view().text, at.x, at.y, CREATE_POPUP.titleColour, FONT_13);
+      const { secret } = CREATE_POPUP;
+      this.button(secret.icon.src, secret.icon.at);
+      if (this.secret) {
+        for (const part of [secret.check, secret.label, secret.field]) this.button(part.src, part.at);
+      }
       for (const button of [CREATE_POPUP.ok, CREATE_POPUP.cancel]) {
         if (this.pressedOver(button.hit)) this.button(button.pressed, button.at);
       }
+      const at = CREATE_POPUP.title.text;
+      outlinedText(ctx, this.title.view().text, at.x, at.y, CREATE_POPUP.titleColour, FONT_13);
+      const mask = passwordMask(this.secretLine.view().text);
+      const star = CREATE_POPUP.password.text;
+      if (mask) outlinedText(ctx, mask, star.x, star.y, CREATE_POPUP.titleColour, FONT_13);
+    } else if (this.popup === "password") {
+      // 0x42ea30 draws nothing while the message box is up; the popup stays open under it.
+      if (!this.message) this.drawPasswordPopup();
     } else if (this.popup === "remote") {
       blit(ctx, assets.remote, REMOTE_POPUP.src, REMOTE_POPUP.at.x, REMOTE_POPUP.at.y);
       this.drawRemoteArt();
     } else if (this.popup === "roomInfo") {
       this.drawRoomInfo();
     }
+  }
+
+  /** 0x42ea30: new_basicwindow, the lock and its label, OK or 취소 held, and one '*' a byte. */
+  private drawPasswordPopup(): void {
+    const { ctx } = this;
+    const { assets } = this.options;
+    const popup = PASSWORD_POPUP;
+    blit(ctx, assets.basicWindow, popup.window.src, popup.window.at.x, popup.window.at.y);
+    this.button(popup.lock.src, popup.lock.at);
+    blit(ctx, assets.button2, popup.label.src, popup.label.at.x, popup.label.at.y);
+    for (const button of [popup.ok, popup.cancel]) {
+      if (this.pressedOver(button.hit)) blit(ctx, assets.button2, button.pressed, button.at.x, button.at.y);
+    }
+    const mask = passwordMask(this.passwordLine.view().text);
+    if (mask) plainText(ctx, mask, popup.field.text.x, popup.field.text.y, popup.colour, FONT_13);
   }
 
   /** 0x42e560: hover art under the mouse, pressed art while held; the message box does not stop it. */

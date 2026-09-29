@@ -34,6 +34,8 @@ export interface RoomIdentity {
   code: string;
   number: number;
   title: string;
+  /** "" for none; any other makes the room secret. */
+  password: string;
 }
 
 export interface ChatSent {
@@ -76,6 +78,8 @@ export class Room {
   readonly code: string;
   readonly number: number;
   readonly title: string;
+  /** Kept here only: no message about the room carries it. */
+  readonly #password: string;
   hostId: number;
   mapId: string;
   /** 0 = RANDOM. The server's default is not known; RANDOM is the list's first entry (R). */
@@ -93,6 +97,7 @@ export class Room {
     this.code = identity.code;
     this.number = identity.number;
     this.title = identity.title;
+    this.#password = identity.password;
     // The first map of the list; the server's default is not known (R).
     this.mapId = deps.maps[0];
     this.hostId = host.id;
@@ -108,6 +113,15 @@ export class Room {
 
   get size(): number {
     return this.members.size;
+  }
+
+  /** +0x28: the room list's secret door, and a join that must bring the password. */
+  get secret(): boolean {
+    return this.#password !== "";
+  }
+
+  admits(password: string): boolean {
+    return password === this.#password;
   }
 
   info(): RoomInfo {
@@ -143,6 +157,7 @@ export class Room {
       players: this.members.size,
       max: this.closed.filter((closed) => !closed).length,
       playing: this.playing,
+      secret: this.secret,
     };
   }
 

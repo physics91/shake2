@@ -37,6 +37,29 @@ describe("parseClientMessage", () => {
     });
   });
 
+  it("takes a secret room's password as its editors hold it: cp949, 10 bytes to create, 15 to join, untrimmed (0x42ff40, 0x42f500)", () => {
+    expect(parseClientMessage('{"type":"create-room","title":"방","password":" 12345678901"}')).toEqual({
+      type: "create-room",
+      title: "방",
+      password: " 123456789",
+    });
+    expect(parseClientMessage('{"type":"create-room","title":"방","password":"비밀번호다섯"}')).toEqual({
+      type: "create-room",
+      title: "방",
+      password: "비밀번호다",
+    });
+    expect(parseClientMessage('{"type":"join-room","code":"ABCD","password":"1234567890123456"}')).toEqual({
+      type: "join-room",
+      code: "ABCD",
+      password: "123456789012345",
+    });
+    // An empty password is no password: the message is the one without it.
+    expect(parseClientMessage('{"type":"create-room","title":"방","password":""}')).toEqual({ type: "create-room", title: "방" });
+    expect(parseClientMessage('{"type":"join-room","code":"ABCD","password":"\\u0007"}')).toEqual({ type: "join-room", code: "ABCD" });
+    expect(parseClientMessage('{"type":"join-room","code":"ABCD","password":1}')).toBeNull();
+    expect(parseClientMessage(`{"type":"create-room","password":"${"x".repeat(65)}"}`)).toBeNull();
+  });
+
   it("takes a chat line the room's editor could hold: cp949 text under 45 bytes, trailing blanks cut (0x418d37, 0x446200)", () => {
     expect(parseClientMessage('{"type":"chat","text":"  안녕 \\t "}')).toEqual({ type: "chat", text: "  안녕" });
     expect(parseClientMessage(JSON.stringify({ type: "chat", text: "a".repeat(44) }))).toEqual({ type: "chat", text: "a".repeat(44) });
