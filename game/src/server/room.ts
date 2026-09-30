@@ -10,6 +10,8 @@ import { CHAT_INTERVAL_MS, RANDOM_MAP, SNAPSHOT_EVERY, START_BARS, toWireState, 
 
 export interface Peer {
   readonly id: number;
+  /** The connection's address key (address.ts), shared by one address's connections. */
+  readonly address?: string;
   send(message: ServerMessage): void;
 }
 

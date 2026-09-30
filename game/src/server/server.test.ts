@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -7,17 +9,20 @@ import { WebSocket as WsClient } from "ws";
 import type { ServerMessage } from "./protocol.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
 import type { RunningServer } from "./server.ts";
-import { channelName, isOriginAllowed, startServer } from "./server.ts";
+import { channelName, isOriginAllowed, startServer, startupWarning, tlsFiles } from "./server.ts";
 
 const ASSETS = join(import.meta.dirname, "..", "..", "public", "assets");
+const HAS_ASSETS = existsSync(join(ASSETS, "manifest.json"));
+const HAS_OPENSSL = spawnSync("openssl", ["version"], { stdio: "ignore" }).status === 0;
 
 class Client {
   readonly messages: ServerMessage[] = [];
   readonly socket: WebSocket;
   private waiters: (() => void)[] = [];
 
-  constructor(url: string) {
-    this.socket = new WebSocket(url);
+  /** A URL for Node's own WebSocket, or a ws client made with what that one cannot set (headers, CA). */
+  constructor(target: string | WsClient) {
+    this.socket = typeof target === "string" ? new WebSocket(target) : (target as unknown as WebSocket);
     this.socket.addEventListener("message", (event) => {
       this.messages.push(JSON.parse(String(event.data)) as ServerMessage);
       for (const wake of this.waiters) wake();
@@ -77,7 +82,27 @@ describe("channelName", () => {
   });
 });
 
-describe.skipIf(!existsSync(join(ASSETS, "manifest.json")))("room server over WebSocket", () => {
+describe("tlsFiles", () => {
+  it("takes both PEM files or neither, and will not start on one alone", () => {
+    expect(tlsFiles(undefined, undefined)).toBeUndefined();
+    expect(tlsFiles("", "")).toBeUndefined();
+    expect(tlsFiles("cert.pem", "key.pem")).toEqual({ certFile: "cert.pem", keyFile: "key.pem" });
+    expect(() => tlsFiles("cert.pem", undefined)).toThrow("TLS_KEY");
+    expect(() => tlsFiles("", "key.pem")).toThrow("TLS_CERT");
+  });
+});
+
+describe("startupWarning", () => {
+  it("warns when other machines can reach the server without TLS", () => {
+    expect(startupWarning("0.0.0.0", false)).toContain("TLS_CERT");
+    expect(startupWarning("192.168.0.2", false)).toContain("unencrypted");
+    expect(startupWarning("0.0.0.0", true)).toBeNull();
+    expect(startupWarning("127.0.0.1", false)).toBeNull();
+    expect(startupWarning("localhost", false)).toBeNull();
+  });
+});
+
+describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
   let server: RunningServer;
   let url: string;
 
@@ -148,6 +173,33 @@ describe.skipIf(!existsSync(join(ASSETS, "manifest.json")))("room server over We
     expect(await closed).toBe(1009);
   });
 
+  it("checks one address's passwords one at a time, by the address a local proxy forwards", async () => {
+    const from = (address: string) => new Client(new WsClient(url, { headers: { "x-forwarded-for": address } }));
+    const host = new Client(url);
+    const guesser = from("203.0.113.5");
+    const sameLine = from("::ffff:203.0.113.5");
+    const elsewhere = from("198.51.100.7");
+    const clients = [host, guesser, sameLine, elsewhere];
+    await Promise.all(clients.map((c) => c.opened()));
+    for (const [i, c] of clients.entries()) c.send({ type: "hello", version: PROTOCOL_VERSION, name: `주소${i}`, character: "bobo" });
+    await Promise.all(clients.map((c) => c.waitFor(isType("welcome"))));
+    host.send({ type: "create-room", title: "", password: "1234" });
+    const created = await host.waitFor((m): m is Extract<ServerMessage, { type: "room" }> => m.type === "room" && m.room !== null);
+    const code = created.room?.code;
+
+    guesser.send({ type: "join-room", code, password: "0000" });
+    await guesser.waitFor(isType("join-password"));
+    const answered = Date.now();
+    sameLine.send({ type: "join-room", code, password: "1234" });
+    elsewhere.send({ type: "join-room", code, password: "1234" });
+    const entered = (c: Client) =>
+      c.waitFor((m): m is ServerMessage => m.type === "room" && m.room?.code === code).then(() => c);
+    expect(await Promise.race([entered(sameLine), entered(elsewhere)])).toBe(elsewhere);
+    await entered(sameLine);
+    expect(Date.now() - answered).toBeGreaterThanOrEqual(400);
+    for (const c of clients) c.socket.close();
+  });
+
   it("rejects browsers from other origins", async () => {
     const socket = new WsClient(url, { origin: "https://evil.test" });
     const outcome = await new Promise<string>((resolve) => {
@@ -157,5 +209,64 @@ describe.skipIf(!existsSync(join(ASSETS, "manifest.json")))("room server over We
     });
     expect(outcome).not.toBe("open");
     socket.terminate();
+  });
+});
+
+describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
+  const logged: string[] = [];
+  let server: RunningServer;
+  let dir: string;
+  let cert: Buffer;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "shake2-tls-"));
+    const certFile = join(dir, "cert.pem");
+    const keyFile = join(dir, "key.pem");
+    const made = spawnSync(
+      "openssl",
+      ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "1"]
+        .concat(["-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1", "-keyout", keyFile, "-out", certFile]),
+      { stdio: "ignore" },
+    );
+    if (made.status !== 0) throw new Error("openssl did not make a certificate");
+    cert = readFileSync(certFile);
+    server = await startServer({
+      host: "127.0.0.1",
+      port: 0,
+      assetsDir: ASSETS,
+      allowedOrigins: [],
+      maxRooms: 5,
+      tls: { certFile, keyFile },
+      log: (line) => logged.push(line),
+    });
+  });
+
+  afterAll(async () => {
+    await server?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("speaks wss:// with a certificate the client checks", async () => {
+    // No plaintext warning on TLS.
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(`shake2 server on wss://127.0.0.1:${server.port}/ws (`);
+    const c = new Client(new WsClient(`wss://127.0.0.1:${server.port}/ws`, { ca: cert }));
+    await c.opened();
+    c.send({ type: "hello", version: PROTOCOL_VERSION, name: "암호", character: "bobo" });
+    expect((await c.waitFor(isType("welcome"))).playerId).toBeGreaterThan(0);
+    c.socket.close();
+  });
+
+  it("does not open for plain ws://, nor for a certificate the client does not trust", async () => {
+    for (const scheme of ["ws", "wss"]) {
+      const socket = new WsClient(`${scheme}://127.0.0.1:${server.port}/ws`);
+      const outcome = await new Promise<string>((resolve) => {
+        socket.on("open", () => resolve("open"));
+        socket.on("unexpected-response", (_req, res) => resolve(`http ${res.statusCode}`));
+        socket.on("error", () => resolve("error"));
+      });
+      expect(outcome).not.toBe("open");
+      socket.terminate();
+    }
   });
 });

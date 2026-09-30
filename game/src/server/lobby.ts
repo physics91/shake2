@@ -9,10 +9,26 @@ import { chatAllowed, Room } from "./room.ts";
 type LobbyMessage = Extract<ServerMessage, { type: "lobby" }>;
 
 /**
- * A wrong password is answered this late, and no password of that player is checked meanwhile:
- * a remake's guard against guessing (R). The client waits for the answer anyway (0x448800).
+ * A remake's guard against guessing (R): secret-room passwords are checked one at a time per
+ * address (address.ts), and after the n-th wrong one in a row that address's next check waits
+ * min(PASSWORD_RETRY_MS · 2^(n−1), PASSWORD_RETRY_MAX_MS). A wrong one is answered at once; the
+ * client waits for the answer anyway (0x448800), so an honest player is only ever kept waiting.
  */
-export const WRONG_PASSWORD_DELAY_MS = 500;
+export const PASSWORD_RETRY_MS = 500;
+export const PASSWORD_RETRY_MAX_MS = 30_000;
+/** An address's wrong passwords are forgotten this long after its last one. A right one undoes none. */
+export const PASSWORD_FAILURES_KEPT_MS = 600_000;
+
+const ROOM_NOT_FOUND = "방을 찾을 수 없습니다"; // 0x46ed00, no full stop
+
+/** One address's password checks: the wrong ones in a row, and the players waiting their turn. */
+interface PasswordGuard {
+  failures: number;
+  lastFailureAt: number;
+  readyAt: number;
+  /** One attempt per player, in the order they came. */
+  queue: { peerId: number; code: string; password: string }[];
+}
 
 export interface PlayableMap {
   id: string;
@@ -53,8 +69,8 @@ export class Lobby {
   private readonly whispered = new Map<number, number>();
   /** Players who turned whispers off with /wno. */
   private readonly noWhispers = new Set<number>();
-  /** Players whose wrong password waits for its answer: the room's code and when it goes. */
-  private readonly passwordWaits = new Map<number, { code: string; at: number }>();
+  /** Secret-room password checks by address key. */
+  private readonly passwordGuards = new Map<string, PasswordGuard>();
   /** Something the lobby shows may have changed since it was last sent. */
   private dirty = false;
   /** The lobby as last sent, to send it again only when it changes. */
@@ -88,12 +104,12 @@ export class Lobby {
 
   disconnect(peerId: number): void {
     this.leaveRoom(peerId);
+    this.dropPasswordAttempt(peerId);
     this.peers.delete(peerId);
     this.profiles.delete(peerId);
     this.lobbyChat.delete(peerId);
     this.whispered.delete(peerId);
     this.noWhispers.delete(peerId);
-    this.passwordWaits.delete(peerId);
     this.dirty = true;
     this.flushLobby();
   }
@@ -133,7 +149,7 @@ export class Lobby {
       case "join-number": {
         // /go sends no password (0x446747): a secret room answers with its password popup.
         const asked = [...this.rooms.values()].find((r) => r.number === message.number);
-        fail(asked ? this.joinRoom(peer, profile, asked.code, "") : "방을 찾을 수 없습니다");
+        fail(asked ? this.joinRoom(peer, profile, asked.code, "") : ROOM_NOT_FOUND);
         break;
       }
       case "leave-room":
@@ -228,7 +244,7 @@ export class Lobby {
 
   tick(): void {
     for (const room of this.rooms.values()) room.tick();
-    this.answerWrongPasswords();
+    this.checkAllPasswords();
     this.flushLobby();
   }
 
@@ -283,6 +299,7 @@ export class Lobby {
 
   private createRoom(peer: Peer, profile: Profile, title: string, password: string): string | null {
     this.leaveRoom(peer.id);
+    this.dropPasswordAttempt(peer.id);
     if (this.rooms.size >= this.config.maxRooms) return "서버의 방이 가득 찼습니다.";
     const code = this.uniqueCode();
     if (!code) return "방 코드를 만들지 못했습니다.";
@@ -298,37 +315,93 @@ export class Lobby {
 
   private joinRoom(peer: Peer, profile: Profile, code: string, password: string): string | null {
     const room = this.rooms.get(code);
-    if (!room) return "방을 찾을 수 없습니다"; // 0x46ed00, no full stop
+    if (!room) return ROOM_NOT_FOUND;
     if (this.roomOf.get(peer.id) === room) return null;
     // The password comes before the room's own refusals (I: the server's order is not known).
-    if (room.secret && !this.passwordOpens(peer, room, password)) return null;
+    if (room.secret) {
+      this.tryPassword(peer, room.code, password);
+      return null;
+    }
+    return this.enter(peer, profile, room);
+  }
+
+  private enter(peer: Peer, profile: Profile, room: Room): string | null {
     this.leaveRoom(peer.id);
     const error = room.join(peer, profile);
-    if (!error) this.roomOf.set(peer.id, room);
+    if (!error) {
+      this.roomOf.set(peer.id, room);
+      this.dropPasswordAttempt(peer.id);
+    }
     this.dirty = true;
     return error;
   }
 
-  /**
-   * A secret room's join: none asks for the password at once (join reply 3); a wrong one is
-   * answered after WRONG_PASSWORD_DELAY_MS, and until then this player's passwords go unchecked.
-   */
-  private passwordOpens(peer: Peer, room: Room, password: string): boolean {
-    if (this.passwordWaits.has(peer.id)) return false;
-    if (room.admits(password)) return true;
-    if (password === "") peer.send({ type: "join-password", code: room.code });
-    else this.passwordWaits.set(peer.id, { code: room.code, at: this.config.now() + WRONG_PASSWORD_DELAY_MS });
-    return false;
+  private guardKey(peer: Peer): string {
+    return peer.address ?? `peer:${peer.id}`;
   }
 
-  /** The wrong passwords' answers that are due, to players still in the lobby. */
-  private answerWrongPasswords(): void {
-    const now = this.config.now();
-    for (const [id, wait] of this.passwordWaits) {
-      if (now < wait.at) continue;
-      this.passwordWaits.delete(id);
-      if (!this.roomOf.has(id)) this.peers.get(id)?.send({ type: "join-password", code: wait.code });
+  /**
+   * A secret room's join: none asks for the password at once (join reply 3); a password waits its
+   * address's turn, and a player's further ones are dropped until it has been checked.
+   */
+  private tryPassword(peer: Peer, code: string, password: string): void {
+    if (password === "") {
+      peer.send({ type: "join-password", code });
+      return;
     }
+    const key = this.guardKey(peer);
+    let guard = this.passwordGuards.get(key);
+    if (!guard) {
+      guard = { failures: 0, lastFailureAt: 0, readyAt: 0, queue: [] };
+      this.passwordGuards.set(key, guard);
+    }
+    if (guard.queue.some((attempt) => attempt.peerId === peer.id)) return;
+    guard.queue.push({ peerId: peer.id, code, password });
+    this.checkPasswords(guard);
+  }
+
+  /** Checks the address's waiting passwords while its turn has come. */
+  private checkPasswords(guard: PasswordGuard): void {
+    const now = this.config.now();
+    while (now >= guard.readyAt) {
+      const attempt = guard.queue.shift();
+      if (!attempt) return;
+      const peer = this.peers.get(attempt.peerId);
+      const profile = this.profiles.get(attempt.peerId);
+      if (!peer || !profile) continue;
+      const room = this.rooms.get(attempt.code);
+      if (!room) {
+        peer.send({ type: "error", message: ROOM_NOT_FOUND });
+        continue;
+      }
+      if (room.admits(attempt.password)) {
+        const error = this.enter(peer, profile, room);
+        if (error) peer.send({ type: "error", message: error });
+        continue;
+      }
+      if (now - guard.lastFailureAt >= PASSWORD_FAILURES_KEPT_MS) guard.failures = 0;
+      guard.failures++;
+      guard.lastFailureAt = now;
+      guard.readyAt = now + Math.min(PASSWORD_RETRY_MS * 2 ** (guard.failures - 1), PASSWORD_RETRY_MAX_MS);
+      peer.send({ type: "join-password", code: room.code });
+    }
+  }
+
+  /** Checks every address whose turn has come, and forgets those with nothing left to hold. */
+  private checkAllPasswords(): void {
+    const now = this.config.now();
+    for (const [key, guard] of this.passwordGuards) {
+      this.checkPasswords(guard);
+      const forgotten = guard.failures === 0 || now - guard.lastFailureAt >= PASSWORD_FAILURES_KEPT_MS;
+      if (guard.queue.length === 0 && forgotten) this.passwordGuards.delete(key);
+    }
+  }
+
+  /** A player who went, or who went into a room, no longer waits for a password check. */
+  private dropPasswordAttempt(peerId: number): void {
+    const peer = this.peers.get(peerId);
+    const guard = peer && this.passwordGuards.get(this.guardKey(peer));
+    if (guard) guard.queue = guard.queue.filter((attempt) => attempt.peerId !== peerId);
   }
 
   private leaveRoom(peerId: number): void {

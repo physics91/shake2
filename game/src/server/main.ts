@@ -2,22 +2,29 @@
 //   HOST (default 127.0.0.1; use 0.0.0.0 for LAN play), PORT (default 8787),
 //   ALLOWED_ORIGINS (comma-separated extra browser origins), MAX_ROOMS (default 50),
 //   CHANNEL (the lobby banner's channel name, default "복원판 채널"),
-//   FRIENDS_FILE (where the friend lists are kept, default data/friends.json beside public/).
+//   FRIENDS_FILE (where the friend lists are kept, default data/friends.json beside public/),
+//   TLS_CERT and TLS_KEY (PEM files: both make it wss://), TRUST_PROXY (comma-separated addresses
+//   of proxies whose X-Forwarded-For is believed; loopback ones always are).
 import { join } from "node:path";
 
-import { startServer } from "./server.ts";
+import { startServer, tlsFiles } from "./server.ts";
+
+const list = (value: string | undefined) =>
+  (value ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 const server = await startServer({
   host: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 8787),
   assetsDir: join(import.meta.dirname, "..", "..", "public", "assets"),
-  allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
+  allowedOrigins: list(process.env.ALLOWED_ORIGINS),
   maxRooms: Number(process.env.MAX_ROOMS ?? 50),
   channel: process.env.CHANNEL,
   friendsFile: process.env.FRIENDS_FILE || join(import.meta.dirname, "..", "..", "data", "friends.json"),
+  tls: tlsFiles(process.env.TLS_CERT, process.env.TLS_KEY),
+  trustedProxies: list(process.env.TRUST_PROXY),
   log: (line) => console.log(line),
 });
 

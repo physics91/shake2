@@ -5,7 +5,7 @@ import { msvcRand } from "../sim/rng.ts";
 import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
 import { FriendBook } from "./friends.ts";
 import type { LobbyConfig } from "./lobby.ts";
-import { Lobby, WRONG_PASSWORD_DELAY_MS } from "./lobby.ts";
+import { Lobby, PASSWORD_FAILURES_KEPT_MS, PASSWORD_RETRY_MAX_MS, PASSWORD_RETRY_MS } from "./lobby.ts";
 import type { RoomInfo, ServerMessage } from "./protocol.ts";
 import { PROTOCOL_VERSION, START_BARS, TYPING_PACKET_MS, typingPacketDue } from "./protocol.ts";
 import { PING_ECHO_MS } from "./room.ts";
@@ -33,9 +33,9 @@ function makeLobby(overrides: Partial<LobbyConfig> = {}) {
     ...overrides,
   });
   const inbox = new Map<number, ServerMessage[]>();
-  const connect = (id: number, name = `P${id}`, character = "bobo") => {
+  const connect = (id: number, name = `P${id}`, character = "bobo", address?: string) => {
     inbox.set(id, []);
-    lobby.connect({ id, send: (m) => inbox.get(id)?.push(m) });
+    lobby.connect({ id, send: (m) => inbox.get(id)?.push(m), address });
     lobby.handle(id, { type: "hello", version: PROTOCOL_VERSION, name, character });
   };
   const last = <T extends ServerMessage["type"]>(id: number, type: T) =>
@@ -932,38 +932,131 @@ describe("secret rooms (+0x28)", () => {
     expect(t.room(2)?.players.map((p) => p.id)).toEqual([1, 2]);
   });
 
-  it("answers a wrong password only after 500 ms, and checks no password until then", () => {
+  it("answers a wrong password at once, and checks the next only 500 ms later", () => {
     const t = makeLobby();
     t.connect(1);
     t.connect(2);
     t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
     t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
-    t.lobby.tick();
-    expect(t.count(2, "join-password")).toBe(0);
-    t.clock.now = WRONG_PASSWORD_DELAY_MS - 1;
-    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
-    t.lobby.tick();
-    expect(t.count(2, "join-password")).toBe(0);
-    expect(t.room(2)).toBeUndefined();
-    t.clock.now = WRONG_PASSWORD_DELAY_MS;
-    t.lobby.tick();
     expect(t.count(2, "join-password")).toBe(1);
+    t.clock.now = PASSWORD_RETRY_MS - 1;
     t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
-    expect(t.room(2)?.code).toBe("ABCD");
     t.lobby.tick();
+    expect(t.room(2)).toBeUndefined();
+    t.clock.now = PASSWORD_RETRY_MS;
+    t.lobby.tick();
+    expect(t.room(2)?.code).toBe("ABCD");
     expect(t.count(2, "join-password")).toBe(1);
   });
 
-  it("drops the wrong password's reply when the player goes", () => {
+  it("holds every connection from one address, and one that comes back later, to the same checks", () => {
     const t = makeLobby();
     t.connect(1);
-    t.connect(2);
+    t.connect(2, "둘", "bobo", "203.0.113.5");
+    t.connect(3, "셋", "bobo", "203.0.113.5");
+    t.connect(4, "넷", "bobo", "198.51.100.7");
     t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
     t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
-    t.lobby.disconnect(2);
-    t.clock.now = WRONG_PASSWORD_DELAY_MS;
+    t.lobby.handle(3, { type: "join-room", code: "ABCD", password: "1234" });
+    // Another address is not held.
+    t.lobby.handle(4, { type: "join-room", code: "ABCD", password: "1234" });
+    expect(t.room(4)?.code).toBe("ABCD");
     t.lobby.tick();
-    expect(t.count(2, "join-password")).toBe(0);
+    expect(t.room(3)).toBeUndefined();
+    expect(t.count(3, "join-password")).toBe(0);
+    t.clock.now = PASSWORD_RETRY_MS;
+    t.lobby.tick();
+    expect(t.room(3)?.code).toBe("ABCD");
+
+    // Coming back on a new connection keeps the count: the second wrong one in a row holds 1 s.
+    t.lobby.disconnect(2);
+    t.connect(5, "다섯", "bobo", "203.0.113.5");
+    t.clock.now = 600;
+    t.lobby.handle(5, { type: "join-room", code: "ABCD", password: "0000" });
+    expect(t.count(5, "join-password")).toBe(1);
+    t.clock.now = 600 + 2 * PASSWORD_RETRY_MS - 1;
+    t.lobby.handle(5, { type: "join-room", code: "ABCD", password: "1234" });
+    t.lobby.tick();
+    expect(t.room(5)).toBeUndefined();
+    t.clock.now = 600 + 2 * PASSWORD_RETRY_MS;
+    t.lobby.tick();
+    expect(t.room(5)?.code).toBe("ABCD");
+  });
+
+  it("doubles the hold for each wrong password in a row up to 30 s, and a right one does not undo it", () => {
+    const t = makeLobby();
+    t.connect(1);
+    t.connect(2, "둘", "bobo", "203.0.113.5");
+    t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
+    const holds = [500, 1000, 2000, 4000, 8000, 16000, 30000, 30000];
+    expect(holds.at(-1)).toBe(PASSWORD_RETRY_MAX_MS);
+    let at = 0;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    for (const [i, hold] of holds.entries()) {
+      t.clock.now = at + hold - 1;
+      t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+      t.lobby.tick();
+      expect(t.count(2, "join-password")).toBe(i + 1);
+      at += hold;
+      t.clock.now = at;
+      t.lobby.tick();
+      expect(t.count(2, "join-password")).toBe(i + 2);
+    }
+    // The right password waits out the last hold like any other, and leaves the count as it was.
+    t.clock.now = at + PASSWORD_RETRY_MAX_MS;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    expect(t.room(2)?.code).toBe("ABCD");
+    t.lobby.handle(2, { type: "leave-room" });
+    at = t.clock.now;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    t.clock.now = at + PASSWORD_RETRY_MAX_MS - 1;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    t.lobby.tick();
+    expect(t.room(2)).toBeNull();
+  });
+
+  it("forgets an address's wrong passwords 10 minutes after the last one", () => {
+    const t = makeLobby();
+    t.connect(1);
+    t.connect(2, "둘", "bobo", "203.0.113.5");
+    t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    t.clock.now = 500;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    t.clock.now = 1500;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    expect(t.count(2, "join-password")).toBe(3);
+    t.clock.now = 1500 + PASSWORD_FAILURES_KEPT_MS;
+    t.lobby.tick();
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    expect(t.count(2, "join-password")).toBe(4);
+    t.clock.now += PASSWORD_RETRY_MS;
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    expect(t.room(2)?.code).toBe("ABCD");
+  });
+
+  it("takes one password at a time from a player, and skips a player who went without spending a check", () => {
+    const t = makeLobby();
+    t.connect(1);
+    t.connect(2, "둘", "bobo", "203.0.113.5");
+    t.connect(3, "셋", "bobo", "203.0.113.5");
+    t.connect(4, "넷", "bobo", "203.0.113.5");
+    t.lobby.handle(1, { type: "create-room", title: "", password: "1234" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0000" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "0001" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD", password: "1234" });
+    t.lobby.handle(3, { type: "join-room", code: "ABCD", password: "0002" });
+    t.lobby.handle(4, { type: "join-room", code: "ABCD", password: "1234" });
+    t.lobby.disconnect(3);
+    t.clock.now = PASSWORD_RETRY_MS;
+    t.lobby.tick();
+    // 2's second password was checked; its third was dropped, and 3's turn went to 4 unspent.
+    expect(t.count(2, "join-password")).toBe(2);
+    expect(t.room(2)).toBeUndefined();
+    t.clock.now = PASSWORD_RETRY_MS + 2 * PASSWORD_RETRY_MS;
+    t.lobby.tick();
+    expect(t.room(4)?.code).toBe("ABCD");
+    expect(t.count(3, "error")).toBe(0);
   });
 
   it("asks for the password before the room says it is full", () => {

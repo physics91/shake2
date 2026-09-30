@@ -1,7 +1,9 @@
 import { randomInt } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
-import type { IncomingMessage } from "node:http";
+import type { IncomingMessage, RequestListener, Server as HttpServer } from "node:http";
+import { createServer as createTlsServer } from "node:https";
+import type { Server as HttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
@@ -11,6 +13,7 @@ import { WebSocketServer } from "ws";
 import type { LevelMeta, Manifest } from "../assets/types.ts";
 import { MEDALS_TO_WIN, ROUND_SECONDS, TICK_RATE } from "../sim/constants.ts";
 import { isRoomMap, layoutFromLevel } from "../sim/level.ts";
+import { addressKey, clientAddress, isLoopbackHost } from "./address.ts";
 import { cutBytes, typeable } from "./cp949.ts";
 import { openFriendFile } from "./friendFile.ts";
 import { FriendBook } from "./friends.ts";
@@ -31,7 +34,30 @@ export interface ServerOptions {
   channel?: string;
   /** The JSON file the friend lists are kept in; without one they last until the server stops. */
   friendsFile?: string;
+  /** PEM files to speak wss:// with; without them the server speaks plain ws://. */
+  tls?: TlsFiles;
+  /** Proxies whose X-Forwarded-For is believed besides loopback ones (address.ts). */
+  trustedProxies?: readonly string[];
   log?: (line: string) => void;
+}
+
+export interface TlsFiles {
+  certFile: string;
+  keyFile: string;
+}
+
+/** TLS_CERT and TLS_KEY: both or neither; one alone is a mistake the server will not start with. */
+export function tlsFiles(certFile: string | undefined, keyFile: string | undefined): TlsFiles | undefined {
+  if (!certFile && !keyFile) return undefined;
+  if (!certFile) throw new Error("TLS_KEY is set without TLS_CERT");
+  if (!keyFile) throw new Error("TLS_CERT is set without TLS_KEY");
+  return { certFile, keyFile };
+}
+
+/** Secret-room passwords cross the network as they were typed unless the server speaks TLS. */
+export function startupWarning(host: string, tls: boolean): string | null {
+  if (tls || isLoopbackHost(host)) return null;
+  return `warning: ${host} is reachable from other machines over plain ws://, so room passwords travel unencrypted; set TLS_CERT and TLS_KEY (or put a TLS proxy in front) for wss://`;
 }
 
 const DEFAULT_CHANNEL = "복원판 채널";
@@ -99,13 +125,18 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     roomCode: randomRoomCode,
   });
 
-  const http = createServer((req, res) => {
+  const respond: RequestListener = (req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end("ok");
       return;
     }
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("not found");
-  });
+  };
+  const tls = options.tls;
+  const http: HttpServer | HttpsServer = tls
+    ? createTlsServer({ cert: readFileSync(tls.certFile), key: readFileSync(tls.keyFile) }, respond)
+    : createServer(respond);
+  const trustedProxies = options.trustedProxies ?? [];
   const wss = new WebSocketServer({
     server: http,
     path: "/ws",
@@ -116,15 +147,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   let nextPeerId = 1;
   const alive = new WeakMap<WebSocket, boolean>();
-  wss.on("connection", (socket) => {
+  wss.on("connection", (socket, req) => {
     const id = nextPeerId++;
+    const address = addressKey(clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], trustedProxies));
     alive.set(socket, true);
     const send = (message: ServerMessage) => {
       if (socket.readyState !== socket.OPEN) return;
       if (message.type === "snapshot" && socket.bufferedAmount > SLOW_CLIENT_BUFFER) return;
       socket.send(JSON.stringify(message));
     };
-    lobby.connect({ id, send });
+    lobby.connect({ id, send, address });
     log(`peer ${id} connected (${wss.clients.size} online)`);
 
     let windowStart = Date.now();
@@ -187,7 +219,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     http.once("error", reject);
     http.listen(options.port, options.host, () => {
       const port = (http.address() as AddressInfo).port;
-      log(`shake2 server on ws://${options.host}:${port}/ws (${maps.length} maps)`);
+      log(`shake2 server on ${tls ? "wss" : "ws"}://${options.host}:${port}/ws (${maps.length} maps)`);
+      const warning = startupWarning(options.host, tls !== undefined);
+      if (warning) log(warning);
       resolve({
         port,
         close: () =>
