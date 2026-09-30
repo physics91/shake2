@@ -6,7 +6,8 @@ import { cutBytes, typeable } from "../server/cp949.ts";
 import type { OwnAccount } from "../server/protocol.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
 import { settings, sounds } from "./shell.ts";
-import type { LoginSent, ServerList, ServerRow, StartScene, StatusCommand } from "./startScreen.ts";
+import type { CheckKind } from "./signUpLayout.ts";
+import type { LoginSent, ServerList, ServerRow, SignUpCommand, StartScene, StatusCommand } from "./startScreen.ts";
 import { loadStartAssets, preloadOnline, StartScreen } from "./startScreen.ts";
 import { LOGIN } from "./startLayout.ts";
 import type { StatusState } from "./statusScreen.ts";
@@ -31,6 +32,10 @@ export interface StartActions {
   saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
+  /** The sign-up window's 가입하기; false without the account server. */
+  register(request: { id: string; nick: string; password: string }): boolean;
+  /** Its ID and nick checks; false without the account server. */
+  check(kind: CheckKind, text: string): boolean;
   /** The chosen row clicked again. */
   connect(): void;
   /** The page's form: log in and go into the first row's lobby. */
@@ -73,6 +78,19 @@ const STATUS_MIRRORS: readonly [StatusCommand, string][] = [
   ["key3", "아이템 사용 2 키 바꾸기 (옵션 쪽)"],
   ["optionOk", "확인: 옵션 저장 (옵션 쪽)"],
   ["optionCancel", "취소: 옵션 쪽 닫기 (옵션 쪽)"],
+];
+
+/** The sign-up window's mouse-only controls for the keyboard: each clicks the same place, on the login only. */
+const SIGN_UP_MIRRORS: readonly [SignUpCommand, string][] = [
+  ["open", "NEW ID: 회원가입 창 열기 (로그인 화면)"],
+  ["idCheck", "아이디검색 (회원가입 창)"],
+  ["nickCheck", "닉네임검색 (회원가입 창)"],
+  ["termsUp", "안내 글 위로 (회원가입 창 ▲)"],
+  ["termsDown", "안내 글 아래로 (회원가입 창 ▼)"],
+  ["agree", "동의함 (회원가입 창)"],
+  ["disagree", "동의안함 (회원가입 창)"],
+  ["submit", "가입하기 (회원가입 창)"],
+  ["close", "창 닫기 (회원가입 창 X)"],
 ];
 
 /** The ID editor's 10 bytes (0x41bc00), for the page's name field too. */
@@ -136,13 +154,20 @@ export class StartView {
       h(
         "p",
         { class: "keys" },
-        "로그인: 아이디를 넣고 Enter, 비밀번호를 넣고 Enter. Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 인증 서버에 닿지 않으면 로그인 없이 내 정보 화면으로 가서 연습과 2인 대전만 할 수 있습니다. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
+        "로그인: 아이디를 넣고 Enter, 비밀번호를 넣고 Enter. Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 가입은 아래 회원가입 창 버튼으로 창을 열고 Tab으로 칸을 옮겨 넣은 뒤 동의함과 가입하기. 인증 서버에 닿지 않으면 로그인 없이 내 정보 화면으로 가서 연습과 2인 대전만 할 수 있습니다. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
       ),
       h(
         "div",
         { class: "actions", role: "group", "aria-label": "내 정보 화면 버튼" },
         ...STATUS_MIRRORS.map(([command, label]) =>
           h("button", { class: "btn", type: "button", onclick: () => this.withScreen((screen) => screen.statusCommand(command)) }, label),
+        ),
+      ),
+      h(
+        "div",
+        { class: "actions", role: "group", "aria-label": "회원가입 창 버튼" },
+        ...SIGN_UP_MIRRORS.map(([command, label]) =>
+          h("button", { class: "btn", type: "button", onclick: () => this.withScreen((screen) => screen.signUpCommand(command)) }, label),
         ),
       ),
       h(
@@ -191,6 +216,8 @@ export class StartView {
           saveCharacter: actions.saveCharacter,
           saveStatus: actions.saveStatus,
           characterChanged: actions.characterChanged,
+          register: actions.register,
+          check: actions.check,
           connect: actions.connect,
           exit: actions.exit,
         });
@@ -233,6 +260,11 @@ export class StartView {
 
   statusSaved(account: OwnAccount): void {
     this.withScreen((screen) => screen.statusSaved(account));
+  }
+
+  /** The account server's answer to the sign-up window. */
+  signUpAnswer(kind: "register" | CheckKind, rcode: number): void {
+    this.withScreen((screen) => screen.signUpAnswer(kind, rcode));
   }
 
   saveRefused(code: number | string): void {

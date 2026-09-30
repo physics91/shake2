@@ -19,6 +19,8 @@ import { MENU_SOUNDS } from "./presentation.ts";
 import { inside } from "./roomLayout.ts";
 import { CursorAnim, drawBalloon, drawCaret, drawDarkness, drawHelpScreen, Fade, freezeCanvas, Pointer } from "./screenKit.ts";
 import { attachCapture } from "./screenCapture.ts";
+import type { CheckKind, SignUpTarget } from "./signUpLayout.ts";
+import { SignUpWindow } from "./signUpWindow.ts";
 import { blit } from "./sprite.ts";
 import type { ListSlide } from "./startLayout.ts";
 import {
@@ -68,6 +70,8 @@ export interface StartAssets {
   listWindow: HTMLImageElement;
   serverOb: HTMLImageElement;
   memo: HTMLImageElement;
+  /** new_id: the sign-up window. */
+  signUp: HTMLImageElement;
   button: HTMLImageElement;
   button2: HTMLImageElement;
   /** images2: the message box (MSGBOX 0x443770). */
@@ -81,7 +85,7 @@ export interface StartAssets {
 
 export async function loadStartAssets(): Promise<StartAssets> {
   const image = (name: string) => loadImage(`image/${name}.png`);
-  const [logo, loading, server, banner, login, listWindow, serverOb, memo, button, button2, messageBox, quitBox, images, help, cursor, status] = await Promise.all([
+  const [logo, loading, server, banner, login, listWindow, serverOb, memo, signUp, button, button2, messageBox, quitBox, images, help, cursor, status] = await Promise.all([
     image("Logo"),
     image("loading"),
     image("new_server"),
@@ -90,6 +94,7 @@ export async function loadStartAssets(): Promise<StartAssets> {
     image("new_listwindow"),
     image("new_serverob"),
     image("new_memo"),
+    image("new_id"),
     image("new_button"),
     image("new_button2"),
     image("images2"),
@@ -108,6 +113,7 @@ export async function loadStartAssets(): Promise<StartAssets> {
     listWindow,
     serverOb,
     memo,
+    signUp,
     button,
     button2,
     messageBox,
@@ -206,6 +212,9 @@ const STATUS_COMMANDS = {
 
 export type StatusCommand = keyof typeof STATUS_COMMANDS;
 
+/** The sign-up window's controls the page's hidden buttons stand for; "open" is the login's NEW ID. */
+export type SignUpCommand = "open" | Exclude<SignUpTarget, "id" | "nick" | "password" | "confirm">;
+
 export interface StartScreenOptions {
   canvas: HTMLCanvasElement;
   stage: HTMLElement;
@@ -241,6 +250,10 @@ export interface StartScreenOptions {
   saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
+  /** The sign-up window's 가입하기; false when there is no account server to send it to. */
+  register(request: { id: string; nick: string; password: string }): boolean;
+  /** Its 아이디검색 and 닉네임검색; false likewise. */
+  check(kind: CheckKind, text: string): boolean;
   /** The chosen row clicked again (0x4441c0): connect and say hello. */
   connect(): void;
   /** EXIT on the login, YES on the quit box: the original closes its window; here the program starts over. */
@@ -257,6 +270,8 @@ export class StartScreen {
   private readonly idLine: ChatLine;
   private readonly pwLine: ChatLine;
   private readonly statusPage: StatusPage;
+  /** [0x493f30]: NEW ID's window over the login. */
+  private readonly signUp: SignUpWindow;
   private scene: StartScene;
   private fade: Fade | null = null;
   /** The picture a fade-out keeps, and what follows it. */
@@ -308,6 +323,14 @@ export class StartScreen {
       save: (profile) => this.saveStatus(profile),
       characterChanged: (character) => options.characterChanged(character),
     });
+    this.signUp = new SignUpWindow({
+      stage: options.stage,
+      assets: { window: options.assets.signUp, button: options.assets.button, button2: options.assets.button2 },
+      announce: (text) => this.announce(text),
+      message: (text) => this.showMessage(text),
+      register: (request) => options.register(request),
+      check: (kind, text) => options.check(kind, text),
+    });
     this.scene = options.begin;
     const now = performance.now();
     this.tickAt = now;
@@ -341,6 +364,7 @@ export class StartScreen {
   /** The message box over the scene (MSGBOX 0x443700); `closed` runs once it goes, however it goes. */
   showMessage(text: string, closed?: () => void): void {
     this.message = { text, since: performance.now(), closed };
+    this.signUp.box = true;
     this.announce(text.replace("\n", " "));
   }
 
@@ -348,7 +372,15 @@ export class StartScreen {
   authFailed(): void {
     if (this.scene !== "login") return;
     this.busy = false;
-    this.showMessage(AUTH_FAILED);
+    // A sign-up request out fails with its own message instead, and the reconnect a failed sign-up
+    // send makes (R) does not cover that message when it fails too.
+    if (this.signUp.pending) this.signUp.lost();
+    else if (!(this.signUp.isOpen && this.message)) this.showMessage(AUTH_FAILED);
+  }
+
+  /** The account server's answer to the sign-up window's request. */
+  signUpAnswer(kind: "register" | CheckKind, rcode: number): void {
+    this.signUp.answer(kind, rcode);
   }
 
   /** The auth server's answer (S->C 0x0a, 0x448ab0): the login's fields go and scene 5 opens with the account. */
@@ -359,6 +391,7 @@ export class StartScreen {
     status.character = Math.max(0, characterIndex(account.character));
     status.hue = account.hue;
     status.useId = account.useId;
+    if (this.signUp.isOpen) this.signUp.close();
     this.idLine.close();
     this.pwLine.close();
     this.enterStatus();
@@ -427,6 +460,23 @@ export class StartScreen {
     this.release(Math.trunc((hit[0] + hit[2]) / 2), Math.trunc((hit[1] + hit[3]) / 2));
   }
 
+  /** A hidden control for the sign-up window: the release a click there makes, on the login only. */
+  signUpCommand(command: SignUpCommand): void {
+    if (this.scene !== "login") return;
+    if (command === "open") {
+      if (this.signUp.isOpen) return;
+      const hit = LOGIN_BUTTONS.newId.hit;
+      this.release(Math.trunc((hit[0] + hit[2]) / 2), Math.trunc((hit[1] + hit[3]) / 2));
+      return;
+    }
+    if (!this.signUp.isOpen) {
+      this.announce("회원가입 창이 열려 있지 않습니다.");
+      return;
+    }
+    const at = SignUpWindow.centre(command);
+    this.release(at.x, at.y);
+  }
+
   /** 2→4 (0x449172): the list freezes and fades out; then the lobby is shown. */
   leave(then: () => void): void {
     this.fadeOut(freezeCanvas(this.options.canvas), performance.now(), FRAME_MS, then);
@@ -438,6 +488,7 @@ export class StartScreen {
     this.idLine.dispose();
     this.pwLine.dispose();
     this.statusPage.dispose();
+    this.signUp.dispose();
     this.status.remove();
     this.detach();
   }
@@ -622,14 +673,20 @@ export class StartScreen {
   /** 0x459069: OK, NEW ID and EXIT sound menu2; a field takes the focus. */
   private loginRelease(x: number, y: number): void {
     const { sounds } = this.options;
+    if (this.signUp.isOpen) {
+      this.signUp.release(x, y);
+      if (!this.signUp.isOpen) this.setFocus(this.focus);
+      return;
+    }
     switch (loginButtonAt(x, y)) {
       case "ok":
         sounds.play(MENU_SOUNDS.primary);
         this.login();
         break;
       case "newId":
-        // The sign-up window comes with its own step; only its sound is kept for now.
+        // SND 0x25, then the window (0x41bd70); the login's pending flag does not stop it.
         sounds.play(MENU_SOUNDS.primary);
+        this.signUp.open();
         break;
       case "exit":
         sounds.play(MENU_SOUNDS.primary);
@@ -702,6 +759,14 @@ export class StartScreen {
     else this.announce("");
   }
 
+  /** Esc with the window up (0x461737): it closes and the login's field takes the editor again. */
+  private closeSignUp(): void {
+    if (this.signUp.pending) return;
+    this.signUp.close();
+    this.announce("회원가입 창을 닫았습니다.");
+    this.setFocus(this.focus);
+  }
+
   private closeMemo(): void {
     this.memo = false;
     this.announce("공지 창을 닫았습니다.");
@@ -711,7 +776,13 @@ export class StartScreen {
   private closeMessage(): void {
     const closed = this.message?.closed;
     this.message = null;
+    this.signUp.box = false;
     closed?.();
+    // Over the sign-up window the box only hides: no reset, no reconnect (0x4615d4, 0x45885d).
+    if (this.scene === "login" && this.signUp.isOpen) {
+      this.signUp.refocus();
+      return;
+    }
     if (this.scene === "login") {
       this.pwLine.text = "";
       this.idLine.text = this.savedId;
@@ -729,6 +800,7 @@ export class StartScreen {
       active === null ||
       active.tagName === "H1" ||
       this.statusPage.owns(active) ||
+      this.signUp.owns(active) ||
       [this.idLine.element, this.pwLine.element, this.options.canvas, document.body].includes(active as HTMLElement);
     if (!ours) return;
     this.options.sounds.unlock();
@@ -760,6 +832,17 @@ export class StartScreen {
       return;
     }
     if (this.scene !== "login" || this.blocked || this.message || this.helpScreen) return;
+    if (this.signUp.isOpen) {
+      // Tab and Enter in the sign-up window (0x45ff16, 0x45fbb3); Enter never signs up.
+      if (event.key === "Tab" && !event.shiftKey) {
+        event.preventDefault();
+        this.signUp.tab();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        this.signUp.enter();
+      }
+      return;
+    }
     // Tab and Enter on the login (0x45ff0c, 0x45fb06). Shift+Tab is left to the page's controls.
     if (event.key === "Tab" && !event.shiftKey) {
       event.preventDefault();
@@ -777,6 +860,7 @@ export class StartScreen {
   private escape(): void {
     if (this.helpScreen) this.helpScreen = false;
     else if (this.message) this.closeMessage();
+    else if (this.scene === "login" && this.signUp.isOpen) this.closeSignUp();
     else if (this.scene !== "servers" || this.blocked) return;
     else if (this.memo) this.closeMemo();
     else this.openQuitBox();
@@ -944,6 +1028,13 @@ export class StartScreen {
     const { assets } = this.options;
     ctx.drawImage(assets.server, 0, 0);
     blit(ctx, assets.banner, START_BANNER.src, START_BANNER.at.x, START_BANNER.at.y);
+    if (this.signUp.isOpen) {
+      // new_id in new_login's place (0x419a5e); no balloons.
+      const mouse = this.pointer.inside ? this.pointer.mouse : null;
+      this.signUp.draw(ctx, mouse, this.pointer.held, this.caret.shown(now) && !this.message);
+      outlinedText(ctx, `ver. ${INSTALLED_VERSION}`, VERSION_TEXT.x, VERSION_TEXT.y, YELLOW, FONT_13);
+      return;
+    }
     ctx.drawImage(assets.login, LOGIN.panel.x, LOGIN.panel.y);
     const id = this.idLine.view();
     const pw = this.pwLine.view();
@@ -1034,11 +1125,12 @@ export class StartScreen {
   private drawTail(now: number): void {
     const { ctx } = this;
     const { assets } = this.options;
-    if (this.pointer.inside) this.cursor.draw(ctx, assets.cursor, now, this.pointer.mouse, this.busy, this.handCursor);
+    if (this.pointer.inside) this.cursor.draw(ctx, assets.cursor, now, this.pointer.mouse, this.waiting, this.handCursor);
     const message = this.message;
     if (!message) return;
     if (now - message.since >= MESSAGE_BOX.hideMs) {
       this.message = null;
+      this.signUp.box = false;
       message.closed?.();
       return;
     }
@@ -1051,7 +1143,12 @@ export class StartScreen {
     if (!this.pointer.inside) return;
     const { x, y } = this.pointer.mouse;
     if (inside(button.hit, x, y)) drawBalloon(ctx, MESSAGE_HELP, x, y);
-    this.cursor.draw(ctx, assets.cursor, now, this.pointer.mouse, this.busy, this.handCursor);
+    this.cursor.draw(ctx, assets.cursor, now, this.pointer.mouse, this.waiting, this.handCursor);
+  }
+
+  /** The busy cursor: a connection under way, or the sign-up's request (R: the original's froze the frame). */
+  private get waiting(): boolean {
+    return this.busy || this.signUp.pending;
   }
 
   /** Scene 5 sets the hand over its banner each frame (0x41f580). */

@@ -238,6 +238,10 @@ class OnlineSession {
           return this.statusSaving;
         },
         characterChanged: (character) => writePreference("p1", character),
+        // The web site's sign-up and checks go to the account server (R); a send that finds it gone
+        // connects again, so the next try can go (the original made a new connection each time).
+        register: (request) => this.authSend({ type: "register", ...request }),
+        check: (kind, text) => this.authSend(kind === "id" ? { type: "check-id", id: text } : { type: "check-nick", nick: text }),
         connect: () => {
           const row = this.list.rows[this.list.selected];
           if (row?.local) this.openLocalRoom();
@@ -278,6 +282,12 @@ class OnlineSession {
         this.channels = [];
         return "offline";
     }
+  }
+
+  private authSend(message: ClientMessage): boolean {
+    if (this.auth.send(message)) return true;
+    this.auth.connect(this.serverUrl);
+    return false;
   }
 
   /** The page's form: the login, then the first row's lobby once the auth server answers. */
@@ -325,6 +335,12 @@ class OnlineSession {
         return;
       case "server-info":
         this.rowAnswered(message.channel, message.load);
+        return;
+      case "registered":
+        this.startView?.signUpAnswer("register", message.rcode);
+        return;
+      case "checked":
+        this.startView?.signUpAnswer(message.kind, message.rcode);
         return;
       case "saved":
         this.account = message.account;
