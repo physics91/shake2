@@ -6,11 +6,11 @@ import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEve
 import { cp949Bytes, cutBytes, trimChat, typeable } from "./cp949.ts";
 
 /**
- * 14: the ranking (ranking, ranking-search). 13: scene 5's guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
+ * 15: the notices (notice, status-notice). 14: the ranking (ranking, ranking-search). 13: scene 5's guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
  * badges, the room info's and the friend list's badges). 11: accounts (login, sign-up, the version
  * check, hello with a session and a channel).
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 export const MAX_MESSAGE_BYTES = 4096;
 export const MAX_NAME_LENGTH = 12;
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -35,6 +35,13 @@ export const CHAT_INTERVAL_MS = 2000;
 export const FRIEND_ID_BYTES = 10;
 /** The friend list's rows; the original server refuses the thirteenth (S->C 0x64 -3). */
 export const MAX_FRIENDS = 12;
+
+/** S->C 0x50's text (0x44579f: 0x411b60(pkt, 0, 0x64)): with its NUL in 100 bytes, 99 at most. */
+export const NOTICE_BYTES = 99;
+/** S->C 0x101's text, as the packet buffer holds it (about 0x400 bytes with its NUL). */
+export const STATUS_NOTICE_BYTES = 0x3ff;
+/** A line of it goes through a 0x100-byte stack buffer with no bound check (0x41cdd0): 255 bytes. */
+export const STATUS_NOTICE_LINE_BYTES = 0xff;
 
 /** The server list holds 80 rows (0x497190 + 0x1c·i up to the count at 0x497a50). */
 export const MAX_CHANNELS = 80;
@@ -363,6 +370,10 @@ export type ServerMessage =
   | { type: "ranking"; page: number; rows: RankingRow[] }
   /** FIND's answer: the ID's page and its rows, or null ("Not Found") for an ID not ranked. */
   | { type: "ranking-search"; page: number | null; rows: RankingRow[] }
+  /** The notice line (S->C 0x50): the lobby's, the room's and the match's bottom text for 60 s. */
+  | { type: "notice"; text: string }
+  /** Scene 5's notices (S->C 0x101): lines each ended by "\n", drawn down its right side. */
+  | { type: "status-notice"; text: string }
   /** A save taken (scene 5's Go and 확인, the greeting popup's S->C 0x58): the account now. */
   | { type: "saved"; account: OwnAccount }
   /** A nick not taken (S->C 0x57, 0x44b080): 0xfc once a day, 0xfd taken by another, 0xfe any other failure. */

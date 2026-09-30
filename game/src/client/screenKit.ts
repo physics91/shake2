@@ -1,5 +1,5 @@
 // What the lobby (scene 4) and the waiting room (scene 7) draw and track the same way: the mouse
-// (actions on release, 0x45a412 and 0x459796), the cursor, the bottom notice, the help balloon,
+// (actions on release, 0x45a412 and 0x459796), the cursor, the help balloon,
 // the chat caret and the chat log's colours.
 import type { Rect } from "../assets/types.ts";
 import { animDue } from "../sim/constants.ts";
@@ -8,7 +8,7 @@ import { INSTALLED_VERSION, SCREEN_H, SCREEN_W, VERSION_TEXT } from "./hudLayout
 import type { ChatLineClass } from "./roomChat.ts";
 import { chatLineClass, shownChat } from "./roomChat.ts";
 import type { Point } from "./roomLayout.ts";
-import { HELP_BOX, helpBox, NOTICE } from "./roomLayout.ts";
+import { HELP_BOX, helpBox } from "./roomLayout.ts";
 import { blit, drawFrame } from "./sprite.ts";
 import { FADE_FRAMES, fadeInDarkness, fadeOutDarkness, FRAME_MS } from "./startLayout.ts";
 import { FONT_12, FONT_13, outlinedText, plainText, YELLOW } from "./text.ts";
@@ -133,27 +133,6 @@ export class CursorAnim {
     }
     const { anim, frame } = this.advance(now, sheet.meta);
     drawFrame(ctx, sheet, sheet.meta.animations[anim], frame, at.x, at.y);
-  }
-}
-
-/** The bottom notice (0x4142d0): white and yellow in turn every 500 ms, for 60 s. */
-export class Notice {
-  private current: { text: string; since: number } | null = null;
-
-  show(text: string, now: number): void {
-    this.current = { text, since: now };
-  }
-
-  draw(ctx: CanvasRenderingContext2D, now: number, at: Point): void {
-    const notice = this.current;
-    if (!notice) return;
-    const age = now - notice.since;
-    if (age >= NOTICE.showMs) {
-      this.current = null;
-      return;
-    }
-    const colour = Math.floor(age / NOTICE.swapMs) % 2 === 0 ? "#ffffff" : YELLOW;
-    outlinedText(ctx, notice.text, at.x, at.y, colour, FONT_13);
   }
 }
 

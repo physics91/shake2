@@ -58,6 +58,7 @@ import {
   scrollUp,
   showGuildRow,
   STATUS_BUTTONS,
+  STATUS_NOTICE,
   STATUS_TEXT,
   statusKeyName,
   stepStatusCharacter,
@@ -110,10 +111,12 @@ export interface StatusState {
   /** [0x4699e8]: show the ID rather than the nick; 1 at start in 0311, the account's here (as Shake1 fills it at login). */
   useId: boolean;
   guild: GuildScroll;
+  /** [0x48c2a4]: the notices of the last S->C 0x101 this session; none until one comes. */
+  notices: readonly string[];
 }
 
 export function newStatusState(savedCharacter: string | null): StatusState {
-  return { character: Math.max(0, characterIndex(savedCharacter ?? "")), hue: 0, useId: true, guild: newGuildScroll() };
+  return { character: Math.max(0, characterIndex(savedCharacter ?? "")), hue: 0, useId: true, guild: newGuildScroll(), notices: [] };
 }
 
 export type StatusAction = "go" | "practice" | "exit";
@@ -239,9 +242,11 @@ export class StatusPage {
     this.editing = true;
     this.resetFields();
     this.loadPortrait();
+    const notices = this.options.state.notices.filter(Boolean);
     this.options.announce(
       `내 정보 화면. ${this.accountText()}캐릭터 ${this.character}. 아래 버튼: Go game(서버 목록), Practice(혼자 연습), Ranking, Option, Exit. ` +
-        "닉네임·인사말 칸은 Tab으로 바꿉니다. 길드는 목록에서 고른 뒤 ▶로 가입합니다.",
+        "닉네임·인사말 칸은 Tab으로 바꿉니다. 길드는 목록에서 고른 뒤 ▶로 가입합니다." +
+        (notices.length > 0 ? ` 공지: ${notices.join(" / ")}` : ""),
     );
   }
 
@@ -617,10 +622,17 @@ export class StatusPage {
     if (this.page === "ranking") this.drawRanking(ctx, now, mouse);
     else if (this.option) this.drawOption(ctx, this.option, now, mouse);
     else this.drawMain(ctx, now, mouse, held);
-    // Notices come only from the server (S->C 0x101): none. Option's hover only while its page is closed.
+    this.drawNotices(ctx);
+    // Option's hover only while its page is closed.
     const bottom = (Object.keys(STATUS_BUTTONS) as StatusButton[]).filter((name) => name !== "option" || !this.option);
     if (mouse) this.drawHover(ctx, bottom.map((name) => STATUS_BUTTONS[name]), mouse);
     outlinedText(ctx, `ver. ${INSTALLED_VERSION}`, VERSION_TEXT.x, VERSION_TEXT.y, YELLOW, FONT_13);
+  }
+
+  /** 0x41d2b5: S->C 0x101's lines down the right side, over whichever page is open. */
+  private drawNotices(ctx: CanvasRenderingContext2D): void {
+    const n = STATUS_NOTICE;
+    this.options.state.notices.forEach((line, i) => outlinedText(ctx, line, n.x, n.y + n.step * i, n.colour, FONT_13, "left", n.outline));
   }
 
   private drawBanner(ctx: CanvasRenderingContext2D, now: number): void {

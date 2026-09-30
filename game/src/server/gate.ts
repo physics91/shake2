@@ -66,6 +66,10 @@ export interface GateConfig {
   now(): number;
   /** A fresh session token (random, unguessable). */
   token(): string;
+  /** The operator's notice line (S->C 0x50), sent to each session let into a channel. */
+  notice?: string;
+  /** The operator's scene 5 notices (S->C 0x101), sent after each login. */
+  statusNotice?: string;
 }
 
 type AuthMessage = Extract<ClientMessage, { type: "login" | "register" | "check-id" | "check-nick" }>;
@@ -276,6 +280,9 @@ export class Gate {
     connection.joined = true;
     this.online.set(session.account, connection.peer.id);
     session.lastUsed = this.config.now();
+    // When the original server sent S->C 0x50 is not known; the remake sends the operator's line on
+    // entering, so it shows in the lobby in place of the F1 hint (R).
+    if (this.config.notice) connection.peer.send({ type: "notice", text: this.config.notice });
     channel.lobby.join(connection.peer, own);
   }
 
@@ -472,6 +479,9 @@ export class Gate {
         const key = nameKey(account.id);
         connection.account = key;
         const token = this.startSession(key);
+        // S->C 0x101's time is not known either: with each login, just before its answer, so scene 5
+        // (which follows the login here) has the lines as it opens (R).
+        if (this.config.statusNotice) send({ type: "status-notice", text: this.config.statusNotice });
         send({ type: "login", ok: true, account: ownAccount(account, accounts), token, channels: this.rows() });
         return;
       }

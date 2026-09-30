@@ -208,7 +208,8 @@ export const HELP_COLOR = "#ffff9b";
 export const VERSION_TEXT = { x: 720, y: 580 };
 /** Registry Shake2\version as the 0311 installer sets it; the game reads it at 0x45f48a. */
 export const INSTALLED_VERSION = 23;
-export const BOTTOM_MESSAGE = { x: 153, y: 567, text: "*** 바른말 고운말을 사용하고 매너를 지키는 쉐이커가 됩시다. ***" };
+/** The match's bottom line (0x40c1d2): the notice line at (133,567) while its buffer holds a text, else this at (153,567). */
+export const BOTTOM_MESSAGE = { x: 153, y: 567, text: "*** 바른말 고운말을 사용하고 매너를 지키는 쉐이커가 됩시다. ***", notice: { x: 133, y: 567 } };
 export const HURRY_POS = { x: 200, y: 200 };
 export const HURRY_MS = 3000;
 

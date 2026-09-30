@@ -68,8 +68,9 @@ import {
   THUMB,
   wrapChat,
 } from "./roomLayout.ts";
+import type { NoticeLine } from "./noticeLine.ts";
 import { portraitSheetName } from "./scene.ts";
-import { CursorAnim, drawBalloon, drawCaret, drawChatLines, drawHelpScreen, drawThumb, Notice, Pointer } from "./screenKit.ts";
+import { CursorAnim, drawBalloon, drawCaret, drawChatLines, drawHelpScreen, drawThumb, Pointer } from "./screenKit.ts";
 import { blit } from "./sprite.ts";
 import { FONT_12, FONT_13, FONT_COURIER_15, outlinedText, plainText, YELLOW } from "./text.ts";
 import { loadTintedSheet } from "./tintArt.ts";
@@ -133,6 +134,8 @@ export interface RoomScreenOptions {
   pickCharacter?(slot: number): void;
   /** The account's items (0x45f140), which light the slot and bottom icons; none without an account. */
   items?(): readonly number[];
+  /** The session's notice line (52,515); the local room has none. */
+  notice?: NoticeLine;
   /** A slot's whisper icon ([0x4927c8]): that ID gets every later chat line as a whisper too. */
   whisperTo?(id: string): void;
 }
@@ -158,7 +161,6 @@ export class RoomScreen {
   private helpScreen = false;
   /** The message box with "강퇴 당했습니다." is up; scene 7 never lets it close by itself (0x443786). */
   private kicked = false;
-  private readonly notice = new Notice();
   private lastSent = "";
   private readonly cursor = new CursorAnim();
   private frame = 0;
@@ -220,11 +222,6 @@ export class RoomScreen {
 
   addLine(line: string): void {
     this.log.push(...wrapChat(line));
-  }
-
-  /** The bottom notice for 60 s (0x4142d0). */
-  showNotice(text: string): void {
-    this.notice.show(text, performance.now());
   }
 
   dispose(): void {
@@ -555,7 +552,7 @@ export class RoomScreen {
       for (const b of TEAM_BUTTONS) this.button([b.src[0], TEAM_ROW.src, b.src[1], TEAM_ROW.src + TEAM_ROW.height], { x: b.x, y: TEAM_ROW.y });
     }
     this.drawChat(now);
-    this.notice.draw(ctx, now, NOTICE);
+    this.options.notice?.draw(ctx, now, NOTICE);
     // Both the EXIT box and the message box stop the hover art and the balloons (0x425ef8, 0x426586).
     if (!this.overlay && !this.kicked) this.drawHoverArt();
     if (!this.overlay && !this.kicked) this.drawHelp();

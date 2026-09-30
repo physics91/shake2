@@ -15,9 +15,11 @@ import {
   DEFAULT_ITEMS,
   DEFAULT_PAIRS,
   isOriginAllowed,
+  noticeText,
   parseChannels,
   parseIndexList,
   startServer,
+  statusNoticeText,
   startupWarning,
   tlsFiles,
 } from "./server.ts";
@@ -123,6 +125,26 @@ describe("channelName", () => {
     expect(channelName("가나다라마바사아자차")).toBe("가나다라마바사아");
     expect(channelName("\u202e😀")).toBe("복원판 채널");
     expect(channelName(undefined)).toBe("복원판 채널");
+  });
+});
+
+describe("NOTICE_TEXT and STATUS_NOTICE_FILE", () => {
+  it("takes a notice line of up to 99 cp949 bytes, none when blank, and refuses the rest", () => {
+    expect(noticeText(undefined)).toBeUndefined();
+    expect(noticeText("   ")).toBeUndefined();
+    expect(noticeText(" 서버 점검은 새벽 4시입니다. ")).toBe("서버 점검은 새벽 4시입니다.");
+    expect(noticeText("가".repeat(49) + "a")).toBe("가".repeat(49) + "a");
+    expect(() => noticeText("가".repeat(50))).toThrow(/99/);
+    expect(() => noticeText("점검😀")).toThrow(/cp949/);
+    expect(() => noticeText("한\n줄")).toThrow(/cp949/);
+  });
+
+  it("takes scene 5's notice text by lines of up to 255 bytes, 1023 bytes in all, CRLF or LF", () => {
+    expect(statusNoticeText("")).toBeUndefined();
+    expect(statusNoticeText("첫 줄\r\n둘째 줄\n")).toBe("첫 줄\r\n둘째 줄\n");
+    expect(() => statusNoticeText("a".repeat(256) + "\n")).toThrow(/255/);
+    expect(() => statusNoticeText(("a".repeat(200) + "\n").repeat(6))).toThrow(/1023/);
+    expect(() => statusNoticeText("탭\t안 됨\n")).toThrow(/cp949/);
   });
 });
 

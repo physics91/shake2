@@ -3,6 +3,7 @@ import { teamName } from "../sim/modes.ts";
 import type { MatchState, Phase, SimEvent } from "../sim/types.ts";
 import type { MusicTrack, SoundBank } from "./audio.ts";
 import { GAME_REPEATS } from "./music.ts";
+import type { NoticeLine } from "./noticeLine.ts";
 import type { Presentation } from "./presentation.ts";
 import { initialPresentation, MUSIC_GATED, phaseFades, present } from "./presentation.ts";
 import { presentBlind } from "./blind.ts";
@@ -27,6 +28,8 @@ export interface GameViewOptions {
   /** The players' panel names and badges by id, from the room; none for players with no account. */
   people?: RenderView["people"];
   candyBase?: number;
+  /** Network: the session's notice line, drawn in the bottom message's place while it holds a text. */
+  notice?: NoticeLine;
 }
 
 /** Draws a match and plays its sounds and music. Used by local and online play. */
@@ -141,6 +144,7 @@ export class GameView {
       hostId: this.hostId,
       people: this.options.people,
       candyBase: this.options.candyBase,
+      notice: this.options.notice && { line: this.options.notice, now },
       hurryTick: this.presentation.hurryTick,
       lastRoundDraw: this.lastRoundDraw,
       faces: this.faces,

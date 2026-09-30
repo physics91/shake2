@@ -12,6 +12,7 @@ import { CREATE_PASSWORD_LIMIT, CREATE_TITLE_LIMIT, createTitle, ID_LIMIT, roomC
 import type { MyProfile, RankingCommand } from "./lobbyScreen.ts";
 import { loadLobbyAssets, LobbyScreen } from "./lobbyScreen.ts";
 import { mapTitle } from "./menu.ts";
+import type { NoticeLine } from "./noticeLine.ts";
 import { CHARACTER_IDS, CHARACTER_NAMES, NICK_LIMIT } from "./myInfoLayout.ts";
 import { OptionPanel } from "./optionPanel.ts";
 import type { RankingAccess } from "./ranking.ts";
@@ -51,6 +52,8 @@ export interface LobbyActions {
   settings: SettingsStore;
   /** The ranking's list and its fetches on the lobby's connection, for the ranking window. */
   ranking: RankingAccess;
+  /** The session's notice line, which the canvas draws. */
+  notice: NoticeLine;
 }
 
 /** The ranking window's mouse-only controls for the keyboard: each clicks the same place. */
@@ -121,7 +124,6 @@ export class LobbyView {
   private readonly optionPanel: OptionPanel;
   private screen: LobbyScreen | null = null;
   private state: LobbyState;
-  private notice: string | null = null;
   /** The room whose 정보 button was pressed last. */
   private infoAsked: string | null = null;
   private disposed = false;
@@ -328,11 +330,11 @@ export class LobbyView {
             fadeIn,
             settings,
             ranking,
+            notice: actions.notice,
           },
           this.state,
         );
         this.screen.setLog(chatLog);
-        if (this.notice) this.screen.showNotice(this.notice);
         this.loading.remove();
       },
       (error: Error) => {
@@ -416,11 +418,6 @@ export class LobbyView {
     this.chatList.append(h("li", { class: `chat-${chatLineClass(line, own)}` }, shownChat(line)));
     this.chatList.scrollTop = this.chatList.scrollHeight;
     this.screen?.addLine(line);
-  }
-
-  showNotice(text: string): void {
-    this.notice = text;
-    this.screen?.showNotice(text);
   }
 
   /** /cls, /clear (0x418c60). */

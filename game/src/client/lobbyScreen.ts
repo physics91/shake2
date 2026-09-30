@@ -80,6 +80,7 @@ import {
   WAIT_GAME,
 } from "./lobbyLayout.ts";
 import type { ColourSlider } from "./myInfoLayout.ts";
+import type { NoticeLine } from "./noticeLine.ts";
 import {
   CHARACTER_IDS,
   CHARACTER_NAME_AT,
@@ -117,7 +118,7 @@ import { recordText, USER_INFO, USER_INFO_CLOSE, USER_INFO_FIELDS, USER_INFO_ITE
 import { MENU_SOUNDS } from "./presentation.ts";
 import type { Button } from "./roomLayout.ts";
 import { CHAT_INPUT, ChatScroll, inside, roomNumberText, shownMapName, wrapChat } from "./roomLayout.ts";
-import { CursorAnim, drawBalloon, drawCaret, drawChatLines, drawDarkness, drawHelpScreen, drawThumb, Fade, Notice, Pointer } from "./screenKit.ts";
+import { CursorAnim, drawBalloon, drawCaret, drawChatLines, drawDarkness, drawHelpScreen, drawThumb, Fade, Pointer } from "./screenKit.ts";
 import { attachCapture } from "./screenCapture.ts";
 import { isMacroKey, macroOpens, macroSlot } from "./macro.ts";
 import type { FriendReply } from "./friends.ts";
@@ -230,6 +231,8 @@ export interface LobbyScreenOptions {
   settings: SettingsStore;
   /** The ranking's list, scene 5's too, and its fetches on this connection. */
   ranking: RankingAccess;
+  /** The session's notice line (51,515): S->C 0x50 or the F1 hint. */
+  notice: NoticeLine;
 }
 
 /** The player's data the my-info window shows, as the account server last sent it. */
@@ -314,7 +317,6 @@ export class LobbyScreen {
   private readonly caret = new CaretBlink();
   private readonly pointer = new Pointer();
   private readonly cursor = new CursorAnim();
-  private readonly notice = new Notice();
   /** Tells a screen reader what only the canvas shows: a popup or a message. */
   private readonly status = document.createElement("p");
   private state: LobbyState;
@@ -404,10 +406,6 @@ export class LobbyScreen {
 
   addLine(line: string): void {
     this.log.push(...wrapChat(line));
-  }
-
-  showNotice(text: string): void {
-    this.notice.show(text, performance.now());
   }
 
   /** The message box (MSGBOX 0x443700): a refusal or a reply, over whatever is open. */
@@ -1407,7 +1405,7 @@ export class LobbyScreen {
     this.drawUsers();
     this.drawRooms();
     this.drawChat();
-    this.notice.draw(ctx, now, LOBBY_NOTICE);
+    this.options.notice.draw(ctx, now, LOBBY_NOTICE);
     this.drawPopup();
     this.drawEditorCaret(now);
     this.drawBalloons();

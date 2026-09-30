@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
 import { AccountBook, ID_TAKEN, levelFor, REGISTERED } from "./accounts.ts";
 import { FriendBook } from "./friends.ts";
-import type { Channel } from "./gate.ts";
+import type { Channel, GateConfig } from "./gate.ts";
 import {
   CHECK_INTERVAL_MS,
   Gate,
@@ -41,7 +41,11 @@ function lobby(name: string, now: () => number): Lobby {
   });
 }
 
-async function makeGate(ids: readonly string[] = ["tester", "other"], channelOverrides: Partial<Channel>[] = [{}]) {
+async function makeGate(
+  ids: readonly string[] = ["tester", "other"],
+  channelOverrides: Partial<Channel>[] = [{}],
+  extra: Pick<GateConfig, "notice" | "statusNotice"> = {},
+) {
   const clock = { now: 1_000_000 };
   const accounts = new AccountBook(undefined, defaults);
   for (const id of ids) await accounts.register(id, `${id}닉`, PASSWORD, 0);
@@ -52,7 +56,7 @@ async function makeGate(ids: readonly string[] = ["tester", "other"], channelOve
     maxUsers: 10,
     ...override,
   }));
-  const gate = new Gate({ accounts, channels, characters: ["bobo", "doona"], now: () => clock.now, token: () => `token${++tokens}` });
+  const gate = new Gate({ accounts, channels, characters: ["bobo", "doona"], now: () => clock.now, token: () => `token${++tokens}`, ...extra });
   const inbox = new Map<number, ServerMessage[]>();
   const closed = new Set<number>();
   const connect = (id: number, address = "203.0.113.1") => {
@@ -236,6 +240,36 @@ describe("the gate's game servers (C->S 0x47 and 0x0a)", () => {
     expect(t.last(1, "server-info")?.load).toBe(25);
     t.gate.handle(1, { type: "server-info", channel: 3 });
     expect(t.all(1, "server-info")).toHaveLength(2);
+  });
+
+  it("sends the operator's notice line (S->C 0x50) to a session let in, before its welcome, and none without one", async () => {
+    const t = await makeGate(["tester", "other"], [{}], { notice: "점검 안내" });
+    t.connect(1);
+    await t.enter(1, "tester");
+    const types = (t.inbox.get(1) ?? []).map((m) => m.type);
+    expect(t.last(1, "notice")).toEqual({ type: "notice", text: "점검 안내" });
+    expect(types.indexOf("notice")).toBeLessThan(types.indexOf("welcome"));
+    t.connect(2);
+    t.gate.handle(2, { type: "version", version: PROTOCOL_VERSION, channel: 0 });
+    t.gate.handle(2, { type: "hello", token: "nobody" });
+    expect(t.all(2, "notice")).toEqual([]);
+    const plain = await makeGate();
+    plain.connect(1);
+    await plain.enter(1, "tester");
+    expect(plain.all(1, "notice")).toEqual([]);
+  });
+
+  it("sends scene 5's notices (S->C 0x101) with a login that worked, before its answer, and none with one that did not", async () => {
+    const t = await makeGate(["tester"], [{}], { statusNotice: "첫 줄\n둘째 줄\n" });
+    t.connect(1);
+    await t.login(1, "tester", "wrong");
+    expect(t.all(1, "status-notice")).toEqual([]);
+    t.clock.now += LOGIN_RETRY_MS;
+    t.gate.tick();
+    await t.login(1, "tester");
+    const types = (t.inbox.get(1) ?? []).map((m) => m.type);
+    expect(t.last(1, "status-notice")).toEqual({ type: "status-notice", text: "첫 줄\n둘째 줄\n" });
+    expect(types.lastIndexOf("status-notice")).toBe(types.lastIndexOf("login") - 1);
   });
 
   it("wants a login before anything else", async () => {

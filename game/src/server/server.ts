@@ -17,7 +17,7 @@ import { openAccountFile } from "./accountFile.ts";
 import type { AccountDefaults } from "./accounts.ts";
 import { AccountBook, LOWEST_LEVEL, PAIR_COUNT } from "./accounts.ts";
 import { addressKey, clientAddress, isLoopbackHost } from "./address.ts";
-import { cutBytes, typeable } from "./cp949.ts";
+import { cp949Bytes, cutBytes, typeable } from "./cp949.ts";
 import { openFriendFile } from "./friendFile.ts";
 import { FriendBook } from "./friends.ts";
 import type { Channel } from "./gate.ts";
@@ -26,7 +26,16 @@ import { ITEM_ALL } from "./items.ts";
 import type { PlayableMap } from "./lobby.ts";
 import { Lobby } from "./lobby.ts";
 import type { ServerMessage } from "./protocol.ts";
-import { MAX_CHANNELS, MAX_MESSAGE_BYTES, parseClientMessage, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from "./protocol.ts";
+import {
+  MAX_CHANNELS,
+  MAX_MESSAGE_BYTES,
+  NOTICE_BYTES,
+  parseClientMessage,
+  ROOM_CODE_ALPHABET,
+  ROOM_CODE_LENGTH,
+  STATUS_NOTICE_BYTES,
+  STATUS_NOTICE_LINE_BYTES,
+} from "./protocol.ts";
 
 export interface ServerOptions {
   host: string;
@@ -52,6 +61,10 @@ export interface ServerOptions {
   tls?: TlsFiles;
   /** Proxies whose X-Forwarded-For is believed besides loopback ones (address.ts). */
   trustedProxies?: readonly string[];
+  /** The notice line sent to each session let into a channel (noticeText). */
+  notice?: string;
+  /** Scene 5's notices sent after each login (statusNoticeText). */
+  statusNotice?: string;
   log?: (line: string) => void;
 }
 
@@ -113,6 +126,33 @@ export function parseChannels(raw: string | undefined): ChannelSpec[] {
     if (!match || best < 1 || worst > LOWEST_LEVEL || best > worst) throw new Error(`CHANNELS: "${row}" has no levels best-worst in 1..${LOWEST_LEVEL}`);
     return { ...spec, levels: [best, worst] };
   });
+}
+
+/** NOTICE_TEXT: the notice line every session let into a channel is sent (S->C 0x50); none when blank. */
+export function noticeText(raw: string | undefined): string | undefined {
+  const text = (raw ?? "").trim();
+  if (!text) return undefined;
+  if (typeable(text) !== text) throw new Error("NOTICE_TEXT has a character outside cp949's printable ones");
+  const bytes = cp949Bytes(text);
+  if (bytes > NOTICE_BYTES) throw new Error(`NOTICE_TEXT is ${bytes} bytes; the notice line holds ${NOTICE_BYTES}`);
+  return text;
+}
+
+/**
+ * STATUS_NOTICE_FILE's text: scene 5's notices, sent after each login (S->C 0x101). Lines end with
+ * "\n" (a CR before it is cut; a last line without one is not shown), each at most 255 bytes and
+ * 1023 in all, as the original client holds them. None when empty.
+ */
+export function statusNoticeText(raw: string): string | undefined {
+  if (!raw) return undefined;
+  const lines = raw.split("\n").map((line) => line.replace(/\r$/, ""));
+  const odd = lines.find((line) => typeable(line) !== line);
+  if (odd !== undefined) throw new Error(`STATUS_NOTICE_FILE has a character outside cp949's printable ones: "${odd}"`);
+  const long = lines.find((line) => cp949Bytes(line) > STATUS_NOTICE_LINE_BYTES);
+  if (long !== undefined) throw new Error(`STATUS_NOTICE_FILE has a line over ${STATUS_NOTICE_LINE_BYTES} bytes: "${long.slice(0, 20)}…"`);
+  const bytes = cp949Bytes(raw);
+  if (bytes > STATUS_NOTICE_BYTES) throw new Error(`STATUS_NOTICE_FILE is ${bytes} bytes; scene 5 holds ${STATUS_NOTICE_BYTES}`);
+  return raw;
 }
 
 /** DEFAULT_ITEMS / DEFAULT_PAIRS: comma-separated numbers below `count`; the fallback when unset. */
@@ -214,6 +254,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     characters,
     now: () => Date.now(),
     token: () => randomBytes(32).toString("base64url"),
+    notice: options.notice,
+    statusNotice: options.statusNotice,
   });
 
   const respond: RequestListener = (req, res) => {

@@ -9,7 +9,11 @@
 //   and character pairs, default 0..9),
 //   FRIENDS_FILE (where the friend lists are kept, default data/friends.json beside public/),
 //   TLS_CERT and TLS_KEY (PEM files: both make it wss://), TRUST_PROXY (comma-separated addresses
-//   of proxies whose X-Forwarded-For is believed; loopback ones always are).
+//   of proxies whose X-Forwarded-For is believed; loopback ones always are),
+//   NOTICE_TEXT (the notice line shown for 60 s on entering a channel: at most 99 cp949 bytes),
+//   STATUS_NOTICE_FILE (a text file of scene 5's notices, shown after each login: lines ended by
+//   a newline, at most 255 bytes each and 1023 in all). Both are read at start.
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { ITEM_COUNT, PAIR_COUNT } from "./accounts.ts";
@@ -17,9 +21,11 @@ import {
   channelName,
   DEFAULT_ITEMS,
   DEFAULT_PAIRS,
+  noticeText,
   parseChannels,
   parseIndexList,
   startServer,
+  statusNoticeText,
   tlsFiles,
 } from "./server.ts";
 
@@ -55,6 +61,8 @@ const server = await startServer({
   friendsFile: process.env.FRIENDS_FILE || join(import.meta.dirname, "..", "..", "data", "friends.json"),
   tls: tlsFiles(process.env.TLS_CERT, process.env.TLS_KEY),
   trustedProxies: list(process.env.TRUST_PROXY),
+  notice: noticeText(process.env.NOTICE_TEXT),
+  statusNotice: process.env.STATUS_NOTICE_FILE ? statusNoticeText(readFileSync(process.env.STATUS_NOTICE_FILE, "utf8")) : undefined,
   log: (line) => console.log(line),
 });
 

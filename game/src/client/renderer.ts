@@ -38,6 +38,7 @@ import type { BlindWindow } from "./blind.ts";
 import { blindWindow, drawBlindFilter } from "./blind.ts";
 import { bubbleLines, CHAT_BUBBLE, CHAT_LINE, TYPING_MARK } from "./chat.ts";
 import { balloonAt, NET_TYPING_MARK } from "./matchChat.ts";
+import type { NoticeLine } from "./noticeLine.ts";
 import type { SceneAssets } from "./scene.ts";
 import { characterOf } from "./scene.ts";
 import { personName, renderFinalResult, renderRoundResult, renderWait } from "./screens.ts";
@@ -85,6 +86,8 @@ export interface RenderView {
   people?: ReadonlyMap<number, { name: string; badge: Badge }>;
   /** Network: the account's candy before this match; the box counts it and the own pickups ([0x49285e]). */
   candyBase?: number;
+  /** Network: the session's notice line and the wall clock it runs on; none shows the bottom message alone. */
+  notice?: { line: NoticeLine; now: number };
 }
 
 export interface ChatDraw {
@@ -252,7 +255,7 @@ export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, 
   drawFaces(ctx, assets, state, view);
   drawObjects(ctx, assets, state, 2);
   if (blind) drawBlindFilter(ctx, assets.hud.blindFilter, blind);
-  drawBottomBar(ctx);
+  drawBottomBar(ctx, view.notice);
   if (view.localPlayerIds.length > 1) drawNameTags(ctx, assets, state);
   if (view.chat) drawNetworkChat(ctx, assets, state, view, view.chat);
   drawHurry(ctx, assets, state, view.hurryTick);
@@ -645,8 +648,15 @@ function drawFaces(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: Ma
   }
 }
 
-/** The bottom message (0x4142d0 via 0x40c211), network only. */
-function drawBottomBar(ctx: CanvasRenderingContext2D): void {
+/**
+ * The bottom line (0x40c1d2): while the notice buffer holds a text, the notice line in 굴림 12 at
+ * (133,567), which draws nothing the frame its 60 s run out; else the bottom message at (153,567).
+ */
+function drawBottomBar(ctx: CanvasRenderingContext2D, notice: RenderView["notice"]): void {
+  if (notice?.line.held) {
+    notice.line.draw(ctx, notice.now, BOTTOM_MESSAGE.notice, FONT_12);
+    return;
+  }
   outlinedText(ctx, BOTTOM_MESSAGE.text, BOTTOM_MESSAGE.x, BOTTOM_MESSAGE.y, YELLOW, FONT_12);
 }
 

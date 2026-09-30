@@ -13,6 +13,8 @@ import {
   rankingMatch,
   scrollDown,
   scrollUp,
+  STATUS_NOTICE,
+  statusNoticeLines,
   showGuildRow,
   STATUS_BUTTONS,
   hueBox,
@@ -167,5 +169,17 @@ describe("the ranking page's rows (0x41db60)", () => {
     expect(rankingMatch(rows, "TESTER1")).toBe(1);
     expect(rankingMatch(rows, "tester")).toBe(-1);
     expect(rankingMatch(rows, "")).toBe(-1);
+  });
+});
+
+describe("scene 5's notices (S->C 0x101, 0x41cdd0, 0x41d2b5)", () => {
+  it("keeps each line ended by a newline, its CR cut, and drops a last line with none", () => {
+    expect(statusNoticeLines("첫 줄\r\n\n셋째 줄\n끝 없는 줄")).toEqual(["첫 줄", "", "셋째 줄"]);
+    expect(statusNoticeLines("")).toEqual([]);
+    expect(statusNoticeLines("한 줄")).toEqual([]);
+  });
+
+  it("writes line i at (565, 58 + 16 i) in yellow with a (100,0,100) outline", () => {
+    expect(STATUS_NOTICE).toEqual({ x: 565, y: 58, step: 16, colour: "#ffff00", outline: "#640064" });
   });
 });

@@ -376,3 +376,18 @@ export function statusKeyName(dik: number): string {
 
 /** 확인's message once the options are written (0x420410). */
 export const OPTION_SAVED = "수정되었습니다.";
+
+// Notices (S->C 0x101)
+
+/** 0x41d2b5: line i at (565, 58 + 16 i), 굴림 13, yellow with a (100,0,100) outline, as many as come. */
+export const STATUS_NOTICE = { x: 565, y: 58, step: 16, colour: "#ffff00", outline: "#640064" };
+
+/**
+ * 0x41cdd0 reading notice.txt back: a line at each "\n", its CR cut; a last line with no "\n"
+ * after it is not kept.
+ */
+export function statusNoticeLines(text: string): string[] {
+  const lines = text.split("\n");
+  lines.pop();
+  return lines.map((line) => line.replace(/\r$/, ""));
+}

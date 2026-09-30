@@ -24,8 +24,8 @@ export const ROOM_TITLE_AT: Point = { x: 305, y: 30 };
 export const MAP_NAME_AT: Point = { x: 635, y: 283 };
 export const MUSIC_NAME_AT: Point = { x: 635, y: 326 };
 export const MODE_NAME_AT: Point = { x: 635, y: 369 };
-/** The notice line (0x4142d0): #ffffff and #ffff00 in turn every 500 ms, for 60 s. */
-export const NOTICE = { x: 52, y: 515, swapMs: 500, showMs: 60_000, joinText: "도움말을 보시려면 F1키를 눌러주세요." };
+/** The room's place for the notice line (noticeLine.ts), and the F1 hint put into it on entering (0x46eec0). */
+export const NOTICE = { x: 52, y: 515, joinText: "도움말을 보시려면 F1키를 눌러주세요." };
 
 /** The message box's line when the host puts this player out (S->C 0x44, string 28 at [0x48df74]). */
 export const KICKED_TEXT = "강퇴 당했습니다.";

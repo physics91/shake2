@@ -1,5 +1,5 @@
 import type { Manifest } from "../assets/types.ts";
-import { cutBytes, typeable } from "../server/cp949.ts";
+import { cp949Bytes, cutBytes, typeable } from "../server/cp949.ts";
 import type { ChannelRow, ClientMessage, OwnAccount, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
 import { badgeOf, shownName, START_BARS, typingPacketDue } from "../server/protocol.ts";
 import { hasItem, ITEM_KICK, ITEM_WHISPER } from "../server/items.ts";
@@ -10,6 +10,7 @@ import {
   PROTOCOL_VERSION,
   RANDOM_MAP,
   ROOM_CHAT_LIMIT,
+  STATUS_NOTICE_BYTES,
 } from "../server/protocol.ts";
 import { MAX_PLAYERS, MEDALS_TO_WIN } from "../sim/constants.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
@@ -45,6 +46,7 @@ import { nickRefusal } from "./myInfoLayout.ts";
 import type { LobbyState } from "./lobbyView.ts";
 import { LobbyView } from "./lobbyView.ts";
 import { listedTrack, playWaitingMusic } from "./music.ts";
+import { NoticeLine } from "./noticeLine.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
 import { RankingBoard } from "./ranking.ts";
 import { chatEntry, chatLineClass, kickLine, shownChat, usersLine, whisperAllowLine, whisperLines } from "./roomChat.ts";
@@ -59,7 +61,7 @@ import { newSlide } from "./startLayout.ts";
 import type { LoginSent, ServerList, ServerRow, StartScene } from "./startScreen.ts";
 import { LOGIN_FAILED } from "./startScreen.ts";
 import { defaultServerUrl, StartView } from "./startView.ts";
-import { STATUS_TEXT } from "./statusLayout.ts";
+import { STATUS_TEXT, statusNoticeLines } from "./statusLayout.ts";
 import { newStatusState } from "./statusScreen.ts";
 import { choiceGroup, h, readPreference, writePreference } from "./ui.ts";
 
@@ -191,6 +193,8 @@ class OnlineSession {
   private lobbySaving: "nick" | null = null;
   /** [0x4927c8]: the ID a slot's whisper icon or the lobby's ID popup chose; only an empty ID popup clears it. */
   private whisperTarget = "";
+  /** [0x4927dc]: the one notice line the lobby, the room and the match draw. */
+  private readonly noticeLine = new NoticeLine();
 
   constructor(manifest: Manifest) {
     this.manifest = manifest;
@@ -351,6 +355,10 @@ class OnlineSession {
       case "server-info":
         this.rowAnswered(message.channel, message.load);
         return;
+      case "status-notice":
+        // S->C 0x101 (0x45eb70, 0x41cdd0): the lines replace the last ones; an odd text is dropped.
+        if (typeof message.text === "string" && cp949Bytes(message.text) <= STATUS_NOTICE_BYTES) this.status.notices = statusNoticeLines(message.text);
+        return;
       case "registered":
         this.startView?.signUpAnswer("register", message.rcode);
         return;
@@ -448,8 +456,10 @@ class OnlineSession {
         whisperTo: (id) => {
           this.whisperTarget = id;
         },
+        notice: this.noticeLine,
       });
-      if (entering) this.roomView.showNotice(NOTICE.joinText);
+      // The joiner's F1 hint (0x449dd6), only into an empty buffer.
+      if (entering) this.noticeLine.hint(NOTICE.joinText, performance.now());
       this.errorLine = this.roomView.errorLine;
       mount(this.roomView.root);
       // Create, join (0x444e4b, 0x449e1b) and the final result's return (0x44fc09) fade.
@@ -512,13 +522,15 @@ class OnlineSession {
         this.whisperTarget = id;
       },
       settings,
+      notice: this.noticeLine,
       ranking: this.ranking.access((message) => {
         if (this.socket?.readyState !== WebSocket.OPEN) return false;
         this.send(message);
         return true;
       }),
     }, fadeIn);
-    if (this.firstLobby) this.lobbyView.showNotice(NOTICE.joinText);
+    // The F1 hint on the first lobby (0x44911e), only into an empty buffer: a live S->C 0x50 stays.
+    if (this.firstLobby) this.noticeLine.hint(NOTICE.joinText, performance.now());
     this.firstLobby = false;
     this.errorLine = this.lobbyView.errorLine;
     mount(this.lobbyView.root);
@@ -752,6 +764,10 @@ class OnlineSession {
         this.lobby = { channel: message.channel, rooms: message.rooms, users: message.users };
         this.showLobby();
         break;
+      case "notice":
+        // S->C 0x50 (0x44579f), in any scene: the buffer the screens draw from.
+        this.noticeLine.receive(message.text, performance.now());
+        break;
       case "lobby-chat":
         this.lobbyLog.push(chatEntry({ kind: "talk", name: message.name, text: message.text }));
         this.lobbyView?.addChat(this.lobbyLog.at(-1)!);
@@ -909,7 +925,7 @@ class OnlineSession {
     this.fadeTo(screen.root, from);
     const track = listedTrack(this.manifest, this.welcome?.music ?? [], music);
     const candy = this.account?.candy ?? 0;
-    this.game = new OnlineGame(screen, layout, room, playerId, track, candy, (message) => this.send(message), () => this.networkProblem());
+    this.game = new OnlineGame(screen, layout, room, playerId, track, candy, this.noticeLine, (message) => this.send(message), () => this.networkProblem());
   }
 
   private stopGame(keepMusic = false): void {
@@ -1147,6 +1163,8 @@ interface RoomActions {
   items?(): readonly number[];
   /** A slot's whisper icon: the whisper target. */
   whisperTo?(id: string): void;
+  /** The session's notice line; the local room has none. */
+  notice?: NoticeLine;
 }
 
 class RoomView {
@@ -1167,7 +1185,6 @@ class RoomView {
   private readonly stage = h("div", { class: "stage" }, this.canvas, this.loading);
   private screen: RoomScreen | null = null;
   private room: RoomInfo | null = null;
-  private notice: string | null = null;
   private kicked = false;
   private disposed = false;
   private readonly heading = h("span", {});
@@ -1288,11 +1305,11 @@ class RoomView {
             pickCharacter: actions.pickCharacter,
             items: actions.items,
             whisperTo: actions.whisperTo,
+            notice: actions.notice,
           },
           this.room ?? room,
         );
         this.screen.setLog(chatLog);
-        if (this.notice) this.screen.showNotice(this.notice);
         if (this.kicked) this.screen.showKicked();
         this.loading.remove();
       },
@@ -1307,11 +1324,6 @@ class RoomView {
     this.chatList.append(item);
     this.chatList.scrollTop = this.chatList.scrollHeight;
     this.screen?.addLine(line);
-  }
-
-  showNotice(text: string): void {
-    this.notice = text;
-    this.screen?.showNotice(text);
   }
 
   /** /cls, /clear (0x418c60). */
@@ -1558,6 +1570,8 @@ class OnlineGame {
   private hostGone = false;
   /** The account's candy as the match began. */
   private readonly candyBase: number;
+  /** The session's notice line, in the bottom message's place while it holds a text (0x40c1d2). */
+  private readonly notice: NoticeLine;
 
   constructor(
     screen: GameScreen,
@@ -1566,11 +1580,13 @@ class OnlineGame {
     playerId: number,
     music: MusicTrack | null,
     candyBase: number,
+    notice: NoticeLine,
     send: (message: ClientMessage) => void,
     hostLost: () => void,
   ) {
     this.hostLost = hostLost;
     this.candyBase = candyBase;
+    this.notice = notice;
     this.screen = screen;
     this.layout = layout;
     this.playerId = playerId;
@@ -1624,6 +1640,7 @@ class OnlineGame {
         announce: this.screen.announce,
         people: new Map(room.players.map((p) => [p.id, { name: shownName(p), badge: p.badge }])),
         candyBase: this.candyBase,
+        notice: this.notice,
       });
       this.screen.loaded();
       if (this.state) {
