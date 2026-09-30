@@ -48,6 +48,15 @@
 - 오프라인 모드는 확인되지 않음. `practice.map`이 있으나 실제 실행으로 확인하지 않았고, 2002-03-28 추가된 2인 플레이도 서버 접속 방식이었음(게임동아 기사)
 - 맵: mizar, desert, snowearth, space, bella, block, wday, year 각 01/02 + `practice.map`
 
+## wayback/letsgame/ — 참고 영상 (letsgame 기술 동영상, 2004)
+
+운영이 letsgame(`letsgame.chol.com`)으로 넘어간 뒤 올린 쉐이크2 기술 동영상. 공지 seq=357 "[신규] 쉐이크2 기술동영상 추가 안내"(2004-02-09, Wayback 20040229163922)는 "기존에 제공되고 있는 기술동영상 9개에서 현재 많이 사용하고 있는 기술 7개를 새로 추가"했고 "이중에서 가장 많이 이용되고 있는 0칸계열과 미던계열이 소개"되었다고 알림. 그 무렵의 게임 실행 파일은 남아 있지 않다. 두 영상은 뒤의 판이 던지기 중 행동 키를 읽었다는 근거로 쓴다(`FIDELITY.md` §8, §23). SHA-1은 Wayback CDX digest와 일치함.
+
+| 파일 | Wayback timestamp | 원래 URL | 크기(byte) | SHA-256 |
+|---|---|---|---|---|
+| `vod_16.zip` (0칸 계열정리, 안의 `vod_16.avi` 2004-02-04, 39670342 byte, SHA-256 `16e45ac7fa68e2bf78c678f98d9f99485811ec2dbd4d23e89f9a427b42e4da34`) | 20060211043346 | `http://file.letsgame.chol.com/LETSGAME/GAME/Shake2/vod_16.zip` | 28015590 | `bff224c981d65d58cb5cb5386399e49844cc7b438c3610bf29edbacdd3c17153` |
+| `vod_15.avi` (미던 계열 정리. 20060211042919의 `vod_15.zip` 19066817 byte 안의 `vod_15.avi` 2004-02-04와 같은 파일) | 20060211042751 | `http://file.letsgame.chol.com/LETSGAME/GAME/Shake2/vod_15.avi` | 25754828 | `c5a17b3ae2f6d4545f041e29e1cbb9f870b3beca31df982291979d1aa2c4fbab` |
+
 ## 참고 문헌 (배경 정보)
 
 - 경향게임스, "[쉐이크2] 회원 1백60만, 동시접속자수 5만 돌파 서바이벌 게임" (2002-07-02): https://www.khgames.co.kr/news/articleView.html?idxno=4002

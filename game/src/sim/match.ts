@@ -224,8 +224,9 @@ function actionOf(input: InputFrame | null | undefined): Action {
 /**
  * Input poll (0x458750): facing and walk/stand state change at once; an action runs once per
  * press (0x45b5bf). The keys of a player in teleport flight (0x45af34), underground or coming up
- * (0x45af5f) or frozen (0x45af71) are not handled at all. During jump and throw animations the
- * keys read as released (0x4021bb); during a kick a direction turns the kick.
+ * (0x45af5f) or frozen (0x45af71) are not handled at all. During a jump the keys read as
+ * released (0x4021bb); during a throw only the action keys are read (actionKeysRead); during a
+ * kick a direction turns the kick.
  */
 function applyInputs(state: MatchState, inputs: InputMap): void {
   for (const player of state.players) {
@@ -237,7 +238,7 @@ function applyInputs(state: MatchState, inputs: InputMap): void {
     }
     if (player.flight !== null || player.anim >= Anim.Burrow || player.status.frozen !== null) continue;
     const input = keysRead(player) ? pressed : undefined;
-    const action = actionOf(input);
+    const action = actionOf(actionKeysRead(player) ? pressed : undefined);
     if (input?.dir != null) {
       // Reversed controls swap up/down and left/right (tables 0x45d0e4, 0x45d0f4).
       const dir = player.status.reverse === null ? input.dir : (((input.dir + 2) % 4) as Dir);
@@ -254,6 +255,18 @@ function applyInputs(state: MatchState, inputs: InputMap): void {
 /** 0x4021bb: keys are read in the walk, stand and kick groups only. */
 function keysRead(player: PlayerState): boolean {
   return player.anim < Anim.Jump || isKicking(player);
+}
+
+/**
+ * RECONSTRUCTION (FIDELITY §8): the action keys are also read during a throw animation. 0311
+ * reads no key there (0x4021bb; Shake1 and the 2002-02 Shake 2nd build alike), but the service's
+ * later builds did: letsgame's 2004 technique videos fire a 직격탄 against a wall and jump or
+ * throw it right after (vod_16 "0칸 계열정리", vod_15 "미던 계열 정리"). A key held through the
+ * animation keeps the latch set, so Z pressed while Left Ctrl is still down does nothing (0311,
+ * reading nothing, let the latch go there and acted on a held key once the animation ended).
+ */
+function actionKeysRead(player: PlayerState): boolean {
+  return keysRead(player) || isThrowing(player);
 }
 
 /** The action handlers of 0x45b5bf (table 0x45d104): each sets the latch unless a curse swallowed the press. */

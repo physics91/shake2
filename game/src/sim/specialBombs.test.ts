@@ -288,16 +288,29 @@ describe("glove throw", () => {
     expect(bomb.exploded).toBe(true);
   });
 
-  it("ignores keys during the throw animation, so a held key acts again after it", () => {
+  // RECONSTRUCTION (FIDELITY §8): 0311 reads no key during the throw animation (0x4021bb); the
+  // remake reads the action keys there, as the service's later builds did.
+  it("reads the action keys but not the arrows during the throw animation", () => {
     const state = thrower(["........", "1.......", "........"], Dir.Right);
     const player = state.players[0];
     run(state, 1, { 1: SPACE });
-    expect(player.actionLatch).toBe(true);
-    run(state, 1, { 1: SPACE });
-    expect(player.actionLatch).toBe(false);
+    const thrown = state.bombs[0];
+    // A key held from the throw keeps the latch set, so it does not act again.
     runUntil(state, () => player.anim === Anim.Stand + Dir.Right, 30, { 1: SPACE });
-    run(state, 1, { 1: SPACE });
     expect(player.actionLatch).toBe(true);
+    expect(state.bombs).toEqual([thrown]);
+
+    const again = thrower(["........", "1.......", "........"], Dir.Right);
+    const other = again.players[0];
+    other.bombCapacity = 2;
+    run(again, 1, { 1: SPACE });
+    run(again, 1, { 1: IDLE });
+    // Pressed anew mid-throw, Space sets a bomb in the cell the thrown one left; the arrow is ignored.
+    run(again, 1, { 1: { dir: Dir.Down, bomb: true } });
+    expect(other.anim).toBe(Anim.Throw + Dir.Right);
+    expect(again.bombs).toHaveLength(2);
+    expect(again.bombs[0].motion).toBe(Dir.Right + 5);
+    expect(again.bombs[1].cell).toBe(cellAt(again, 0, 1));
   });
 });
 
