@@ -1,8 +1,8 @@
 import type { LevelLayout, Rules } from "../sim/types.ts";
 import { compareIgnoreCase } from "./cp949.ts";
 import type { FriendBook } from "./friends.ts";
-import type { ClientMessage, ServerMessage } from "./protocol.ts";
-import { CHAT_INTERVAL_MS, PROTOCOL_VERSION, roomTitle } from "./protocol.ts";
+import type { ClientMessage, OwnAccount, ServerMessage } from "./protocol.ts";
+import { CHAT_INTERVAL_MS, roomTitle } from "./protocol.ts";
 import type { ChatSent, Peer, Profile, RoomDeps } from "./room.ts";
 import { chatAllowed, Room } from "./room.ts";
 
@@ -45,6 +45,8 @@ export interface LobbyConfig {
   maxRooms: number;
   /** The banner's channel name (the last string of S->C 0x0a). */
   channel: string;
+  /** The my-info window's O was taken: the account keeps the character, hue and use-ID flag. */
+  saveCharacter?(name: string, choice: { character: string; hue: number; useId: boolean }): void;
   /** The option window's friend lists, by the name each player said hello with. */
   friends: FriendBook;
   /** Milliseconds: the chat interval, and the host clock the match's rand() reseeds read. */
@@ -98,8 +100,32 @@ export class Lobby {
     return this.rooms.size;
   }
 
-  connect(peer: Peer): void {
+  /** The players in the channel, in rooms or not. */
+  get userCount(): number {
+    return this.profiles.size;
+  }
+
+  /**
+   * The game server's login (C->S 0x0a after the version): the player comes into the lobby with its
+   * account's profile. A character the server no longer has falls back to the first (R).
+   */
+  join(peer: Peer, profile: Profile, account: OwnAccount): void {
+    if (this.peers.has(peer.id)) return;
+    const character = this.config.characters.includes(profile.character) ? profile.character : this.config.characters[0];
     this.peers.set(peer.id, peer);
+    this.profiles.set(peer.id, { ...profile, character });
+    this.config.friends.meet(profile.name);
+    this.arrived.add(peer.id);
+    this.dirty = true;
+    peer.send({
+      type: "welcome",
+      playerId: peer.id,
+      account: { ...account, character },
+      maps: this.maps.map((m) => ({ id: m.id, title: m.title })),
+      music: [...this.music],
+      characters: [...this.config.characters],
+    });
+    this.flushLobby();
   }
 
   disconnect(peerId: number): void {
@@ -125,17 +151,9 @@ export class Lobby {
     const fail = (text: string | null) => {
       if (text) peer.send({ type: "error", message: text });
     };
-    if (message.type === "hello") {
-      fail(this.hello(peer, message.version, message.name, message.character));
-      return;
-    }
-    if (message.type === "server-info") {
-      peer.send(this.serverInfo());
-      return;
-    }
     const profile = this.profiles.get(peerId);
     if (!profile) {
-      fail("먼저 이름과 캐릭터를 보내야 합니다.");
+      fail("먼저 로그인해야 합니다.");
       return;
     }
     const room = this.roomOf.get(peerId);
@@ -205,7 +223,7 @@ export class Lobby {
         room?.gameChat(peerId, message.text);
         break;
       case "set-character":
-        fail(this.setCharacter(peer, profile, message.character, room !== undefined));
+        fail(this.setCharacter(peer, profile, message, room !== undefined));
         break;
       case "typing":
         room?.typing(peerId, message.on);
@@ -249,15 +267,6 @@ export class Lobby {
   }
 
   /**
-   * The server list row (0x448410: load = w@2 / w@0 · 100). The original's two counts are the
-   * server's; here they are the rooms made and the most rooms allowed.
-   */
-  private serverInfo(): ServerMessage {
-    const load = Math.trunc((this.rooms.size / Math.max(1, this.config.maxRooms)) * 100);
-    return { type: "server-info", name: this.config.channel, load };
-  }
-
-  /**
    * Where a friend is, as the option window's LOCATION column shows it. The original's words are
    * its server's and unknown (R): the channel in the lobby, the room's number in a room, else blank.
    */
@@ -271,29 +280,13 @@ export class Lobby {
   }
 
   /** The my-info window's save (0x44af80): a known character, from the lobby only (0x459cbe). */
-  private setCharacter(peer: Peer, profile: Profile, character: string, inRoom: boolean): string | null {
-    if (!this.config.characters.includes(character)) return "알 수 없는 캐릭터입니다.";
+  private setCharacter(peer: Peer, profile: Profile, choice: { character: string; hue: number; useId: boolean }, inRoom: boolean): string | null {
+    if (!this.config.characters.includes(choice.character)) return "알 수 없는 캐릭터입니다.";
     if (inRoom) return "로비에서만 바꿀 수 있습니다.";
-    profile.character = character;
-    peer.send({ type: "profile", character });
-    return null;
-  }
-
-  private hello(peer: Peer, version: number, name: string, character: string): string | null {
-    if (version !== PROTOCOL_VERSION) return `프로토콜 버전이 다릅니다 (서버 ${PROTOCOL_VERSION}).`;
-    if (!this.config.characters.includes(character)) return "알 수 없는 캐릭터입니다.";
-    if (this.roomOf.has(peer.id)) return "방 안에서는 이름과 캐릭터를 바꿀 수 없습니다.";
-    this.profiles.set(peer.id, { name, character });
-    this.config.friends.meet(name);
-    this.arrived.add(peer.id);
-    this.dirty = true;
-    peer.send({
-      type: "welcome",
-      playerId: peer.id,
-      maps: this.maps.map((m) => ({ id: m.id, title: m.title })),
-      music: [...this.music],
-      characters: [...this.config.characters],
-    });
+    const { character, hue, useId } = choice;
+    Object.assign(profile, { character, hue, useId });
+    this.config.saveCharacter?.(profile.name, { character, hue, useId });
+    peer.send({ type: "profile", character, hue, useId });
     return null;
   }
 

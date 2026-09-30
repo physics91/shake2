@@ -73,12 +73,48 @@ describe("parseClientMessage", () => {
     expect(parseClientMessage(JSON.stringify({ type: "game-chat", text: "가".repeat(18) }))).toEqual({ type: "game-chat", text: "가".repeat(18) });
   });
 
-  it("takes the server list's load query without anything else (C->S 0x4c)", () => {
-    expect(parseClientMessage('{"type":"server-info"}')).toEqual({ type: "server-info" });
+  it("takes a server list row's load query with the row (C->S 0x4c)", () => {
+    expect(parseClientMessage('{"type":"server-info","channel":2}')).toEqual({ type: "server-info", channel: 2 });
+    expect(parseClientMessage('{"type":"server-info"}')).toBeNull();
+    expect(parseClientMessage('{"type":"server-info","channel":80}')).toBeNull();
   });
 
-  it("takes a character to save from the my-info window (C->S 0x1a)", () => {
-    expect(parseClientMessage('{"type":"set-character","character":"doona"}')).toEqual({ type: "set-character", character: "doona" });
+  it("takes a character to save with its hue and ID check (C->S 0x1a)", () => {
+    expect(parseClientMessage('{"type":"set-character","character":"doona","hue":-180,"useId":false}')).toEqual({
+      type: "set-character",
+      character: "doona",
+      hue: -180,
+      useId: false,
+    });
+    expect(parseClientMessage('{"type":"set-character","character":"doona","hue":181,"useId":false}')).toBeNull();
+    expect(parseClientMessage('{"type":"set-character","character":"doona"}')).toBeNull();
+  });
+
+  it("takes the login, the sign-up and the checks as short strings; the server checks the rest", () => {
+    expect(parseClientMessage('{"type":"login","id":"tester","password":"pass1"}')).toEqual({ type: "login", id: "tester", password: "pass1" });
+    expect(parseClientMessage('{"type":"login","id":"tester"}')).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: "login", id: "x".repeat(33), password: "p" }))).toBeNull();
+    expect(parseClientMessage('{"type":"register","id":"a","nick":"b","password":"c"}')).toEqual({ type: "register", id: "a", nick: "b", password: "c" });
+    expect(parseClientMessage('{"type":"check-id","id":"abcd"}')).toEqual({ type: "check-id", id: "abcd" });
+    expect(parseClientMessage('{"type":"check-nick","nick":1}')).toBeNull();
+  });
+
+  it("takes the version with its row, then hello with the session (C->S 0x47, 0x0a)", () => {
+    expect(parseClientMessage('{"type":"version","version":11,"channel":0}')).toEqual({ type: "version", version: 11, channel: 0 });
+    expect(parseClientMessage('{"type":"version","version":11}')).toBeNull();
+    expect(parseClientMessage('{"type":"hello","token":"abc"}')).toEqual({ type: "hello", token: "abc" });
+    expect(parseClientMessage(JSON.stringify({ type: "hello", token: "t".repeat(65) }))).toBeNull();
+  });
+
+  it("takes scene 5's 확인 and the greeting popup (C->S 0x48, 0x58)", () => {
+    expect(parseClientMessage('{"type":"set-status","nick":"닉","greeting":"안녕","useId":true}')).toEqual({
+      type: "set-status",
+      nick: "닉",
+      greeting: "안녕",
+      useId: true,
+    });
+    expect(parseClientMessage('{"type":"set-status","nick":"닉","greeting":"안녕"}')).toBeNull();
+    expect(parseClientMessage('{"type":"set-greeting","greeting":"안녕"}')).toEqual({ type: "set-greeting", greeting: "안녕" });
   });
 
   it("takes the typing flag as a boolean (state packet +0x2c)", () => {

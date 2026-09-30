@@ -180,20 +180,23 @@ export interface LobbyScreenOptions {
   /** What the my-info window shows and edits; the session keeps it. */
   profile: MyProfile;
   /** The my-info window's O with a change (C->S 0x1a); the answer comes to profileSaved. */
-  saveCharacter(character: string): void;
-  /** The greeting or the ID check changed (kept by this browser: there is no account server). */
-  profileChanged(): void;
+  saveCharacter(character: string, useId: boolean): void;
+  /** The greeting popup's O (C->S 0x58); the answer comes to greetingSaved. */
+  saveGreeting(text: string): void;
   /** The first frames fade in, as after the server list (0x449172). */
   fadeIn?: boolean;
   /** The option object (0x48acd0): the option window edits it, the balloons and F2..F10 read it. */
   settings: SettingsStore;
 }
 
-/** The player's data the my-info window shows: the character is the server's, the rest this browser's. */
+/** The player's data the my-info window shows, as the account server last sent it. */
 export interface MyProfile {
   character: string;
+  /** [0x484714]: −180..180. */
+  hue: number;
+  nick: string;
   greeting: string;
-  /** 아이디 체크 ([0x48aeec]): the ID instead of the nickname where names show. Here both are the one name. */
+  /** 아이디 체크 ([0x48aeec]): the ID instead of the nickname where names show. */
   useId: boolean;
 }
 
@@ -343,8 +346,6 @@ export class LobbyScreen {
   profileSaved(): void {
     const info = this.myInfo;
     if (info) {
-      this.options.profile.useId = info.useId;
-      this.options.profileChanged();
       this.closeMyInfo();
     }
     this.showMessage("수정 되었습니다.");
@@ -704,7 +705,7 @@ export class LobbyScreen {
     }
     info.busy = true;
     this.status.textContent = "저장하는 중…";
-    this.options.saveCharacter(CHARACTER_IDS[info.character]);
+    this.options.saveCharacter(CHARACTER_IDS[info.character], info.useId);
   }
 
   /** The greeting popup's O or Enter (0x44b120): trailing blanks cut; empty closes, all blank does nothing. */
@@ -716,9 +717,12 @@ export class LobbyScreen {
     }
     const text = trimChat(raw);
     if (!text.trim()) return;
-    // The original sends C->S 0x58 and takes the server's copy; this remake keeps it in the browser.
-    this.options.profile.greeting = text;
-    this.options.profileChanged();
+    // C->S 0x58: the popup stays until the server's copy comes back (greetingSaved).
+    this.options.saveGreeting(text);
+  }
+
+  /** S->C 0x58 accepted: the greeting is the server's copy, and the popup closes. */
+  greetingSaved(): void {
     this.closeGreeting();
   }
 

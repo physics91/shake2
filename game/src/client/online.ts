@@ -1,6 +1,6 @@
 import type { Manifest } from "../assets/types.ts";
 import { cutBytes, typeable } from "../server/cp949.ts";
-import type { ClientMessage, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
+import type { ChannelRow, ClientMessage, OwnAccount, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
 import { START_BARS, typingPacketDue } from "../server/protocol.ts";
 import {
   chatLine,
@@ -17,6 +17,8 @@ import type { GameMode, InputFrame, LevelLayout, MatchState, SimEvent } from "..
 import { teamColor } from "./hudLayout.ts";
 import type { MusicTrack } from "./audio.ts";
 import { loadImage } from "./assets.ts";
+import type { AuthState } from "./authLink.ts";
+import { AuthLink } from "./authLink.ts";
 import { CaretBlink } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView } from "./gameView.ts";
@@ -38,6 +40,7 @@ import { answerLocal, LOCAL_IDS, localLists, localRoom, nextCharacter, VERSUS_RU
 import { macroOpens, macroSlot } from "./macro.ts";
 import { mapChoices, mapTitle, portraitCanvas } from "./menu.ts";
 import type { MyProfile } from "./lobbyScreen.ts";
+import { nickRefusal } from "./myInfoLayout.ts";
 import type { LobbyState } from "./lobbyView.ts";
 import { LobbyView } from "./lobbyView.ts";
 import { listedTrack, playWaitingMusic } from "./music.ts";
@@ -51,7 +54,8 @@ import type { GameScreen } from "./shell.ts";
 import { fadeOver, freezeCanvas } from "./screenKit.ts";
 import { gameScreen, mount, settings, sounds } from "./shell.ts";
 import { newSlide } from "./startLayout.ts";
-import type { ServerList, ServerRow, StartScene } from "./startScreen.ts";
+import type { LoginSent, ServerList, ServerRow, StartScene } from "./startScreen.ts";
+import { LOGIN_FAILED } from "./startScreen.ts";
 import { defaultServerUrl, StartView } from "./startView.ts";
 import { newStatusState } from "./statusScreen.ts";
 import { choiceGroup, h, readPreference, writePreference } from "./ui.ts";
@@ -75,7 +79,17 @@ function practiceKeysHelp(): string {
 const VERSUS_KEYS_HELP = `1P: WASD · 폭탄 Space(왼쪽 Shift) · 공격용 Q · 회피용 E / 2P: 방향키 · 폭탄 Enter(오른쪽 Shift) · 공격용 오른쪽 Ctrl(.) · 회피용 ,(쉼표) · 먼저 ${MEDALS_TO_WIN}승 · 나가기: Esc`;
 
 /** The server list's row for two players on this PC, under the server's (AGENTS.md: a remake row, R). */
-const LOCAL_ROW: ServerRow = { name: "2인 대전", load: 0, ping: 0, local: true };
+const LOCAL_ROW: ServerRow = { name: "2인 대전", load: 0, ping: 0, colour: "#ffffff", local: true };
+
+/** hello refused (S->C 0x0a +8, 0x445970): 0 res#19, 2 and 3; another code keeps the old lines (0x44596e). */
+const REFUSALS: Readonly<Record<number, string>> = {
+  0: LOGIN_FAILED,
+  2: "이미 로그인 되어 있습니다",
+  3: "레벨이 맞지 않습니다",
+};
+
+/** res#37, which the original shows in a Windows box before its updater runs (0x4612f0). */
+const VERSION_UPDATED = "버전이 업데이트 되었습니다\n업데이트된 버전을 다운 로드합니다.";
 
 /** The logo and loading have shown in this page load. */
 let startShown = false;
@@ -114,6 +128,20 @@ export function mountOnline(manifest: Manifest): () => void {
 
 class OnlineSession {
   private readonly manifest: Manifest;
+  /** The auth server's connection, kept across the start's screens. */
+  private readonly auth: AuthLink;
+  /** The login's record (the lobby's copy once in one) and session; null before a login or without the auth server. */
+  private account: OwnAccount | null = null;
+  private token: string | null = null;
+  private channels: ChannelRow[] = [];
+  /** The page's form logged in to go straight into the first row. */
+  private enterAfterLogin = false;
+  /** Scene 5's 확인 waits for its answer on the auth connection. */
+  private statusSaving = false;
+  /** The load queries sent, by row index: when, for the ping. */
+  private readonly asked = new Map<number, number>();
+  /** [0x49272c]: the game server has not answered the version yet; a close now means it is full. */
+  private awaitingVersion = false;
   private socket: WebSocket | null = null;
   private welcome: Welcome | null = null;
   private lobby: LobbyState | null = null;
@@ -144,8 +172,8 @@ class OnlineSession {
   private readonly status = newStatusState(readPreference("p1"));
   /** The list is fading out toward the lobby. */
   private leavingStart = false;
-  /** The my-info window's data: the character as sent in hello, the rest kept by this browser. */
-  private profile: MyProfile = { character: "", greeting: "", useId: false };
+  /** The my-info window's data, from the account as the lobby's welcome and later answers give it. */
+  private profile: MyProfile = { character: "", hue: 0, nick: "", greeting: "", useId: false };
   private errorLine: HTMLElement | null = null;
   private disposed = false;
   /** The fade over the screen mounted last (screenKit.fadeOver). */
@@ -157,12 +185,17 @@ class OnlineSession {
 
   constructor(manifest: Manifest) {
     this.manifest = manifest;
+    this.auth = new AuthLink({
+      stateChanged: (state) => this.authStateChanged(state),
+      receive: (message) => this.receiveAuth(message),
+    });
   }
 
   dispose(): void {
     this.disposed = true;
     this.stopVeil?.();
     this.stopGame();
+    this.auth.dispose();
     this.socket?.close();
     this.socket = null;
   }
@@ -191,27 +224,35 @@ class OnlineSession {
       message: options.message,
       actions: {
         startMusic: () => playWaitingMusic(sounds, this.manifest, "lobby"),
-        loggedIn: (id) => writePreference("online.name", id),
+        account: () => this.account,
+        authConnect: () => this.auth.connect(this.serverUrl),
+        login: (id, password) => this.login(id, password),
         listServers: () => this.listServer(),
         practice: (character, hue) => this.startPractice(character, hue),
-        saveProfile: ({ nick, greeting }) => {
-          writePreference("online.name", nick);
-          writePreference("online.greeting", greeting);
+        saveCharacter: (character, hue, useId) => {
+          writePreference("p1", character);
+          if (this.account) this.auth.send({ type: "set-character", character, hue, useId });
+        },
+        saveStatus: (profile) => {
+          this.statusSaving = this.account !== null && this.auth.send({ type: "set-status", ...profile });
+          return this.statusSaving;
         },
         characterChanged: (character) => writePreference("p1", character),
         connect: () => {
-          if (this.list.rows[this.list.selected]?.local) this.openLocalRoom();
-          else this.enter(this.helloProfile());
+          const row = this.list.rows[this.list.selected];
+          if (row?.local) this.openLocalRoom();
+          else this.enter(row?.channel ?? 0);
         },
         local: () => this.openLocalRoom(),
-        enter: (profile) => {
-          writePreference("online.name", profile.name);
-          writePreference("p1", profile.character);
-          this.enter({ name: profile.name || "플레이어", character: profile.character });
-        },
-        // A page cannot close its window: the program starts over, silent, from its logo.
+        enter: ({ id, password }) => this.formEnter(id, password),
+        // A page cannot close its window: the program starts over, silent, from its logo, logged out.
         exit: () => {
           sounds.stopMusic();
+          this.auth.dispose();
+          this.account = null;
+          this.token = null;
+          this.channels = [];
+          this.list.rows = [];
           this.showStart({ begin: "logo" });
         },
       },
@@ -220,66 +261,139 @@ class OnlineSession {
     mount(this.startView.root);
   }
 
-  /** Scene 5's Go game: the rows' load and ping zeroed and asked for, as the login's reply does (0x448be3). */
-  private listServer(): void {
-    this.list.rows = [{ name: serverName(this.serverUrl), load: 0, ping: 0 }, { ...LOCAL_ROW }];
-    this.list.selected = -1;
-    this.queryServer();
+  /**
+   * The login's OK (C->S 0x0a to the auth server). Without the auth server, scene 5 opens with no
+   * account: practice and two players on this PC need none (R).
+   */
+  private login(id: string, password: string): LoginSent {
+    switch (this.auth.state) {
+      case "open":
+        this.auth.send({ type: "login", id, password });
+        return "sent";
+      case "connecting":
+        return "wait";
+      default:
+        this.account = null;
+        this.token = null;
+        this.channels = [];
+        return "offline";
+    }
+  }
+
+  /** The page's form: the login, then the first row's lobby once the auth server answers. */
+  private formEnter(id: string, password: string): void {
+    if (this.auth.state !== "open") {
+      this.auth.connect(this.serverUrl);
+      this.showError("인증 서버에 접속하지 못했습니다. 잠시 뒤 다시 시도하세요.");
+      return;
+    }
+    this.enterAfterLogin = true;
+    this.startView?.connecting();
+    this.auth.send({ type: "login", id, password });
+  }
+
+  private authStateChanged(state: AuthState): void {
+    if (state !== "failed") return;
+    this.statusSaving = false;
+    if (this.enterAfterLogin) {
+      this.enterAfterLogin = false;
+      this.showError("인증 서버에 접속하지 못했습니다.");
+    }
+    this.startView?.authFailed();
+  }
+
+  /** The auth server's answers: the login (0x448ab0), the rows' loads, scene 5's saves. */
+  private receiveAuth(message: ServerMessage): void {
+    if (this.disposed) return;
+    switch (message.type) {
+      case "login":
+        if (!message.ok) {
+          this.enterAfterLogin = false;
+          this.startView?.loginFailed();
+          return;
+        }
+        this.account = message.account;
+        this.token = message.token;
+        this.channels = message.channels;
+        // The options keep the ID of a login that worked (0x44d590).
+        writePreference("online.name", message.account.id);
+        this.startView?.loggedIn(message.account);
+        if (this.enterAfterLogin) {
+          this.enterAfterLogin = false;
+          this.enter(0);
+        }
+        return;
+      case "server-info":
+        this.rowAnswered(message.channel, message.load);
+        return;
+      case "saved":
+        this.account = message.account;
+        if (this.statusSaving) this.startView?.statusSaved(message.account);
+        this.statusSaving = false;
+        return;
+      case "nick-refused":
+        if (this.statusSaving) this.startView?.saveRefused(message.code);
+        this.statusSaving = false;
+        return;
+      case "error":
+        if (this.statusSaving) this.startView?.saveRefused(message.message);
+        this.statusSaving = false;
+        return;
+      default:
+        return;
+    }
   }
 
   /**
-   * The load query (thread 0x448410): its own connection, one question, the ping from the send to
-   * the answer. Every failure shows as the connect failure's (−1 ms, 1000 %), which keeps the row
-   * selectable so that connecting tells what is wrong.
+   * The login's reply zeroes each row's load and ping and asks for them (0x448be3): the auth
+   * server's rows with their colours, then the remake's local row. Without the auth server the one
+   * row is this address's, shown as its connect failure (−1 ms, 1000 %), still selectable.
    */
-  private queryServer(): void {
-    const url = this.serverUrl;
-    const fallback = serverName(url);
-    let answered = false;
-    let socket: WebSocket | null = null;
-    const report = (row: ServerRow) => {
-      if (answered) return;
-      answered = true;
-      clearTimeout(timer);
-      socket?.close();
-      this.list.rows[0] = row;
-      this.startView?.serverInfo(row);
-    };
-    const fail = () => report({ name: fallback, load: 1000, ping: -1 });
-    const timer = setTimeout(fail, QUERY_TIMEOUT_MS);
-    try {
-      socket = new WebSocket(url);
-    } catch {
-      fail();
-      return;
-    }
-    let sentAt = 0;
-    socket.addEventListener("open", () => {
-      sentAt = performance.now();
-      socket?.send(JSON.stringify({ type: "server-info" } satisfies ClientMessage));
-    });
-    socket.addEventListener("message", (event) => {
-      try {
-        const message = JSON.parse(String(event.data)) as ServerMessage;
-        if (message.type === "server-info") report({ name: message.name || fallback, load: message.load, ping: Math.round(performance.now() - sentAt) });
-      } catch {
-        fail();
+  private listServer(): void {
+    this.list.rows = this.account
+      ? this.channels.map((row, channel) => ({ name: row.name, colour: row.colour, channel, load: 0, ping: 0 }))
+      : [{ name: serverName(this.serverUrl), colour: "#ffffff", channel: 0, load: 1000, ping: -1 }];
+    this.list.rows.push({ ...LOCAL_ROW });
+    this.list.selected = -1;
+    this.queryServers();
+  }
+
+  /**
+   * The load queries (thread 0x448410, one per row): here each goes over the auth connection, the
+   * ping from the send to the answer. A row not answered shows as the connect failure's.
+   */
+  private queryServers(): void {
+    if (!this.account) return;
+    for (const row of this.list.rows) {
+      const channel = row.channel;
+      if (channel === undefined || row.local) continue;
+      const at = performance.now();
+      this.asked.set(channel, at);
+      if (!this.auth.send({ type: "server-info", channel })) {
+        this.rowAnswered(channel, null);
+        continue;
       }
-    });
-    socket.addEventListener("close", fail);
+      setTimeout(() => {
+        if (this.asked.get(channel) === at) this.rowAnswered(channel, null);
+      }, QUERY_TIMEOUT_MS);
+    }
+  }
+
+  /** A row's answer, or null for none. */
+  private rowAnswered(channel: number, load: number | null): void {
+    const at = this.asked.get(channel);
+    if (at === undefined) return;
+    this.asked.delete(channel);
+    const row = this.list.rows.find((r) => r.channel === channel && !r.local);
+    if (!row) return;
+    Object.assign(row, load === null ? { load: 1000, ping: -1 } : { load, ping: Math.round(performance.now() - at) });
+    this.startView?.serverInfo(row);
   }
 
   private get serverUrl(): string {
     const url = this.startView?.serverUrl ?? readPreference("online.server") ?? defaultServerUrl();
     writePreference("online.server", url);
     return url;
-  }
-
-  /** hello's name and character: the login's ID and the character the my-info window saved. */
-  private helloProfile(): { name: string; character: string } {
-    let character = readPreference("p1") ?? "bobo";
-    if (!this.manifest.characters.includes(character)) character = this.manifest.characters[0];
-    return { name: readPreference("online.name") || "플레이어", character };
   }
 
   private showRoom(room: RoomInfo): void {
@@ -348,11 +462,8 @@ class OnlineSession {
         this.lobbyWaitingOnly = waitingOnly;
       },
       profile: this.profile,
-      saveCharacter: (character) => this.send({ type: "set-character", character }),
-      profileChanged: () => {
-        writePreference("online.greeting", this.profile.greeting);
-        writePreference("online.useId", this.profile.useId ? "1" : "0");
-      },
+      saveCharacter: (character, useId) => this.send({ type: "set-character", character, hue: this.profile.hue, useId }),
+      saveGreeting: (greeting) => this.send({ type: "set-greeting", greeting }),
       settings,
     }, fadeIn);
     if (this.firstLobby) this.lobbyView.showNotice(NOTICE.joinText);
@@ -385,9 +496,9 @@ class OnlineSession {
     this.showStart({ begin: "servers", fadeFrom, message });
     // The page's form skips the login that fills the list; the row is still needed to connect again.
     if (this.list.rows.length === 0) this.listServer();
-    else if (askServers) {
+    else if (askServers && this.account) {
       for (const row of this.list.rows) Object.assign(row, { load: 0, ping: 0 });
-      this.queryServer();
+      this.queryServers();
     }
   }
 
@@ -482,22 +593,18 @@ class OnlineSession {
 
   // Connection
 
-  /** Connect and send hello (0x4441c0, C->S 0x47/0x0a); the server answers with welcome, then the lobby. */
-  private enter(profile: { name: string; character: string }): void {
+  /**
+   * A row's game server (0x4441c0): on connect the version (C->S 0x47), on its answer the login's
+   * session (C->S 0x0a); the server answers with welcome, then the lobby.
+   */
+  private enter(channel: number): void {
     const url = this.serverUrl;
     sounds.unlock();
     this.showError("");
-    const hello: ClientMessage = { type: "hello", version: PROTOCOL_VERSION, ...profile };
-    this.profile.character = profile.character;
-    this.profile.greeting = readPreference("online.greeting") ?? "";
-    this.profile.useId = readPreference("online.useId") === "1";
+    if (this.socket) return; // one game server at a time
     this.firstLobby = true;
     this.lobbyWaitingOnly = false;
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.send(hello);
-      return;
-    }
-    if (this.socket) return; // still connecting; hello goes out on open
+    this.awaitingVersion = false;
     let socket: WebSocket;
     try {
       socket = new WebSocket(url);
@@ -512,7 +619,8 @@ class OnlineSession {
     socket.addEventListener("open", () => {
       opened = true;
       this.showError("");
-      this.send(hello);
+      this.awaitingVersion = true;
+      this.send({ type: "version", version: PROTOCOL_VERSION, channel });
     });
     socket.addEventListener("message", (event) => {
       try {
@@ -523,6 +631,8 @@ class OnlineSession {
     });
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
+      const full = this.awaitingVersion;
+      this.awaitingVersion = false;
       this.socket = null;
       this.welcome = null;
       this.lobby = null;
@@ -531,9 +641,11 @@ class OnlineSession {
       this.kicked = false;
       this.leavingStart = false;
       if (this.disposed) return;
-      // FD_CONNECT's error (0x460edc), or FD_CLOSE (0x460dbe) on the list or on any later screen.
+      // FD_CLOSE before the version's answer: the server is full (0x460dde). FD_CONNECT's error
+      // (0x460edc), or FD_CLOSE (0x460dbe) on the list or on any later screen.
       if (this.startView) {
-        if (opened) this.startView.disconnected();
+        if (full) this.startView.serverFull();
+        else if (opened) this.startView.disconnected();
         else this.startView.connectFailed();
         return;
       }
@@ -560,9 +672,24 @@ class OnlineSession {
     // Any data from the host resets its silence clock (0x4471d3); the server is the host here.
     this.game?.heard(performance.now());
     switch (message.type) {
-      case "welcome":
-        this.welcome = { playerId: message.playerId, maps: message.maps, music: message.music };
+      case "version":
+        // S->C 0x47 (0x445378): another version reloads the page as the updater would run.
+        this.awaitingVersion = false;
+        if (message.version !== PROTOCOL_VERSION) this.versionMismatch();
+        else this.send({ type: "hello", token: this.token ?? "" });
         break;
+      case "refused":
+        // S->C 0x0a's failure (0x444b58): the message, the row let go, the socket gone.
+        this.dropSocket();
+        this.startView?.refused(REFUSALS[message.code] ?? LOGIN_FAILED);
+        break;
+      case "welcome": {
+        this.welcome = { playerId: message.playerId, maps: message.maps, music: message.music };
+        const { character, hue, nick, greeting, useId } = message.account;
+        this.account = message.account;
+        Object.assign(this.profile, { character, hue, nick, greeting, useId });
+        break;
+      }
       case "lobby":
         // Lobby news goes only to players in no room: the room left for "network problem!" is gone.
         this.leftForProblem = false;
@@ -602,10 +729,23 @@ class OnlineSession {
         this.roomView?.refused();
         if (message.ok) this.kickArrived(message.slot);
         break;
-      case "profile":
-        this.profile.character = message.character;
-        writePreference("p1", message.character);
+      case "profile": {
+        // S->C 0x1a: the server's values stick (findings: only a success keeps the choice).
+        const { character, hue, useId } = message;
+        Object.assign(this.profile, { character, hue, useId });
+        if (this.account) Object.assign(this.account, { character, hue, useId });
+        writePreference("p1", character);
         this.lobbyView?.profileSaved();
+        break;
+      }
+      case "saved":
+        // S->C 0x58: the greeting is the server's copy.
+        this.account = message.account;
+        this.profile.greeting = message.account.greeting;
+        this.lobbyView?.greetingSaved();
+        break;
+      case "nick-refused":
+        this.lobbyView?.showMessage(nickRefusal(message.code));
         break;
       case "room":
         // Put out, the room's screen stays under the message box; the server has let go of the player.
@@ -652,11 +792,9 @@ class OnlineSession {
         if (this.room) this.showRoom(this.room);
         break;
       case "error":
-        // hello refused (S->C 0x0a's failure, 0x444b58): the message, the row let go, the socket gone.
+        // Refused before the lobby: as hello's refusal, the message, the row let go, the socket gone.
         if (this.startView && !this.welcome) {
-          const socket = this.socket;
-          this.socket = null;
-          socket?.close();
+          this.dropSocket();
           this.startView.refused(message.message);
           break;
         }
@@ -670,6 +808,27 @@ class OnlineSession {
         }
         break;
     }
+  }
+
+  /** The game socket let go of by the page, so its close is not a lost connection. */
+  private dropSocket(): void {
+    const socket = this.socket;
+    this.socket = null;
+    this.awaitingVersion = false;
+    socket?.close();
+  }
+
+  /** The version check failed (0x4d6 → 0x4612f0): the box, then the page loads again (the updater's run). */
+  private versionMismatch(): void {
+    this.dropSocket();
+    let reloaded = false;
+    const reload = () => {
+      if (reloaded) return;
+      reloaded = true;
+      location.reload();
+    };
+    if (this.startView) this.startView.showMessage(VERSION_UPDATED, reload);
+    else reload();
   }
 
   private startGame(layout: LevelLayout, music: number, room: RoomInfo, playerId: number): void {

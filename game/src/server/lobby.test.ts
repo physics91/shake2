@@ -6,13 +6,37 @@ import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
 import { FriendBook } from "./friends.ts";
 import type { LobbyConfig } from "./lobby.ts";
 import { Lobby, PASSWORD_FAILURES_KEPT_MS, PASSWORD_RETRY_MAX_MS, PASSWORD_RETRY_MS } from "./lobby.ts";
-import type { RoomInfo, ServerMessage } from "./protocol.ts";
-import { PROTOCOL_VERSION, START_BARS, TYPING_PACKET_MS, typingPacketDue } from "./protocol.ts";
+import type { OwnAccount, RoomInfo, ServerMessage } from "./protocol.ts";
+import { START_BARS, TYPING_PACKET_MS, typingPacketDue } from "./protocol.ts";
 import { PING_ECHO_MS } from "./room.ts";
 
 const LAYOUT = layoutFromAscii(["1....", ".....", "....2"]);
 /** Wait (1 s) and countdown (4 s) before play. */
 const TO_PLAY = 5 * TICK_RATE;
+
+/** A fresh account's login record, as the gate would send it. */
+function testAccount(id: string, character = "bobo"): OwnAccount {
+  return {
+    id,
+    nick: id,
+    greeting: "",
+    character,
+    hue: 0,
+    useId: true,
+    wins: 0,
+    losses: 0,
+    cell: 0,
+    level: 12,
+    guild: -1,
+    rank: 0,
+    gender: 0,
+    manner: 0,
+    exp: 0,
+    candy: 0,
+    items: [12],
+    pairs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  };
+}
 
 function makeLobby(overrides: Partial<LobbyConfig> = {}) {
   let codes = 0;
@@ -35,8 +59,8 @@ function makeLobby(overrides: Partial<LobbyConfig> = {}) {
   const inbox = new Map<number, ServerMessage[]>();
   const connect = (id: number, name = `P${id}`, character = "bobo", address?: string) => {
     inbox.set(id, []);
-    lobby.connect({ id, send: (m) => inbox.get(id)?.push(m), address });
-    lobby.handle(id, { type: "hello", version: PROTOCOL_VERSION, name, character });
+    const profile = { name, nick: name, useId: true, character, hue: 0 };
+    lobby.join({ id, send: (m) => inbox.get(id)?.push(m), address }, profile, testAccount(name, character));
   };
   const last = <T extends ServerMessage["type"]>(id: number, type: T) =>
     (inbox.get(id) ?? []).filter((m): m is Extract<ServerMessage, { type: T }> => m.type === type).at(-1);
@@ -86,33 +110,19 @@ describe("Lobby", () => {
     ]);
   });
 
-  it("answers the server list's load query before hello: the channel and rooms / max rooms (C->S 0x4c)", () => {
+  it("welcomes a player with its account, and plays a character it no longer has as the first (R)", () => {
     const t = makeLobby();
-    t.inbox.set(9, []);
-    t.lobby.connect({ id: 9, send: (m) => t.inbox.get(9)?.push(m) });
-    t.lobby.handle(9, { type: "server-info" });
-    expect(t.last(9, "server-info")).toEqual({ type: "server-info", name: "시험 채널", load: 0 });
-    expect(t.last(9, "error")).toBeUndefined();
-    expect(t.last(9, "welcome")).toBeUndefined();
-
-    t.connect(1);
+    t.connect(1, "tester", "nobody");
+    expect(t.last(1, "welcome")?.account).toMatchObject({ id: "tester", character: "bobo", level: 12 });
     t.lobby.handle(1, { type: "create-room", title: "" });
-    t.lobby.handle(9, { type: "server-info" });
-    expect(t.last(9, "server-info")?.load).toBe(50);
-    // The asker is not a lobby user until its hello.
-    t.connect(2);
-    expect(t.lobbyOf(2)?.users.map((u) => u.id)).toEqual([2]);
+    expect(t.room(1)?.players[0].character).toBe("bobo");
+    expect(t.lobby.userCount).toBe(1);
   });
 
-  it("requires hello, a known character and a known room", () => {
+  it("takes nothing from a player it has not welcomed, and finds only known rooms", () => {
     const t = makeLobby();
-    t.inbox.set(9, []);
-    t.lobby.connect({ id: 9, send: (m) => t.inbox.get(9)?.push(m) });
     t.lobby.handle(9, { type: "create-room", title: "" });
-    expect(t.last(9, "error")).toBeDefined();
-
-    t.lobby.handle(9, { type: "hello", version: PROTOCOL_VERSION, name: "x", character: "nobody" });
-    expect(t.last(9, "error")?.message).toContain("캐릭터");
+    expect(t.lobby.roomCount).toBe(0);
 
     t.connect(1);
     t.lobby.handle(1, { type: "join-room", code: "ZZZZ" });
@@ -709,15 +719,6 @@ describe("Lobby (scene 4)", () => {
     expect(t.lobbyOf(2)?.users.map((u) => u.id)).toEqual([1, 2]);
   });
 
-  it("does not count a connection that has not said hello", () => {
-    const t = makeLobby();
-    t.inbox.set(9, []);
-    t.lobby.connect({ id: 9, send: (m) => t.inbox.get(9)?.push(m) });
-    t.connect(1);
-    expect(t.lobbyOf(1)?.users.map((u) => u.id)).toEqual([1]);
-    expect(t.lobbyOf(9)).toBeUndefined();
-  });
-
   it("lists a room by its number and takes its players out of the lobby", () => {
     const t = makeLobby();
     t.connect(1, "하나");
@@ -809,20 +810,23 @@ describe("Lobby (scene 4)", () => {
   });
 
   it("saves the character from the my-info window in the lobby and answers with it (C->S / S->C 0x1a)", () => {
-    const t = makeLobby();
+    const saved: unknown[] = [];
+    const t = makeLobby({ saveCharacter: (name, choice) => saved.push([name, choice]) });
     t.connect(1, "하나", "bobo");
-    t.lobby.handle(1, { type: "set-character", character: "doona" });
-    expect(t.last(1, "profile")).toEqual({ type: "profile", character: "doona" });
+    t.lobby.handle(1, { type: "set-character", character: "doona", hue: 45, useId: false });
+    expect(t.last(1, "profile")).toEqual({ type: "profile", character: "doona", hue: 45, useId: false });
+    expect(saved).toEqual([["하나", { character: "doona", hue: 45, useId: false }]]);
 
-    t.lobby.handle(1, { type: "set-character", character: "nobody" });
+    t.lobby.handle(1, { type: "set-character", character: "nobody", hue: 0, useId: true });
     expect(t.last(1, "error")?.message).toBe("알 수 없는 캐릭터입니다.");
     t.lobby.handle(1, { type: "create-room", title: "" });
     expect(t.room(1)?.players[0].character).toBe("doona");
 
     // My-info opens only from the lobby (0x459cbe).
-    t.lobby.handle(1, { type: "set-character", character: "bobo" });
+    t.lobby.handle(1, { type: "set-character", character: "bobo", hue: 0, useId: true });
     expect(t.last(1, "error")?.message).toBe("로비에서만 바꿀 수 있습니다.");
     expect(t.count(1, "profile")).toBe(1);
+    expect(saved).toHaveLength(1);
   });
 
   it("answers a right click's room info (C->S 0x55): the status, the round and who sits where", () => {

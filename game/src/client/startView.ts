@@ -3,32 +3,38 @@
 // scene 5's buttons and an entry form that logs in and connects at once.
 import type { Manifest } from "../assets/types.ts";
 import { cutBytes, typeable } from "../server/cp949.ts";
+import type { OwnAccount } from "../server/protocol.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
-import { characterChoices } from "./menu.ts";
 import { settings, sounds } from "./shell.ts";
-import type { ServerList, ServerRow, StartScene, StatusCommand } from "./startScreen.ts";
+import type { LoginSent, ServerList, ServerRow, StartScene, StatusCommand } from "./startScreen.ts";
 import { loadStartAssets, preloadOnline, StartScreen } from "./startScreen.ts";
 import { LOGIN } from "./startLayout.ts";
 import type { StatusState } from "./statusScreen.ts";
-import { choiceGroup, h, readPreference } from "./ui.ts";
+import { h, readPreference } from "./ui.ts";
 
 export interface StartActions {
   /** 1→3: the waiting tune. */
   startMusic(): void;
-  /** The canvas login: the ID becomes the player's name. */
-  loggedIn(id: string): void;
+  /** The account server's login record, once logged in. */
+  account(): OwnAccount | null;
+  /** The auth connection, made at the login and again when its message box closes. */
+  authConnect(): void;
+  /** The canvas login's OK. */
+  login(id: string, password: string): LoginSent;
   /** Scene 5's Go game: the server list's rows. */
   listServers(): void;
   /** Scene 5's Practice. */
   practice(character: string, hue: number): void;
-  /** Scene 5's 확인. */
-  saveProfile(profile: { nick: string; greeting: string }): void;
+  /** Scene 5's Go: the character kept by the account. */
+  saveCharacter(character: string, hue: number, useId: boolean): void;
+  /** Scene 5's 확인; false without the account server. */
+  saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
   /** The chosen row clicked again. */
   connect(): void;
-  /** The page's form: straight to the lobby with this name and character. */
-  enter(profile: { name: string; character: string }): void;
+  /** The page's form: log in and go into the first row's lobby. */
+  enter(login: { id: string; password: string }): void;
   /** The server list's "2인 대전" row, for the page's button too. */
   local(): void;
   /** The quit box's YES: the program ends, which here starts it again. */
@@ -90,6 +96,7 @@ export class StartView {
   private readonly loading = h("p", { class: "loading", role: "status" }, "시작 화면을 불러오는 중…");
   private readonly stage = h("div", { class: "stage" }, this.canvas, this.loading);
   private readonly nameInput: HTMLInputElement;
+  private readonly passwordInput: HTMLInputElement;
   private readonly serverInput: HTMLInputElement;
   private screen: StartScreen | null = null;
   private disposed = false;
@@ -97,24 +104,28 @@ export class StartView {
   private pending: ((screen: StartScreen) => void)[] = [];
 
   constructor(options: StartViewOptions) {
-    const { manifest, actions } = options;
+    const { actions } = options;
     this.nameInput = h("input", {
       id: "online-name",
       value: readPreference("online.name") ?? "",
-      autocomplete: "nickname",
-      placeholder: "플레이어",
+      autocomplete: "username",
+      required: true,
     });
-    this.nameInput.addEventListener("input", () => {
-      const kept = cutBytes(typeable(this.nameInput.value), NAME_BYTES);
-      if (kept !== this.nameInput.value) this.nameInput.value = kept;
-    });
+    this.passwordInput = h("input", { id: "online-password", type: "password", autocomplete: "current-password", required: true });
+    for (const input of [this.nameInput, this.passwordInput]) {
+      input.addEventListener("input", () => {
+        const kept = cutBytes(typeable(input.value), NAME_BYTES);
+        if (kept !== input.value) input.value = kept;
+      });
+    }
     this.serverInput = h("input", { id: "online-server", value: readPreference("online.server") ?? defaultServerUrl() });
-    let character = readPreference("p1") ?? "bobo";
-    if (!manifest.characters.includes(character)) character = manifest.characters[0];
     const enter = (event: Event) => {
       event.preventDefault();
-      this.screen?.connecting();
-      actions.enter({ name: this.nameInput.value.trim(), character });
+      const id = this.nameInput.value.trim();
+      const password = this.passwordInput.value;
+      if (!id || !password) return;
+      this.passwordInput.value = "";
+      actions.enter({ id, password });
     };
 
     this.root = h(
@@ -125,7 +136,7 @@ export class StartView {
       h(
         "p",
         { class: "keys" },
-        "로그인: 아이디(이름)를 넣고 Enter, 비밀번호 칸에서 Enter(비밀번호는 쓰지 않음). Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
+        "로그인: 아이디를 넣고 Enter, 비밀번호를 넣고 Enter. Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 인증 서버에 닿지 않으면 로그인 없이 내 정보 화면으로 가서 연습과 2인 대전만 할 수 있습니다. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
       ),
       h(
         "div",
@@ -137,11 +148,9 @@ export class StartView {
       h(
         "form",
         { class: "lobby", onsubmit: enter },
-        h("div", { class: "field" }, h("label", { for: "online-name" }, `이름 (최대 ${NAME_BYTES}바이트)`), this.nameInput),
-        choiceGroup("캐릭터", "online-character", characterChoices(manifest), character, (value) => {
-          character = value;
-        }),
-        h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "로비 입장")),
+        h("div", { class: "field" }, h("label", { for: "online-name" }, `아이디 (최대 ${NAME_BYTES}바이트)`), this.nameInput),
+        h("div", { class: "field" }, h("label", { for: "online-password" }, `비밀번호 (최대 ${NAME_BYTES}바이트)`), this.passwordInput),
+        h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "로그인하고 첫 서버 로비 입장")),
       ),
       h("button", { class: "btn", type: "button", onclick: () => actions.local() }, "2인 대전 (한 키보드, 서버 목록의 둘째 줄)"),
       h(
@@ -169,19 +178,18 @@ export class StartView {
           fadeFrom: options.fadeFrom,
           savedId: readPreference("online.name") ?? "",
           status: options.status,
-          greeting: readPreference("online.greeting") ?? "",
+          account: actions.account,
+          authConnect: actions.authConnect,
           preload: preloadOnline,
           startMusic: actions.startMusic,
-          loggedIn: (id) => {
+          login: (id, password) => {
             this.nameInput.value = id;
-            actions.loggedIn(id);
+            return actions.login(id, password);
           },
           listServers: actions.listServers,
           practice: actions.practice,
-          saveProfile: (profile) => {
-            this.nameInput.value = profile.nick;
-            actions.saveProfile(profile);
-          },
+          saveCharacter: actions.saveCharacter,
+          saveStatus: actions.saveStatus,
           characterChanged: actions.characterChanged,
           connect: actions.connect,
           exit: actions.exit,
@@ -205,6 +213,46 @@ export class StartView {
 
   serverInfo(row: ServerRow): void {
     this.withScreen((screen) => screen.serverInfo(row));
+  }
+
+  /** The auth connection failed or closed: the login's message box. */
+  authFailed(): void {
+    this.errorLine.textContent = "인증 서버에 접속하지 못했습니다. 로그인 없이 연습과 2인 대전만 할 수 있습니다.";
+    this.withScreen((screen) => screen.authFailed());
+  }
+
+  loggedIn(account: OwnAccount): void {
+    this.errorLine.textContent = "";
+    this.withScreen((screen) => screen.loggedIn(account));
+  }
+
+  loginFailed(): void {
+    this.errorLine.textContent = "로그인 실패: 아이디나 비밀번호가 맞지 않습니다.";
+    this.withScreen((screen) => screen.loginFailed());
+  }
+
+  statusSaved(account: OwnAccount): void {
+    this.withScreen((screen) => screen.statusSaved(account));
+  }
+
+  saveRefused(code: number | string): void {
+    this.withScreen((screen) => screen.saveRefused(code));
+  }
+
+  /** A connection from the page's form: the busy cursor. */
+  connecting(): void {
+    this.withScreen((screen) => screen.connecting());
+  }
+
+  serverFull(): void {
+    this.errorLine.textContent = "사용자가 너무 많습니다";
+    this.withScreen((screen) => screen.serverFull());
+  }
+
+  /** A message box over the screen; `closed` runs when it goes, by a click, Esc or its own time. */
+  showMessage(text: string, closed?: () => void): void {
+    this.errorLine.textContent = text.replace(/\n+/g, " ");
+    this.withScreen((screen) => screen.showMessage(text, closed));
   }
 
   connectFailed(): void {

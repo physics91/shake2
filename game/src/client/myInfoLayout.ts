@@ -137,6 +137,17 @@ export function greetingCaret(textBytes: number, caretBytes: number): Point {
 /** The greeting editor's limit (0x43ea00: 0x25): 36 bytes. */
 export const GREETING_LIMIT = 37;
 
+/** The nickname popup's refusals (S->C 0x57, 0x44b080); scene 5's 확인 answers with them too (R). */
+export const NICK_REFUSALS: Readonly<Record<number, string>> = {
+  0xfc: "한번이상 수정할수 없습니다!!",
+  0xfd: "이미 사용중인 닉네임입니다!!",
+  0xfe: "닉네임 수정 실패!!",
+};
+
+export function nickRefusal(code: number): string {
+  return NICK_REFUSALS[code] ?? NICK_REFUSALS[0xfe];
+}
+
 export const GREETING_POPUP = {
   src: [1, 261, 239, 440] as Rect,
   at: { x: 274, y: 200 },

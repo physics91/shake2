@@ -4,6 +4,7 @@
 // page's hidden controls (startView.ts) are the keyboard and screen reader path.
 import type { Rect } from "../assets/types.ts";
 import { cp949Bytes, cutBytes, typeable } from "../server/cp949.ts";
+import type { OwnAccount } from "../server/protocol.ts";
 import type { Sheet } from "./assets.ts";
 import { loadImage, loadImageSheet, loadSheet } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
@@ -11,6 +12,7 @@ import { CaretBlink } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { INSTALLED_VERSION, SCREEN_H, SCREEN_W, VERSION_TEXT } from "./hudLayout.ts";
 import { MESSAGE_BOX, MESSAGE_HELP, messageLines } from "./lobbyLayout.ts";
+import { characterIndex, nickRefusal } from "./myInfoLayout.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
 import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
@@ -52,7 +54,7 @@ import {
   toggleSlide,
 } from "./startLayout.ts";
 import type { SettingsStore } from "./settings.ts";
-import { MAIN_BUTTONS, OPTION_PAGE, STATUS_BUTTONS } from "./statusLayout.ts";
+import { MAIN_BUTTONS, OPTION_PAGE, STATUS_BUTTONS, STATUS_TEXT } from "./statusLayout.ts";
 import type { StatusAssets, StatusPageName, StatusState } from "./statusScreen.ts";
 import { loadStatusAssets, StatusPage } from "./statusScreen.ts";
 import { fitText, FONT_12, FONT_13, outlinedText, plainText, YELLOW } from "./text.ts";
@@ -153,9 +155,21 @@ export interface ServerRow {
   name: string;
   load: number;
   ping: number;
+  /** "#rrggbb" (+0x18..0x1a, 0x456e10): the name's and the load's colour. */
+  colour: string;
+  /** The auth server's row index, which the game server is asked for; none for the local row. */
+  channel?: number;
   /** The remake's row for two players on this PC (AGENTS.md), after the server's. */
   local?: boolean;
 }
+
+/** The auth connect failed (0x46118f). */
+export const AUTH_FAILED = "인증서버 접속 실패";
+/** The auth server's refusal, whatever the reason (0x448ad4). */
+export const LOGIN_FAILED = "로그인 실패";
+
+/** What the login's OK did: sent to the auth server, gone on without it (R), or waiting for it to connect. */
+export type LoginSent = "sent" | "offline" | "wait";
 
 /** What the server list keeps between its screens: the slide's statics, the rows and the choice. */
 export interface ServerList {
@@ -207,20 +221,24 @@ export interface StartScreenOptions {
   savedId: string;
   /** Scene 5's own memory, kept by the session. */
   status: StatusState;
-  /** The greeting scene 5 shows (the account's, kept by this browser). */
-  greeting: string;
+  /** The account server's login record, once logged in; null without it. */
+  account(): OwnAccount | null;
+  /** The auth connection (0x4486b0): made at 1→3 and when a message box on the login closes; kept when up. */
+  authConnect(): void;
   /** The loader thread's work (0x404200): every file the next screens use; reports each one done. */
   preload(progress: (done: number, total: number) => void): Promise<void>;
   /** 1→3: the waiting tune starts (0x43fbe0(0)). */
   startMusic(): void;
-  /** OK with both fields: the remake has no account server, so the ID is the player's name. */
-  loggedIn(id: string): void;
+  /** OK with both fields (C->S 0x0a, 0x44f920). Without the account server scene 5 opens anyway (R). */
+  login(id: string, password: string): LoginSent;
   /** Scene 5's Go game: the server list's rows are made and asked for. */
   listServers(): void;
   /** Scene 5's Practice (0x45aa37) with its character and hue ([0x492770]). */
   practice(character: string, hue: number): void;
-  /** Scene 5's 확인: the nick and greeting kept. */
-  saveProfile(profile: { nick: string; greeting: string }): void;
+  /** Scene 5's Go (the old C->S 0x1a): the character, hue and ID check, kept by the account. */
+  saveCharacter(character: string, hue: number, useId: boolean): void;
+  /** Scene 5's 확인 (C->S 0x48); false when there is no account server to send it to. */
+  saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
   /** The chosen row clicked again (0x4441c0): connect and say hello. */
@@ -247,6 +265,8 @@ export class StartScreen {
   private tickAt = 0;
   private logoAt: number | null = null;
   private loading = { switchedAt: 0, started: false, done: 0, total: 0, finished: false, count: 0, frameAt: 0, fullAt: null as number | null };
+  /** The ID a login without the account server went on with: scene 5's nick then. */
+  private offlineNick = "";
   /** [0x46b0b9]: the login field with the focus. */
   private focus: "id" | "pw" = "id";
   /** [0x495670]: the memo, opened on each login. */
@@ -256,7 +276,7 @@ export class StartScreen {
   private refreshFrame: number | null = null;
   /** The busy cursor (0x43f0b0) and [0x48c2e8]: a connection under way. */
   private busy = false;
-  private message: { text: string; since: number } | null = null;
+  private message: { text: string; since: number; closed?: () => void } | null = null;
   private quitBox: PracticeBox | null = null;
   private boxHover: 0 | 1 | 2 = 0;
   private helpScreen = false;
@@ -285,7 +305,7 @@ export class StartScreen {
       state: options.status,
       announce: (text) => this.announce(text),
       message: (text) => this.showMessage(text),
-      save: (profile) => options.saveProfile(profile),
+      save: (profile) => this.saveStatus(profile),
       characterChanged: (character) => options.characterChanged(character),
     });
     this.scene = options.begin;
@@ -293,7 +313,10 @@ export class StartScreen {
     this.tickAt = now;
     if (options.begin === "login") this.enterLogin();
     // Practice's time limit (0x406224): 0x41f030 again, then scene 5 with the fade.
-    if (options.begin === "status") this.enterStatus(options.savedId);
+    if (options.begin === "status") {
+      this.offlineNick = options.savedId;
+      this.enterStatus();
+    }
     if (options.begin === "servers") this.announce("서버 선택 화면. 서버 줄을 두 번 누르면 접속합니다. Esc는 종료 상자입니다.");
     if (options.fadeFrom) this.fadeOut(options.fadeFrom, now, FRAME_MS, () => this.fadeIn(performance.now(), FRAME_MS));
     else if (options.begin !== "logo") this.fadeIn(now, FRAME_MS);
@@ -315,10 +338,56 @@ export class StartScreen {
     this.announce(`${row.name} 서버: 부하 ${percentText(row.load).trim()}, 응답 ${row.ping < 0 ? "없음" : `${row.ping} ms`}`);
   }
 
-  /** The message box over the scene (MSGBOX 0x443700). */
-  showMessage(text: string): void {
-    this.message = { text, since: performance.now() };
+  /** The message box over the scene (MSGBOX 0x443700); `closed` runs once it goes, however it goes. */
+  showMessage(text: string, closed?: () => void): void {
+    this.message = { text, since: performance.now(), closed };
     this.announce(text.replace("\n", " "));
+  }
+
+  /** The auth connect failed or the connection went (0x46118f): the message box, on the login only. */
+  authFailed(): void {
+    if (this.scene !== "login") return;
+    this.busy = false;
+    this.showMessage(AUTH_FAILED);
+  }
+
+  /** The auth server's answer (S->C 0x0a, 0x448ab0): the login's fields go and scene 5 opens with the account. */
+  loggedIn(account: OwnAccount): void {
+    if (this.scene !== "login") return;
+    this.busy = false;
+    const { status } = this.options;
+    status.character = Math.max(0, characterIndex(account.character));
+    status.hue = account.hue;
+    status.useId = account.useId;
+    this.idLine.close();
+    this.pwLine.close();
+    this.enterStatus();
+  }
+
+  /** "로그인 실패" (0x448ad4): busy off; closing the box resets the fields. */
+  loginFailed(): void {
+    this.busy = false;
+    this.showMessage(LOGIN_FAILED);
+  }
+
+  /** 확인's answer: busy off, the fields hold the server's copy. */
+  statusSaved(account: OwnAccount): void {
+    if (this.scene !== "status") return;
+    this.busy = false;
+    this.statusPage.saved(account.nick, account.greeting);
+    this.showMessage(STATUS_TEXT.saved);
+  }
+
+  /** A save refused (S->C 0x57's codes, or the server's text). */
+  saveRefused(code: number | string): void {
+    this.busy = false;
+    this.showMessage(typeof code === "number" ? nickRefusal(code) : code);
+  }
+
+  /** The game server closed before its version answer (0x460dde): busy off, the row kept, no fade. */
+  serverFull(): void {
+    this.busy = false;
+    this.showMessage("사용자가 너무\n많습니다");
   }
 
   /** A connection from the page's form: the busy cursor as for a row's (0x45928b). */
@@ -396,7 +465,8 @@ export class StartScreen {
     this.pwLine.open();
     this.idLine.text = this.savedId;
     this.setFocus(this.savedId ? "pw" : "id");
-    this.announce("로그인 화면. 아이디(이름)와 비밀번호를 넣고 Enter. 비밀번호는 쓰지 않습니다. Tab으로 칸을 바꿉니다.");
+    this.announce("로그인 화면. 아이디와 비밀번호를 넣고 Enter. Tab으로 칸을 바꿉니다. 가입은 NEW ID 단추입니다.");
+    this.options.authConnect();
   }
 
   /** The saved ID as the 10-byte editor takes it. */
@@ -410,22 +480,45 @@ export class StartScreen {
   }
 
   /**
-   * 0x44f920: both fields must hold something; the remake keeps the ID and drops the password.
-   * The auth reply cuts at once (0x448be3), here to scene 5, as Shake1's login does (R).
+   * 0x44f920: both fields must hold something, and the busy cursor waits for the auth server. Its
+   * answer cuts at once (0x448be3), here to scene 5, as Shake1's login does (R). Without the auth
+   * server, scene 5 opens with the ID as the nick: practice and two players on one PC need no account (R).
    */
   private login(): void {
     const id = this.idLine.view().text;
-    if (!id || !this.pwLine.view().text) return;
-    this.idLine.close();
-    this.pwLine.close();
-    this.options.loggedIn(id.trim());
-    this.enterStatus(id.trim());
+    const password = this.pwLine.view().text;
+    if (this.busy || !id || !password) return;
+    const sent = this.options.login(id, password);
+    if (sent === "sent") {
+      this.busy = true;
+      this.announce("로그인하는 중…");
+    } else if (sent === "wait") {
+      this.announce("인증 서버에 연결하는 중입니다.");
+    } else {
+      this.idLine.close();
+      this.pwLine.close();
+      this.offlineNick = id.trim();
+      this.enterStatus();
+    }
   }
 
-  /** Scene 5 (0x41f030): the nick is the login's ID; the greeting is the one kept. */
-  private enterStatus(nick: string): void {
+  /** Scene 5 (0x41f030): the nick and greeting from the account, or the ID without one. */
+  private enterStatus(): void {
     this.scene = "status";
-    this.statusPage.enter(cutBytes(typeable(nick), LOGIN.limit - 1), this.options.greeting);
+    const account = this.options.account();
+    const nick = account?.nick ?? cutBytes(typeable(this.offlineNick), LOGIN.limit - 1);
+    this.statusPage.enter(nick, account?.greeting ?? "");
+  }
+
+  /** 확인 (0x41eab7): busy on until the answer; nothing to send it to shows the auth failure. */
+  private saveStatus(profile: { nick: string; greeting: string; useId: boolean }): void {
+    if (this.busy) return;
+    if (!this.options.saveStatus(profile)) {
+      this.showMessage(AUTH_FAILED);
+      return;
+    }
+    this.busy = true;
+    this.announce("저장하는 중…");
   }
 
   /** Go game: scene 5 fades out and the server list in, its notice window open, its rows asked for. */
@@ -502,6 +595,7 @@ export class StartScreen {
     }
     switch (this.statusPage.release(x, y)) {
       case "go":
+        this.options.saveCharacter(this.statusPage.character, this.options.status.hue, this.options.status.useId);
         this.goServers();
         break;
       case "practice":
@@ -534,7 +628,7 @@ export class StartScreen {
         this.login();
         break;
       case "newId":
-        // The sign-up window needs the account server; only its sound is kept.
+        // The sign-up window comes with its own step; only its sound is kept for now.
         sounds.play(MENU_SOUNDS.primary);
         break;
       case "exit":
@@ -613,13 +707,16 @@ export class StartScreen {
     this.announce("공지 창을 닫았습니다.");
   }
 
-  /** Esc on the login with the message box up: the original resets and reconnects (0x461590). */
+  /** OK or Esc on the login's message box: the fields reset and the auth server is connected again (0x461590, 0x4588c3). */
   private closeMessage(): void {
+    const closed = this.message?.closed;
     this.message = null;
+    closed?.();
     if (this.scene === "login") {
       this.pwLine.text = "";
       this.idLine.text = this.savedId;
       this.setFocus(this.savedId ? "pw" : "id");
+      this.options.authConnect();
     }
   }
 
@@ -918,13 +1015,13 @@ export class StartScreen {
         ctx.restore();
       }
       const at = rowTexts(i);
-      // The auth server gives each row a colour; the remake's one row is white.
+      // The auth server gives each row a colour for its name and load (0x433d85).
       const name = fitText(ctx, row.name, FONT_13, ROW_NAME_WIDTH);
       plainText(ctx, name, at.nameShadow.x, at.nameShadow.y, "#000000", FONT_13);
-      plainText(ctx, name, at.name.x, at.name.y, "#ffffff", FONT_13);
+      plainText(ctx, name, at.name.x, at.name.y, row.colour, FONT_13);
       const percent = percentText(row.load);
       plainText(ctx, percent, at.percentShadow.x, at.percentShadow.y, "#000000", FONT_13);
-      plainText(ctx, percent, at.percent.x, at.percent.y, "#ffffff", FONT_13);
+      plainText(ctx, percent, at.percent.x, at.percent.y, row.colour, FONT_13);
       const level = gaugeLevel(row.ping);
       for (let k = 0; k <= level.n; k++) {
         const bx = at.leftward ? at.gauge.x - 4 * k : at.gauge.x + 4 * k;
@@ -942,6 +1039,7 @@ export class StartScreen {
     if (!message) return;
     if (now - message.since >= MESSAGE_BOX.hideMs) {
       this.message = null;
+      message.closed?.();
       return;
     }
     blit(ctx, assets.messageBox, MESSAGE_BOX.src, MESSAGE_BOX.at.x, MESSAGE_BOX.at.y);

@@ -220,6 +220,8 @@ export const RANKING = {
 export const STATUS_TEXT = {
   notFound: "찾을 수 없습니다.",
   chooseGuild: "길드를 선택하세요",
+  /** 확인's answer: 0311's text for it is not known; the my-info window's (S->C 0x1a) is used (R). */
+  saved: "수정 되었습니다.",
 };
 
 // The option page (0x41d062, 0x41fea0; clicks in 0x41dfc0). 0311 never makes its panel (NULL,

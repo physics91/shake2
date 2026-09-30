@@ -15,9 +15,15 @@ export interface Peer {
   send(message: ServerMessage): void;
 }
 
+/** A player as its account shows it; `name` is the login ID, which the lobby's lists always show. */
 export interface Profile {
   name: string;
+  nick: string;
+  /** The room shows the ID rather than the nick (slot +0x68). */
+  useId: boolean;
   character: string;
+  /** −180..180: the room slot's +0x90. */
+  hue: number;
 }
 
 export interface RoomDeps {

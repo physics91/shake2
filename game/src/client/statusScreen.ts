@@ -93,7 +93,7 @@ export interface StatusState {
   character: number;
   /** [0x494438]: the hue ± and knob's, −180..180; practice's sprite takes it ([0x492770]). */
   hue: number;
-  /** [0x4699e8]: show the ID rather than the nick; 1 at start, and not the my-info window's flag. */
+  /** [0x4699e8]: show the ID rather than the nick; 1 at start in 0311, the account's here (as Shake1 fills it at login). */
   useId: boolean;
   guild: GuildScroll;
 }
@@ -117,8 +117,8 @@ export interface StatusPageOptions {
   announce(text: string): void;
   /** The message box (0x443700). */
   message(text: string): void;
-  /** 확인: 0311 sends C->S 0x48 and waits for an answer; the remake keeps the two in this browser (R). */
-  save(profile: { nick: string; greeting: string }): void;
+  /** 확인 (C->S 0x48, 0x4480c0): the ID check, the nick and the greeting; busy until the answer. */
+  save(profile: { nick: string; greeting: string; useId: boolean }): void;
   /** ▲ and ▼: the character practice and the lobby use (0x48c1dc). */
   characterChanged(id: string): void;
 }
@@ -228,6 +228,14 @@ export class StatusPage {
     greetingLine.text = this.account.greeting;
     passwordLine.text = "";
     this.setFocus(0);
+  }
+
+  /** 확인's answer (S->C 0x48): the account's nick and greeting are the server's copy now. */
+  saved(nick: string, greeting: string): void {
+    this.account = { nick, greeting };
+    const [nickLine, greetingLine] = this.fields;
+    nickLine.text = nick;
+    greetingLine.text = greeting;
   }
 
   /** Leaving the scene: the editors let go of the keyboard. */
@@ -460,9 +468,7 @@ export class StatusPage {
       this.options.announce(`캐릭터 ${this.character}`);
     } else if (inside(MAIN_BUTTONS.ok.hit, x, y)) {
       const [nick, greeting] = this.fields.map((line) => line.view().text);
-      this.account = { nick, greeting };
-      this.options.save({ nick, greeting });
-      this.options.announce("닉네임과 인사말을 이 브라우저에 저장했습니다.");
+      this.options.save({ nick, greeting, useId: state.useId });
     } else if (inside(MAIN_BUTTONS.hueDown.hit, x, y) || inside(MAIN_BUTTONS.hueUp.hit, x, y)) {
       sounds.play(MENU_SOUNDS.secondary);
       state.hue = clampHue(state.hue + (inside(MAIN_BUTTONS.hueUp.hit, x, y) ? 1 : -1));

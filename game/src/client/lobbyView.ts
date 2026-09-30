@@ -34,10 +34,10 @@ export interface LobbyActions {
   filterChanged(waitingOnly: boolean): void;
   /** The my-info window's data; the session keeps it. */
   profile: MyProfile;
-  /** Save the character (set-character); the server answers with profile or an error. */
-  saveCharacter(character: string): void;
-  /** The greeting or the ID check changed. */
-  profileChanged(): void;
+  /** Save the character and the ID check (set-character); the server answers with profile or an error. */
+  saveCharacter(character: string, useId: boolean): void;
+  /** Save the greeting (set-greeting); the server answers with the account. */
+  saveGreeting(text: string): void;
   /** The option object, for the option window and the page's option controls. */
   settings: SettingsStore;
 }
@@ -108,7 +108,7 @@ export class LobbyView {
     this.welcome = welcome;
     this.actions = actions;
     this.state = state;
-    const { send, say, exit, filterChanged, profile, saveCharacter, profileChanged, settings } = actions;
+    const { send, say, exit, filterChanged, profile, saveCharacter, saveGreeting, settings } = actions;
 
     const title = h("input", { id: "lobby-title", autocomplete: "off" });
     title.addEventListener("input", () => fitBytes(title, CREATE_TITLE_LIMIT));
@@ -157,7 +157,7 @@ export class LobbyView {
       event.preventDefault();
       // The window's O: nothing changed closes without asking the server (0x43e110).
       if (this.characterSelect.value === profile.character) return;
-      saveCharacter(this.characterSelect.value);
+      saveCharacter(this.characterSelect.value, profile.useId);
     };
     this.optionPanel = new OptionPanel({
       settings,
@@ -245,7 +245,7 @@ export class LobbyView {
             filterChanged,
             profile,
             saveCharacter,
-            profileChanged,
+            saveGreeting,
             fadeIn,
             settings,
           },
@@ -352,6 +352,11 @@ export class LobbyView {
     this.characterSelect.value = this.actions.profile.character;
     this.errorLine.textContent = "수정 되었습니다.";
     this.screen?.profileSaved();
+  }
+
+  /** S->C 0x58: the greeting popup closes. */
+  greetingSaved(): void {
+    this.screen?.greetingSaved();
   }
 
   /** S->C 0x63: the option window's friend list. */

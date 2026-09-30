@@ -5,8 +5,8 @@ import { isGameMode, TEAM_COUNT } from "../sim/modes.ts";
 import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEvent } from "../sim/types.ts";
 import { cp949Bytes, cutBytes, trimChat, typeable } from "./cp949.ts";
 
-/** 10: secret rooms (the passwords, the rooms' secret flag and join-password). */
-export const PROTOCOL_VERSION = 10;
+/** 11: accounts (login, sign-up, the version check, hello with a session and a channel). */
+export const PROTOCOL_VERSION = 11;
 export const MAX_MESSAGE_BYTES = 4096;
 export const MAX_NAME_LENGTH = 12;
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -32,8 +32,59 @@ export const FRIEND_ID_BYTES = 10;
 /** The friend list's rows; the original server refuses the thirteenth (S->C 0x64 -3). */
 export const MAX_FRIENDS = 12;
 
+/** The server list holds 80 rows (0x497190 + 0x1c·i up to the count at 0x497a50). */
+export const MAX_CHANNELS = 80;
+
+/** A channel's row in the server list: its name and the colour the auth server gives it (0x456e10). */
+export interface ChannelRow {
+  name: string;
+  /** "#rrggbb". */
+  colour: string;
+}
+
+/**
+ * The own account as the login record carries it (S->C 0x0a, 0x448c50). Gender, manner and exp have
+ * no source in the remake and stay 0 (R).
+ */
+export interface OwnAccount {
+  id: string;
+  nick: string;
+  greeting: string;
+  character: string;
+  hue: number;
+  useId: boolean;
+  wins: number;
+  losses: number;
+  cell: number;
+  level: number;
+  guild: number;
+  /** 순위, 0 for none yet. */
+  rank: number;
+  gender: number;
+  manner: number;
+  exp: number;
+  candy: number;
+  /** Item slots k owned (the wire's id is k + 1). */
+  items: number[];
+  /** Character pairs owned (0x484718). */
+  pairs: number[];
+}
+
 export type ClientMessage =
-  | { type: "hello"; version: number; name: string; character: string }
+  /** The login's OK to the auth server (C->S 0x0a, 0x44f920): ID and password. */
+  | { type: "login"; id: string; password: string }
+  /** 가입하기 (Regist_UP_shake2.asp): the sign-up window's ID, nick and password. */
+  | { type: "register"; id: string; nick: string; password: string }
+  /** 아이디검색 and 닉네임검색 (idcheck.asp modes 1 and 2). */
+  | { type: "check-id"; id: string }
+  | { type: "check-nick"; nick: string }
+  /**
+   * The game server's first word (C->S 0x47): the client's version, and the server list row it
+   * connected to (the original's rows are each a host and port of their own).
+   */
+  | { type: "version"; version: number; channel: number }
+  /** After the version (C->S 0x0a to the game server): the login's session. */
+  | { type: "hello"; token: string }
   /** Title from the create popup; empty for the server's default. A password makes the room secret (C->S 0x03). */
   | { type: "create-room"; title: string; password?: string }
   /** A room's line, or the password popup's OK with the password typed (C->S 0x04). */
@@ -60,10 +111,17 @@ export type ClientMessage =
   | { type: "input"; dir: Dir | null; bomb: boolean; attack: boolean; evade: boolean }
   /** One line in a match (0x446200: record type 0x14 to the host, which passes it on). */
   | { type: "game-chat"; text: string }
-  /** The server list's load query (C->S 0x4c, 0x448410); taken before hello. */
-  | { type: "server-info" }
-  /** The my-info window's O (C->S 0x1a): the character to play with; only in the lobby. */
-  | { type: "set-character"; character: string }
+  /** A server list row's load query (C->S 0x4c, 0x448410); taken before hello. */
+  | { type: "server-info"; channel: number }
+  /**
+   * The my-info window's O (C->S 0x1a) in the lobby, or scene 5's Go (the old 0x1a) over the auth
+   * connection: the character to play with, its hue and whether the ID is shown.
+   */
+  | { type: "set-character"; character: string; hue: number; useId: boolean }
+  /** Scene 5's 확인 (C->S 0x48, 0x4480c0): the ID check, the nick and the greeting. */
+  | { type: "set-status"; nick: string; greeting: string; useId: boolean }
+  /** The my-info window's greeting popup (C->S 0x58, 0x44b120). */
+  | { type: "set-greeting"; greeting: string }
   /** The own chat line is open or closed: the keys go unread and the "chat" mark shows (state packet +0x2c). */
   | { type: "typing"; on: boolean }
   /** The option window's friend list (C->S 0x63): the own list and where each friend is now. */
@@ -174,6 +232,8 @@ export type ServerMessage =
   | {
       type: "welcome";
       playerId: number;
+      /** The login record as this channel sends it (S->C 0x0a): the account now. */
+      account: OwnAccount;
       /** The room's map list without RANDOM, in its order (_stricmp of the titles). */
       maps: { id: string; title: string }[];
       /** The game tunes without RANDOM, in the list's order (_stricmp of the file names). */
@@ -199,9 +259,25 @@ export type ServerMessage =
   /** The ping record back (0x444929), for the round trip (0x44497c). */
   | { type: "pong"; at: number }
   /** The saved character (S->C 0x1a): the my-info window's "수정 되었습니다.". */
-  | { type: "profile"; character: string }
-  /** The server list row's data (S->C 0x4c): the channel's name and its load in percent. */
-  | { type: "server-info"; name: string; load: number }
+  | { type: "profile"; character: string; hue: number; useId: boolean }
+  /** A server list row's data (S->C 0x4c): the channel's name and its load in percent. */
+  | { type: "server-info"; channel: number; name: string; load: number }
+  /** The auth server's answer (S->C 0x0a): the account, the session for the game servers and their rows. */
+  | { type: "login"; ok: true; account: OwnAccount; token: string; channels: ChannelRow[] }
+  /** "로그인 실패": the client has no other auth message (0x448ad4). */
+  | { type: "login"; ok: false }
+  /** The sign-up's rcode (0x41bae8). */
+  | { type: "registered"; rcode: number }
+  /** A check's rcode: 0 free, anything else taken. */
+  | { type: "checked"; kind: "id" | "nick"; rcode: number }
+  /** The game server's version (S->C 0x47); a server with no room closes before sending it. */
+  | { type: "version"; version: number }
+  /** hello refused (S->C 0x0a result): 0 "로그인 실패", 2 "이미 로그인 되어 있습니다", 3 "레벨이 맞지 않습니다". */
+  | { type: "refused"; code: number }
+  /** A save taken (scene 5's Go and 확인, the greeting popup's S->C 0x58): the account now. */
+  | { type: "saved"; account: OwnAccount }
+  /** A nick not taken (S->C 0x57, 0x44b080): 0xfc once a day, 0xfd taken by another, 0xfe any other failure. */
+  | { type: "nick-refused"; code: number }
   /** A line said in the match, to everyone in it, the speaker too (0x444500 → 0x45ec00). */
   | { type: "game-chat"; playerId: number; text: string }
   | { type: "match-end" }
@@ -250,6 +326,11 @@ function isDir(value: unknown): value is Dir | null {
 
 function isInt(value: unknown, min: number, max: number): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
+}
+
+/** An ID, nick or password as an editor could send it: a string of at most 32 characters; the server checks the rest. */
+function shortText(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 32;
 }
 
 function isTeam(value: unknown): value is number {
@@ -312,12 +393,28 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   }
   if (!isObject(data) || typeof data.type !== "string") return null;
   switch (data.type) {
+    case "login":
+      return shortText(data.id) && shortText(data.password) ? { type: "login", id: data.id, password: data.password } : null;
+    case "register":
+      return shortText(data.id) && shortText(data.nick) && shortText(data.password)
+        ? { type: "register", id: data.id, nick: data.nick, password: data.password }
+        : null;
+    case "check-id":
+      return shortText(data.id) ? { type: "check-id", id: data.id } : null;
+    case "check-nick":
+      return shortText(data.nick) ? { type: "check-nick", nick: data.nick } : null;
+    case "version":
+      return isInt(data.version, 0, 0xffff) && isInt(data.channel, 0, MAX_CHANNELS - 1)
+        ? { type: "version", version: data.version, channel: data.channel }
+        : null;
     case "hello":
-      if (typeof data.version !== "number" || typeof data.name !== "string" || typeof data.character !== "string") {
-        return null;
-      }
-      if (data.name.length > 64 || data.character.length > 32) return null;
-      return { type: "hello", version: data.version, name: sanitizeName(data.name), character: data.character };
+      return typeof data.token === "string" && data.token.length <= 64 ? { type: "hello", token: data.token } : null;
+    case "set-greeting":
+      return typeof data.greeting === "string" && data.greeting.length <= 64 ? { type: "set-greeting", greeting: data.greeting } : null;
+    case "set-status":
+      return shortText(data.nick) && typeof data.greeting === "string" && data.greeting.length <= 64 && typeof data.useId === "boolean"
+        ? { type: "set-status", nick: data.nick, greeting: data.greeting, useId: data.useId }
+        : null;
     case "create-room": {
       const title = data.title ?? "";
       const secret = password(data.password, ROOM_PASSWORD_BYTES);
@@ -360,9 +457,11 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return text === null ? null : { type: "game-chat", text };
     }
     case "server-info":
-      return { type: "server-info" };
+      return isInt(data.channel, 0, MAX_CHANNELS - 1) ? { type: "server-info", channel: data.channel } : null;
     case "set-character":
-      return typeof data.character === "string" && data.character.length <= 32 ? { type: "set-character", character: data.character } : null;
+      return typeof data.character === "string" && data.character.length <= 32 && isInt(data.hue, -180, 180) && typeof data.useId === "boolean"
+        ? { type: "set-character", character: data.character, hue: data.hue, useId: data.useId }
+        : null;
     case "typing":
       return typeof data.on === "boolean" ? { type: "typing", on: data.on } : null;
     case "friends":

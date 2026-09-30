@@ -6,10 +6,21 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket as WsClient } from "ws";
 
+import { openAccountFile } from "./accountFile.ts";
 import type { ServerMessage } from "./protocol.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
 import type { RunningServer } from "./server.ts";
-import { channelName, isOriginAllowed, startServer, startupWarning, tlsFiles } from "./server.ts";
+import {
+  channelName,
+  DEFAULT_ITEMS,
+  DEFAULT_PAIRS,
+  isOriginAllowed,
+  parseChannels,
+  parseIndexList,
+  startServer,
+  startupWarning,
+  tlsFiles,
+} from "./server.ts";
 
 const ASSETS = join(import.meta.dirname, "..", "..", "public", "assets");
 const HAS_ASSETS = existsSync(join(ASSETS, "manifest.json"));
@@ -62,6 +73,39 @@ const isType =
   (m: ServerMessage): m is Extract<ServerMessage, { type: K }> =>
     m.type === type;
 
+const PASSWORD = "pass1234";
+const folders: string[] = [];
+
+afterAll(() => {
+  for (const path of folders) rmSync(path, { recursive: true, force: true });
+});
+
+/** An account file holding these IDs (nick = ID), all with PASSWORD. */
+async function accountsFileWith(ids: readonly string[]): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), "shake2-server-"));
+  folders.push(dir);
+  const path = join(dir, "accounts.json");
+  const file = openAccountFile(path, { character: "bobo", items: DEFAULT_ITEMS, pairs: DEFAULT_PAIRS }, undefined, 60_000);
+  await Promise.all(ids.map((id) => file.book.register(id, id, PASSWORD, 0)));
+  file.flush();
+  return path;
+}
+
+type LoginOk = Extract<ServerMessage, { type: "login"; ok: true }>;
+const isLoginOk = (m: ServerMessage): m is LoginOk => m.type === "login" && m.ok;
+
+/** The auth server's login, then the game server's version and hello, on one connection. */
+async function enter(c: Client, id: string, channel = 0) {
+  c.send({ type: "login", id, password: PASSWORD });
+  const login = await c.waitFor(isLoginOk);
+  c.send({ type: "version", version: PROTOCOL_VERSION, channel });
+  await c.waitFor(isType("version"));
+  c.send({ type: "hello", token: login.token });
+  return c.waitFor(isType("welcome"));
+}
+
+const closed = (c: Client) => new Promise<number>((resolve) => c.socket.addEventListener("close", (e) => resolve(e.code)));
+
 describe("isOriginAllowed", () => {
   it("allows same host, localhost and listed origins only", () => {
     expect(isOriginAllowed(undefined, "example.org", [])).toBe(true);
@@ -82,6 +126,27 @@ describe("channelName", () => {
   });
 });
 
+describe("parseChannels and parseIndexList", () => {
+  it("reads CHANNELS rows with their colours and levels, and refuses what it cannot read", () => {
+    expect(parseChannels(undefined)).toEqual([]);
+    expect(parseChannels(" 초보 채널|#00FF00|8-12 , 자유 ")).toEqual([
+      { name: "초보 채널", colour: "#00ff00", levels: [8, 12] },
+      { name: "자유", colour: "#ffffff" },
+    ]);
+    expect(() => parseChannels("a|green")).toThrow("#rrggbb");
+    expect(() => parseChannels("a|#ffffff|12-1")).toThrow("levels");
+    expect(() => parseChannels("a|#ffffff|0-3")).toThrow("levels");
+    expect(() => parseChannels(Array.from({ length: 81 }, (_, i) => `c${i}`).join(","))).toThrow("80");
+  });
+
+  it("reads DEFAULT_ITEMS and DEFAULT_PAIRS as numbers below the count", () => {
+    expect(parseIndexList(undefined, 30, [12], "DEFAULT_ITEMS")).toEqual([12]);
+    expect(parseIndexList("2, 3,3", 30, [12], "DEFAULT_ITEMS")).toEqual([2, 3]);
+    expect(() => parseIndexList("30", 30, [12], "DEFAULT_ITEMS")).toThrow("0..29");
+    expect(() => parseIndexList("x", 10, [0], "DEFAULT_PAIRS")).toThrow("DEFAULT_PAIRS");
+  });
+});
+
 describe("tlsFiles", () => {
   it("takes both PEM files or neither, and will not start on one alone", () => {
     expect(tlsFiles(undefined, undefined)).toBeUndefined();
@@ -96,6 +161,7 @@ describe("startupWarning", () => {
   it("warns when other machines can reach the server without TLS", () => {
     expect(startupWarning("0.0.0.0", false)).toContain("TLS_CERT");
     expect(startupWarning("192.168.0.2", false)).toContain("unencrypted");
+    expect(startupWarning("192.168.0.2", false)).toContain("account");
     expect(startupWarning("0.0.0.0", true)).toBeNull();
     expect(startupWarning("127.0.0.1", false)).toBeNull();
     expect(startupWarning("localhost", false)).toBeNull();
@@ -107,7 +173,8 @@ describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
   let url: string;
 
   beforeAll(async () => {
-    server = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5 });
+    const accountsFile = await accountsFileWith(["alpha", "bravo", "charlie", "addr0", "addr1", "addr2", "addr3", "twice"]);
+    server = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5, accountsFile });
     url = `ws://127.0.0.1:${server.port}/ws`;
   });
 
@@ -119,9 +186,7 @@ describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
     const a = new Client(url);
     const b = new Client(url);
     await Promise.all([a.opened(), b.opened()]);
-    a.send({ type: "hello", version: PROTOCOL_VERSION, name: "에이", character: "bobo" });
-    b.send({ type: "hello", version: PROTOCOL_VERSION, name: "비", character: "doona" });
-    const [welcomeA, welcomeB] = await Promise.all([a.waitFor(isType("welcome")), b.waitFor(isType("welcome"))]);
+    const [welcomeA, welcomeB] = await Promise.all([enter(a, "alpha"), enter(b, "bravo")]);
 
     a.send({ type: "create-room", title: "" });
     const created = await a.waitFor((m): m is Extract<ServerMessage, { type: "room" }> => m.type === "room" && m.room !== null);
@@ -160,9 +225,34 @@ describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
     c.send({ type: "input", dir: 9, bomb: "yes" });
     c.socket.send("not json");
     await c.waitFor(isType("error"));
-    c.send({ type: "hello", version: PROTOCOL_VERSION, name: "시험", character: "bobo" });
-    expect((await c.waitFor(isType("welcome"))).playerId).toBeGreaterThan(0);
+    expect((await enter(c, "charlie")).playerId).toBeGreaterThan(0);
     c.socket.close();
+  });
+
+  it("logs in only with the right password, lists the channel, and lets an account in once", async () => {
+    const c = new Client(url);
+    const again = new Client(url);
+    await Promise.all([c.opened(), again.opened()]);
+    c.send({ type: "login", id: "twice", password: "wrong1" });
+    expect(await c.waitFor(isType("login"))).toEqual({ type: "login", ok: false });
+    c.messages.length = 0;
+    // The wrong password holds this address's next login back (LOGIN_RETRY_MS).
+    const welcome = await enter(c, "twice");
+    expect(welcome.account).toMatchObject({ id: "twice", nick: "twice", character: "bobo", level: 12, items: [12] });
+    const login = c.messages.find(isLoginOk);
+    expect(login?.channels).toEqual([{ name: "복원판 채널", colour: "#ffffff" }]);
+    expect(login?.token).toMatch(/^[\w-]{43}$/);
+
+    again.send({ type: "server-info", channel: 0 });
+    expect(await again.waitFor(isType("server-info"))).toEqual({ type: "server-info", channel: 0, name: "복원판 채널", load: 0 });
+    again.send({ type: "login", id: "TWICE", password: PASSWORD });
+    const second = await again.waitFor(isLoginOk);
+    again.send({ type: "version", version: PROTOCOL_VERSION, channel: 0 });
+    await again.waitFor(isType("version"));
+    again.send({ type: "hello", token: second.token });
+    expect(await again.waitFor(isType("refused"))).toEqual({ type: "refused", code: 2 });
+    c.socket.close();
+    again.socket.close();
   });
 
   it("closes connections that send oversized frames", async () => {
@@ -181,8 +271,7 @@ describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
     const elsewhere = from("198.51.100.7");
     const clients = [host, guesser, sameLine, elsewhere];
     await Promise.all(clients.map((c) => c.opened()));
-    for (const [i, c] of clients.entries()) c.send({ type: "hello", version: PROTOCOL_VERSION, name: `주소${i}`, character: "bobo" });
-    await Promise.all(clients.map((c) => c.waitFor(isType("welcome"))));
+    await Promise.all(clients.map((c, i) => enter(c, `addr${i}`)));
     host.send({ type: "create-room", title: "", password: "1234" });
     const created = await host.waitFor((m): m is Extract<ServerMessage, { type: "room" }> => m.type === "room" && m.room !== null);
     const code = created.room?.code;
@@ -212,6 +301,46 @@ describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
   });
 });
 
+describe.skipIf(!HAS_ASSETS)("a full channel", () => {
+  it("closes on the next player before the version reply, and on nobody else's row", async () => {
+    const accountsFile = await accountsFileWith(["first", "second"]);
+    const server = await startServer({
+      host: "127.0.0.1",
+      port: 0,
+      assetsDir: ASSETS,
+      allowedOrigins: [],
+      maxRooms: 5,
+      maxUsers: 1,
+      channels: [
+        { name: "하나", colour: "#ff0000" },
+        { name: "둘", colour: "#00ff00" },
+      ],
+      accountsFile,
+    });
+    const url = `ws://127.0.0.1:${server.port}/ws`;
+    try {
+      const first = new Client(url);
+      const second = new Client(url);
+      await Promise.all([first.opened(), second.opened()]);
+      await enter(first, "first", 0);
+      const shut = closed(second);
+      second.send({ type: "version", version: PROTOCOL_VERSION, channel: 0 });
+      expect(await shut).toBe(1013);
+      expect(second.messages.some((m) => m.type === "version")).toBe(false);
+
+      const other = new Client(url);
+      await other.opened();
+      expect((await enter(other, "second", 1)).account.id).toBe("second");
+      other.send({ type: "server-info", channel: 0 });
+      expect((await other.waitFor(isType("server-info"))).load).toBe(100);
+      first.socket.close();
+      other.socket.close();
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
   const logged: string[] = [];
   let server: RunningServer;
@@ -219,6 +348,7 @@ describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
   let cert: Buffer;
 
   beforeAll(async () => {
+    const accountsFile = await accountsFileWith(["secure"]);
     dir = mkdtempSync(join(tmpdir(), "shake2-tls-"));
     const certFile = join(dir, "cert.pem");
     const keyFile = join(dir, "key.pem");
@@ -237,6 +367,7 @@ describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
       allowedOrigins: [],
       maxRooms: 5,
       tls: { certFile, keyFile },
+      accountsFile,
       log: (line) => logged.push(line),
     });
   });
@@ -252,8 +383,7 @@ describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
     expect(logged[0]).toMatch(`shake2 server on wss://127.0.0.1:${server.port}/ws (`);
     const c = new Client(new WsClient(`wss://127.0.0.1:${server.port}/ws`, { ca: cert }));
     await c.opened();
-    c.send({ type: "hello", version: PROTOCOL_VERSION, name: "암호", character: "bobo" });
-    expect((await c.waitFor(isType("welcome"))).playerId).toBeGreaterThan(0);
+    expect((await enter(c, "secure")).playerId).toBeGreaterThan(0);
     c.socket.close();
   });
 

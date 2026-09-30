@@ -1,4 +1,4 @@
-import { randomInt } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server as HttpServer } from "node:http";
@@ -13,14 +13,20 @@ import { WebSocketServer } from "ws";
 import type { LevelMeta, Manifest } from "../assets/types.ts";
 import { MEDALS_TO_WIN, ROUND_SECONDS, TICK_RATE } from "../sim/constants.ts";
 import { isRoomMap, layoutFromLevel } from "../sim/level.ts";
+import { openAccountFile } from "./accountFile.ts";
+import type { AccountDefaults } from "./accounts.ts";
+import { AccountBook, LOWEST_LEVEL, PAIR_COUNT } from "./accounts.ts";
 import { addressKey, clientAddress, isLoopbackHost } from "./address.ts";
 import { cutBytes, typeable } from "./cp949.ts";
 import { openFriendFile } from "./friendFile.ts";
 import { FriendBook } from "./friends.ts";
+import type { Channel } from "./gate.ts";
+import { Gate } from "./gate.ts";
+import { ITEM_ALL } from "./items.ts";
 import type { PlayableMap } from "./lobby.ts";
 import { Lobby } from "./lobby.ts";
 import type { ServerMessage } from "./protocol.ts";
-import { MAX_MESSAGE_BYTES, parseClientMessage, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from "./protocol.ts";
+import { MAX_CHANNELS, MAX_MESSAGE_BYTES, parseClientMessage, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from "./protocol.ts";
 
 export interface ServerOptions {
   host: string;
@@ -29,11 +35,19 @@ export interface ServerOptions {
   assetsDir: string;
   /** Extra browser origins allowed besides same-host and localhost. */
   allowedOrigins: readonly string[];
+  /** Rooms per channel. */
   maxRooms: number;
-  /** The lobby banner's channel name; cut to what fits there. */
-  channel?: string;
+  /** Players per channel; the next one is turned away before the version reply. */
+  maxUsers?: number;
+  /** The server list's rows, each a lobby of its own; one white "복원판 채널" without them. */
+  channels?: readonly ChannelSpec[];
   /** The JSON file the friend lists are kept in; without one they last until the server stops. */
   friendsFile?: string;
+  /** The JSON file the accounts are kept in; without one they last until the server stops. */
+  accountsFile?: string;
+  /** What a new account owns: item slots (hasItem) and character pairs. */
+  defaultItems?: readonly number[];
+  defaultPairs?: readonly number[];
   /** PEM files to speak wss:// with; without them the server speaks plain ws://. */
   tls?: TlsFiles;
   /** Proxies whose X-Forwarded-For is believed besides loopback ones (address.ts). */
@@ -54,19 +68,67 @@ export function tlsFiles(certFile: string | undefined, keyFile: string | undefin
   return { certFile, keyFile };
 }
 
-/** Secret-room passwords cross the network as they were typed unless the server speaks TLS. */
+/** Account and secret-room passwords cross the network as they were typed unless the server speaks TLS. */
 export function startupWarning(host: string, tls: boolean): string | null {
   if (tls || isLoopbackHost(host)) return null;
-  return `warning: ${host} is reachable from other machines over plain ws://, so room passwords travel unencrypted; set TLS_CERT and TLS_KEY (or put a TLS proxy in front) for wss://`;
+  return `warning: ${host} is reachable from other machines over plain ws://, so account and room passwords travel unencrypted; set TLS_CERT and TLS_KEY (or put a TLS proxy in front) for wss://`;
 }
 
 const DEFAULT_CHANNEL = "복원판 채널";
 /** The banner box holds about 16 bytes of 굴림 12 from (84,39). */
 const CHANNEL_BYTES = 16;
+const DEFAULT_COLOUR = "#ffffff";
+export const DEFAULT_MAX_USERS = 200;
 
 export function channelName(raw: string | undefined): string {
   return cutBytes(typeable(raw ?? "").trim(), CHANNEL_BYTES).trim() || DEFAULT_CHANNEL;
 }
+
+/** A server list row as the operator gives it. */
+export interface ChannelSpec {
+  name: string;
+  /** "#rrggbb": the row's name and load (0x456e10). */
+  colour: string;
+  /** The levels let in, best first; any when absent. */
+  levels?: readonly [number, number];
+}
+
+/**
+ * CHANNELS: rows separated by ",", each "name", "name|#rrggbb" or "name|#rrggbb|best-worst" (levels
+ * 1..12). Empty for the one default row. Throws on a row it cannot read.
+ */
+export function parseChannels(raw: string | undefined): ChannelSpec[] {
+  const rows = (raw ?? "")
+    .split(",")
+    .map((row) => row.trim())
+    .filter(Boolean);
+  if (rows.length > MAX_CHANNELS) throw new Error(`CHANNELS has ${rows.length} rows; the server list holds ${MAX_CHANNELS}`);
+  return rows.map((row) => {
+    const [name, colour = DEFAULT_COLOUR, levels] = row.split("|").map((part) => part.trim());
+    if (!/^#[0-9a-fA-F]{6}$/.test(colour)) throw new Error(`CHANNELS: "${row}" has no #rrggbb colour`);
+    const spec: ChannelSpec = { name: channelName(name), colour: colour.toLowerCase() };
+    if (levels === undefined) return spec;
+    const match = /^(\d{1,2})-(\d{1,2})$/.exec(levels);
+    const [best, worst] = match ? [Number(match[1]), Number(match[2])] : [0, 0];
+    if (!match || best < 1 || worst > LOWEST_LEVEL || best > worst) throw new Error(`CHANNELS: "${row}" has no levels best-worst in 1..${LOWEST_LEVEL}`);
+    return { ...spec, levels: [best, worst] };
+  });
+}
+
+/** DEFAULT_ITEMS / DEFAULT_PAIRS: comma-separated numbers below `count`; the fallback when unset. */
+export function parseIndexList(raw: string | undefined, count: number, fallback: readonly number[], what: string): number[] {
+  if (raw === undefined || raw.trim() === "") return [...fallback];
+  const list = raw.split(",").map((part) => Number(part.trim()));
+  if (!list.every((n) => Number.isInteger(n) && n >= 0 && n < count)) throw new Error(`${what} takes numbers 0..${count - 1}`);
+  return [...new Set(list)];
+}
+
+/** A new account plays 루키, the first of the first pair (0x484718), as a new account is a 루키 (I). */
+export const NEW_ACCOUNT_CHARACTER = "rookie";
+
+/** Every character pair (0..9) and the item pack that holds every item (R: nothing can be bought). */
+export const DEFAULT_ITEMS: readonly number[] = [ITEM_ALL];
+export const DEFAULT_PAIRS: readonly number[] = Array.from({ length: PAIR_COUNT }, (_, k) => k);
 
 export interface RunningServer {
   port: number;
@@ -113,16 +175,38 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const log = options.log ?? (() => undefined);
   const { maps, music, characters } = loadPlayableMaps(options.assetsDir);
   const friendFile = options.friendsFile ? openFriendFile(options.friendsFile, log) : null;
-  const lobby = new Lobby({
-    maps,
-    music,
+  const friends = friendFile?.book ?? new FriendBook();
+  const defaults: AccountDefaults = {
+    character: characters.includes(NEW_ACCOUNT_CHARACTER) ? NEW_ACCOUNT_CHARACTER : characters[0],
+    items: options.defaultItems ?? DEFAULT_ITEMS,
+    pairs: options.defaultPairs ?? DEFAULT_PAIRS,
+  };
+  const accountFile = options.accountsFile ? openAccountFile(options.accountsFile, defaults, log) : null;
+  const accounts = accountFile?.book ?? new AccountBook(undefined, defaults);
+  const specs = options.channels?.length ? options.channels : [{ name: DEFAULT_CHANNEL, colour: DEFAULT_COLOUR }];
+  const channels: Channel[] = specs.map((spec) => ({
+    row: { name: spec.name, colour: spec.colour },
+    levels: spec.levels,
+    maxUsers: options.maxUsers ?? DEFAULT_MAX_USERS,
+    lobby: new Lobby({
+      maps,
+      music,
+      characters,
+      rules: { practice: false, roundSeconds: ROUND_SECONDS, medalsToWin: MEDALS_TO_WIN, mode: 0 },
+      maxRooms: options.maxRooms,
+      channel: spec.name,
+      friends,
+      saveCharacter: (name, choice) => accounts.update(name, choice),
+      now: () => Date.now(),
+      roomCode: randomRoomCode,
+    }),
+  }));
+  const gate = new Gate({
+    accounts,
+    channels,
     characters,
-    rules: { practice: false, roundSeconds: ROUND_SECONDS, medalsToWin: MEDALS_TO_WIN, mode: 0 },
-    maxRooms: options.maxRooms,
-    channel: channelName(options.channel),
-    friends: friendFile?.book ?? new FriendBook(),
     now: () => Date.now(),
-    roomCode: randomRoomCode,
+    token: () => randomBytes(32).toString("base64url"),
   });
 
   const respond: RequestListener = (req, res) => {
@@ -156,7 +240,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       if (message.type === "snapshot" && socket.bufferedAmount > SLOW_CLIENT_BUFFER) return;
       socket.send(JSON.stringify(message));
     };
-    lobby.connect({ id, send, address });
+    gate.connect({ id, send, address, close: () => socket.close(1013, "full") });
     log(`peer ${id} connected (${wss.clients.size} online)`);
 
     let windowStart = Date.now();
@@ -178,11 +262,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         send({ type: "error", message: "잘못된 메시지입니다." });
         return;
       }
-      lobby.handle(id, message);
+      gate.handle(id, message);
     });
     socket.on("pong", () => alive.set(socket, true));
     socket.on("close", () => {
-      lobby.disconnect(id);
+      gate.disconnect(id);
       log(`peer ${id} left (${wss.clients.size} online)`);
     });
     socket.on("error", () => socket.terminate());
@@ -208,18 +292,19 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     last = now;
     let steps = 0;
     while (pending >= stepMs && steps < MAX_CATCH_UP_TICKS) {
-      lobby.tick();
+      for (const channel of channels) channel.lobby.tick();
       pending -= stepMs;
       steps += 1;
     }
     if (steps === MAX_CATCH_UP_TICKS) pending = 0;
+    if (steps > 0) gate.tick();
   }, 4);
 
   return new Promise((resolve, reject) => {
     http.once("error", reject);
     http.listen(options.port, options.host, () => {
       const port = (http.address() as AddressInfo).port;
-      log(`shake2 server on ${tls ? "wss" : "ws"}://${options.host}:${port}/ws (${maps.length} maps)`);
+      log(`shake2 server on ${tls ? "wss" : "ws"}://${options.host}:${port}/ws (${maps.length} maps, ${channels.length} channels, ${accounts.size} accounts)`);
       const warning = startupWarning(options.host, tls !== undefined);
       if (warning) log(warning);
       resolve({
@@ -229,6 +314,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             clearInterval(clock);
             clearInterval(heartbeat);
             friendFile?.flush();
+            accountFile?.flush();
             for (const socket of wss.clients) socket.terminate();
             wss.close(() => http.close(() => done()));
           }),
