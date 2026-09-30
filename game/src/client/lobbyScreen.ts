@@ -26,10 +26,17 @@ import {
   createPopupAt,
   createTitle,
   EXIT,
+  ID_LIMIT,
+  ID_POPUP,
+  idCaret,
+  idPopupAt,
   LOBBY_CHAT,
+  LOBBY_ITEM_ICONS,
   LOBBY_NOTICE,
   LOBBY_SCROLL,
   lobbyHelpAt,
+  type LobbyItemIcon,
+  lobbyItemIconAt,
   MESSAGE_BOX,
   MESSAGE_HELP,
   messageLines,
@@ -215,6 +222,8 @@ export interface LobbyScreenOptions {
   saveGreeting(text: string): void;
   /** The nickname popup's O (C->S 0x57); the answer comes to nickSaved or as a refusal's message box. */
   saveNick(nick: string): void;
+  /** The ID popup's OK in whisper mode: the whisper target ([0x4927c8]) the chat lines go to; "" clears it. */
+  whisperTo(id: string): void;
   /** The first frames fade in, as after the server list (0x449172). */
   fadeIn?: boolean;
   /** The option object (0x48acd0): the option window edits it, the balloons and F2..F10 read it. */
@@ -259,7 +268,7 @@ interface MyInfo {
 }
 
 /** The popup open over the lobby; the message box is apart and may sit on the create popup. My-info is scene 10, ranking 12, option 13. */
-type Popup = "create" | "password" | "remote" | "roomInfo" | "userInfo" | "myInfo" | "ranking" | "option" | null;
+type Popup = "create" | "password" | "remote" | "roomInfo" | "userInfo" | "id" | "myInfo" | "ranking" | "option" | null;
 
 /** The ranking window's controls the page's hidden buttons stand for; "open" is the remote's 랭킹. */
 export type RankingCommand = "open" | "prev" | "find" | "next" | "close" | "ok" | "cancel";
@@ -287,6 +296,12 @@ export class LobbyScreen {
   private readonly greetingLine: ChatLine;
   /** The nickname popup's editor (0x43eac0: 10 bytes). */
   private readonly nickLine: ChatLine;
+  /** The ID popup's editor (0x42f600: 10 bytes). */
+  private readonly idLine: ChatLine;
+  /** The ID popup's mode: the mask icon's ([0x495398] = 1) or the whisper icon's. */
+  private idMode: LobbyItemIcon = "whisper";
+  /** The ID popup's OK and 취소 for the keyboard, next after its editor; the popup has no Enter, and Esc leaves. */
+  private readonly idButtons = document.createElement("div");
   private myInfo: MyInfo | null = null;
   /** The 30 fps frame clock the colour popup's held slider steps on (0x458dbf); null while not held. */
   private slideAt: number | null = null;
@@ -351,6 +366,21 @@ export class LobbyScreen {
     this.greetingLine.element.setAttribute("aria-label", "인사말");
     this.nickLine = new ChatLine(options.stage, { limit: NICK_LIMIT, at: NICK_POPUP.text, trapFocus: false });
     this.nickLine.element.setAttribute("aria-label", "닉네임 (Enter 저장, Esc 취소)");
+    this.idLine = new ChatLine(options.stage, { limit: ID_LIMIT, at: ID_POPUP.text, trapFocus: false });
+    this.idButtons.className = "sr-only";
+    this.idButtons.setAttribute("role", "group");
+    this.idButtons.setAttribute("aria-label", "아이디 창 버튼");
+    this.idButtons.hidden = true;
+    for (const [hit, label] of [["ok", "OK: 아이디 창 확인"], ["cancel", "취소: 아이디 창 닫기"]] as const) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      // A click at the button's centre, through the message box and the wait as the mouse's.
+      const [left, top, right, bottom] = ID_POPUP[hit].hit;
+      button.addEventListener("click", () => this.release(Math.floor((left + right) / 2), Math.floor((top + bottom) / 2)));
+      this.idButtons.append(button);
+    }
+    options.stage.append(this.idButtons);
     this.chat.open();
     if (options.fadeIn) this.fade = new Fade("in", performance.now(), FRAME_MS);
     this.detach = this.attach();
@@ -452,6 +482,8 @@ export class LobbyScreen {
     this.passwordLine.dispose();
     this.greetingLine.dispose();
     this.nickLine.dispose();
+    this.idLine.dispose();
+    this.idButtons.remove();
     this.option?.dispose();
     this.rankingWindow?.dispose();
     this.status.remove();
@@ -582,7 +614,38 @@ export class LobbyScreen {
       this.remoteRelease(x, y);
       return;
     }
+    if (this.popup === "id") {
+      this.idRelease(x, y);
+      return;
+    }
     this.lobbyRelease(x, y);
+  }
+
+  /** The ID popup (0x459b7a): OK, then 취소, no sounds; any other click is swallowed and the editor keeps the keys. */
+  private idRelease(x: number, y: number): void {
+    const hit = idPopupAt(x, y);
+    if (hit === "ok") this.submitId();
+    else if (hit === "cancel") this.closePopup(true);
+    else this.idLine.focus();
+  }
+
+  /**
+   * The ID popup's OK (0x459ba6), with no Enter of its own: in whisper mode the ID becomes the whisper
+   * target as typed, an empty one clearing it; in mask mode C->S 0x5e is not sent (R: the balloon
+   * says 현재지원안함, and this remake's server has no mask). The popup closes either way.
+   */
+  private submitId(): void {
+    const id = this.idLine.view().text;
+    const mode = this.idMode;
+    this.closePopup(true);
+    if (mode === "whisper") this.setWhisper(id);
+    else this.status.textContent = "마스크는 지원하지 않습니다.";
+  }
+
+  /** The whisper target, set by the ID popup's OK or the page's mirror of it. */
+  setWhisper(id: string): void {
+    this.options.whisperTo(id);
+    this.status.textContent = id ? `귓말 대상: ${id}. 이제 채팅 줄이 ${id}에게 귓말로도 갑니다.` : "귓말 대상을 지웠습니다.";
   }
 
   /** 0x459a18: the remote's buttons; 친구찾기 and BBS do nothing, other clicks are swallowed. */
@@ -608,6 +671,11 @@ export class LobbyScreen {
 
   private lobbyRelease(x: number, y: number): void {
     const { sounds } = this.options;
+    const icon = lobbyItemIconAt(x, y);
+    if (icon && this.iconLit(icon)) {
+      this.openId(icon);
+      return;
+    }
     if (inside(WAIT_GAME.off.hit, x, y)) {
       // 0x42fcc0: the filter asks the server for the waiting rooms, off asks for page 1.
       this.waitingOnly = !this.waitingOnly;
@@ -687,6 +755,23 @@ export class LobbyScreen {
       "Esc로 닫습니다.",
     ];
     this.openPopup("userInfo", parts.filter(Boolean).join(". "));
+  }
+
+  /** The account has the icon's item: whisper 8, mask 3. */
+  private iconLit(icon: LobbyItemIcon): boolean {
+    return hasItem(this.options.account()?.items ?? [], icon === "whisper" ? ITEM_WHISPER : ITEM_MASK);
+  }
+
+  /** The whisper or mask icon (0x42f600): the editor empty, 10 bytes, the chat line closed; no sound. */
+  private openId(mode: LobbyItemIcon): void {
+    this.chat.close();
+    this.idMode = mode;
+    const what = mode === "whisper" ? "귓말 대상 아이디" : "마스크 아이디";
+    // Enter does nothing here, and Esc is not the popup's: it leaves the lobby (0x461590).
+    this.idLine.element.setAttribute("aria-label", `${what} (OK와 취소는 그림의 버튼과 아래 버튼. Enter는 동작 없음, Esc는 로비를 나감)`);
+    this.openPopup("id", `${what} 창이 열렸습니다. 아이디를 입력하고 OK. Enter는 동작하지 않고, Esc는 로비를 나갑니다.`);
+    this.idButtons.hidden = false;
+    this.idLine.open();
   }
 
   private openPopup(popup: Exclude<Popup, null>, announce: string): void {
@@ -1086,6 +1171,11 @@ export class LobbyScreen {
     } else if (this.popup === "password") {
       this.passwordLine.close();
       this.passwordRoom = null;
+    } else if (this.popup === "id") {
+      // 0x42f5b0: both flags off, so the next open is the whisper's unless the mask icon sets it.
+      this.idLine.close();
+      this.idButtons.hidden = true;
+      this.idMode = "whisper";
     }
     this.popup = null;
     this.roomInfo = ZEROED_INFO;
@@ -1117,7 +1207,7 @@ export class LobbyScreen {
   /** Keys (0x45fa70): Enter sends or submits, Esc closes the top thing or leaves, F1 shows the help screen. */
   private key(event: KeyboardEvent): void {
     const active = document.activeElement;
-    const editors = [this.chat, this.title, this.secretLine, this.passwordLine, this.greetingLine, this.nickLine].map((line) => line.element);
+    const editors = [this.chat, this.title, this.secretLine, this.passwordLine, this.greetingLine, this.nickLine, this.idLine].map((line) => line.element);
     const ours =
       [...editors, this.options.canvas, document.body].includes(active as HTMLElement) ||
       (this.option?.owns(active) ?? false) ||
@@ -1180,6 +1270,11 @@ export class LobbyScreen {
       }
       return;
     }
+    // The page may have taken the focus from the ID popup's editor: a character goes back to it.
+    if (this.popup === "id" && active !== this.idLine.element && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      this.idLine.focus();
+      return;
+    }
     // A closed chat line opens on the next key while no popup is open, and that key types into it.
     if (this.popup === null && lobbyKeyOpensChat(event)) this.chat.open();
   }
@@ -1238,8 +1333,9 @@ export class LobbyScreen {
     else if (this.myInfo?.nickname) this.closeNick();
     // X and Esc drop the edits: the character shown goes back (0x43ecc0).
     else if (this.myInfo) this.closeMyInfo();
-    // Esc on the remote leaves the chat line closed; only its X opens it again.
-    else if (this.popup) this.closePopup(this.popup !== "remote");
+    // Esc on the remote leaves the chat line closed; only its X opens it again. The ID popup is not
+    // in 0x461590's list: Esc leaves the lobby with it open.
+    else if (this.popup && this.popup !== "id") this.closePopup(this.popup !== "remote");
     else this.options.exit(false);
   }
 
@@ -1306,6 +1402,7 @@ export class LobbyScreen {
     blit(ctx, assets.banner, BANNER.src, BANNER.at.x, BANNER.at.y);
     outlinedText(ctx, this.state.channel, CHANNEL_AT.x, CHANNEL_AT.y, CHANNEL_COLOUR, FONT_12);
     if (this.waitingOnly) this.button(SHOW_ALL.src, SHOW_ALL.at);
+    this.drawItemIcons();
     if (this.clear) this.drawButtonArt();
     this.drawUsers();
     this.drawRooms();
@@ -1338,7 +1435,18 @@ export class LobbyScreen {
       else if (button.hover) this.button(button.hover, button.at);
     };
     [CREATE, this.waitingOnly ? WAIT_GAME.on : WAIT_GAME.off, MY_INFO, SHOP, REMOTE, EXIT, ROOM_PREV, ROOM_NEXT, USER_PREV, USER_NEXT].forEach(art);
-    if (held) [LOBBY_SCROLL.up, LOBBY_SCROLL.down].forEach(art);
+    if (!held) return;
+    [LOBBY_SCROLL.up, LOBBY_SCROLL.down].forEach(art);
+    // 0x42c5c2: the item icons have no hover art, only pressed.
+    const icon = lobbyItemIconAt(x, y);
+    if (icon && this.iconLit(icon)) this.button(LOBBY_ITEM_ICONS[icon].pressed, LOBBY_ITEM_ICONS[icon].at);
+  }
+
+  /** 0x42ad33: the mask and whisper icons, lit by the account's items 3 and 8. */
+  private drawItemIcons(): void {
+    for (const icon of ["mask", "whisper"] as const) {
+      if (this.iconLit(icon)) this.button(LOBBY_ITEM_ICONS[icon].lit, LOBBY_ITEM_ICONS[icon].at);
+    }
   }
 
   /** 0x42d1d0: the bar under the mouse (lit, or pressed while held), guild, rank and name. */
@@ -1407,6 +1515,14 @@ export class LobbyScreen {
    * the chat line's, shown even while it is closed. The remote, the room info and the message box hide it.
    */
   private drawEditorCaret(now: number): void {
+    // The ID popup's caret is its draw's (0x42eec2), gated by the yes/no box only: it shows under the message box.
+    if (this.popup === "id") {
+      if (this.caret.shown(now)) {
+        const at = idCaret(this.idLine.view().caret);
+        drawCaret(this.ctx, at.x, at.y);
+      }
+      return;
+    }
     if (this.message || this.popup === "remote" || this.popup === "roomInfo") return;
     if (!this.caret.shown(now)) return;
     if (this.popup === "create") {
@@ -1454,7 +1570,24 @@ export class LobbyScreen {
       this.drawRoomInfo();
     } else if (this.popup === "userInfo") {
       this.drawUserInfo();
+    } else if (this.popup === "id") {
+      this.drawIdPopup();
     }
+  }
+
+  /** 0x42eca0: new_basicwindow, the mode's icon, the ID label, OK or 취소 held, and the ID. */
+  private drawIdPopup(): void {
+    const { ctx } = this;
+    const { assets } = this.options;
+    const popup = ID_POPUP;
+    blit(ctx, assets.basicWindow, popup.window.src, popup.window.at.x, popup.window.at.y);
+    this.button(popup.icon[this.idMode], popup.icon.at);
+    blit(ctx, assets.button2, popup.label.src, popup.label.at.x, popup.label.at.y);
+    const held = this.pointer.held !== null && this.pointer.inside;
+    const button = held ? [popup.ok, popup.cancel].find((b) => inside(b.hit, this.pointer.mouse.x, this.pointer.mouse.y)) : undefined;
+    if (button) blit(ctx, assets.button2, button.pressed, button.at.x, button.at.y);
+    const text = this.idLine.view().text;
+    if (text) outlinedText(ctx, text, popup.text.x, popup.text.y, popup.colour, FONT_13, "left", popup.outline);
   }
 
   /** 0x42da60: the snapshot's fields in #F5FF00; name, e-mail and gender stay empty (R). */
@@ -1568,7 +1701,7 @@ export class LobbyScreen {
 
   /**
    * The lobby's draw returns early for scenes 10-13 (0x42ae43): its background, banner, channel,
-   * SHOW ALL and user list, not dimmed.
+   * SHOW ALL, the item icons and the user list, not dimmed.
    */
   private drawPartialLobby(): void {
     const { ctx } = this;
@@ -1577,6 +1710,7 @@ export class LobbyScreen {
     blit(ctx, assets.banner, BANNER.src, BANNER.at.x, BANNER.at.y);
     outlinedText(ctx, this.state.channel, CHANNEL_AT.x, CHANNEL_AT.y, CHANNEL_COLOUR, FONT_12);
     if (this.waitingOnly) this.button(SHOW_ALL.src, SHOW_ALL.at);
+    this.drawItemIcons();
     this.drawUsers();
   }
 

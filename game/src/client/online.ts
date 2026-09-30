@@ -189,7 +189,7 @@ class OnlineSession {
   private readonly ranking = new RankingBoard();
   /** The lobby's nickname popup waits for its save's answer, which comes as the greeting's does. */
   private lobbySaving: "nick" | null = null;
-  /** [0x4927c8]: the ID a slot's whisper icon chose; never cleared, as in the original. */
+  /** [0x4927c8]: the ID a slot's whisper icon or the lobby's ID popup chose; only an empty ID popup clears it. */
   private whisperTarget = "";
 
   constructor(manifest: Manifest) {
@@ -507,6 +507,9 @@ class OnlineSession {
       saveNick: (nick) => {
         this.lobbySaving = "nick";
         this.send({ type: "set-status", nick, greeting: this.profile.greeting, useId: this.profile.useId });
+      },
+      whisperTo: (id) => {
+        this.whisperTarget = id;
       },
       settings,
       ranking: this.ranking.access((message) => {

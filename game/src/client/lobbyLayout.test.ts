@@ -4,8 +4,13 @@ import type { RoomSummary } from "../server/protocol.ts";
 import {
   createPopupAt,
   createTitle,
+  ID_POPUP,
+  idCaret,
+  idPopupAt,
+  LOBBY_ITEM_ICONS,
   LOBBY_SCROLL,
   lobbyHelpAt,
+  lobbyItemIconAt,
   messageLines,
   passwordMask,
   passwordPopupAt,
@@ -219,5 +224,51 @@ describe("lobby balloons (0x42b450)", () => {
     expect(lobbyHelpAt(200, 300, { ...base, popup: "password" })?.text).toBe("입력 확인(enter)");
     expect(lobbyHelpAt(400, 300, { ...base, popup: "password" })?.text).toBe("취소 버튼(esc)");
     expect(lobbyHelpAt(300, 110, { ...base, popup: "password" })).toBeNull();
+  });
+
+  it("names the mask and whisper icons at the bottom, and gives none while the ID popup is open (0x42b4ca)", () => {
+    expect(lobbyHelpAt(71, 535, base)?.text).toBe("마스크 설정 및 해지(현재지원안함)");
+    expect(lobbyHelpAt(100, 564, base)?.text).toBe("채팅창에서 /w 아이디");
+    expect(lobbyHelpAt(100, 564, { ...base, popup: "id" })).toBeNull();
+    expect(lobbyHelpAt(150, 480, { ...base, popup: "id" })).toBeNull();
+  });
+});
+
+describe("the lobby's mask and whisper icons (0x42ad33, 0x42fa30, 0x42fa90)", () => {
+  it("lights each icon where it is hit, and presses it there", () => {
+    expect(LOBBY_ITEM_ICONS.mask).toMatchObject({ lit: [156, 148, 185, 178], pressed: [94, 148, 125, 177], at: { x: 71, y: 535 } });
+    expect(LOBBY_ITEM_ICONS.whisper).toMatchObject({ lit: [126, 148, 155, 178], pressed: [63, 148, 93, 177], at: { x: 100, y: 535 } });
+  });
+
+  it("tests the whisper icon before the mask, inclusive, with no gap between them", () => {
+    expect(lobbyItemIconAt(71, 535)).toBe("mask");
+    expect(lobbyItemIconAt(99, 564)).toBe("mask");
+    expect(lobbyItemIconAt(100, 535)).toBe("whisper");
+    expect(lobbyItemIconAt(129, 564)).toBe("whisper");
+    expect(lobbyItemIconAt(70, 540)).toBeNull();
+    expect(lobbyItemIconAt(130, 540)).toBeNull();
+    expect(lobbyItemIconAt(100, 565)).toBeNull();
+  });
+});
+
+describe("the lobby's ID popup (draw 0x42eca0, OK 0x430460, 취소 0x4304b0)", () => {
+  it("draws the mask's or the whisper's icon over new_basicwindow", () => {
+    expect(ID_POPUP.window).toEqual({ src: [2, 2, 240, 181], at: { x: 137, y: 329 } });
+    expect(ID_POPUP.icon).toEqual({ mask: [166, 10, 192, 36], whisper: [126, 148, 155, 178], at: { x: 188, y: 384 } });
+    expect(ID_POPUP.label).toEqual({ src: [111, 220, 179, 240], at: { x: 228, y: 388 } });
+  });
+
+  it("takes OK, then 취소, inclusive, and nothing else", () => {
+    expect(idPopupAt(144, 470)).toBe("ok");
+    expect(idPopupAt(175, 501)).toBe("ok");
+    expect(idPopupAt(331, 470)).toBe("cancel");
+    expect(idPopupAt(362, 501)).toBe("cancel");
+    expect(idPopupAt(143, 480)).toBeNull();
+    expect(idPopupAt(250, 420)).toBeNull();
+  });
+
+  it("puts the caret 7 px a byte from the ID at (194,420) (0x42ef92)", () => {
+    expect(idCaret(0)).toEqual({ x: 194, y: 420 });
+    expect(idCaret(3)).toEqual({ x: 215, y: 420 });
   });
 });

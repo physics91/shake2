@@ -1,14 +1,14 @@
 // The lobby (scene 4, "LOBBY") as a page: the original's screen on a canvas (lobbyScreen.ts) and,
 // under it, page controls for the keyboard and screen readers. The room code join is the remake's.
 import { cutBytes, trimChat, typeable } from "../server/cp949.ts";
-import { hasItem, ITEM_COLOUR, ITEM_NICK } from "../server/items.ts";
+import { hasItem, ITEM_COLOUR, ITEM_NICK, ITEM_WHISPER } from "../server/items.ts";
 import type { Badge, ClientMessage, LobbyUser, OwnAccount, RoomStatus, RoomSummary } from "../server/protocol.ts";
 import { RANDOM_MAP, ROOM_CHAT_LIMIT, ROOM_CODE_LENGTH, shownName } from "../server/protocol.ts";
 import type { FriendRecord } from "./optionWindow.ts";
 import { MODE_NAMES } from "../sim/modes.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
 import type { FriendReply } from "./friends.ts";
-import { CREATE_PASSWORD_LIMIT, CREATE_TITLE_LIMIT, createTitle, roomCountText, roomInfoStatus } from "./lobbyLayout.ts";
+import { CREATE_PASSWORD_LIMIT, CREATE_TITLE_LIMIT, createTitle, ID_LIMIT, roomCountText, roomInfoStatus } from "./lobbyLayout.ts";
 import type { MyProfile, RankingCommand } from "./lobbyScreen.ts";
 import { loadLobbyAssets, LobbyScreen } from "./lobbyScreen.ts";
 import { mapTitle } from "./menu.ts";
@@ -45,6 +45,8 @@ export interface LobbyActions {
   saveGreeting(text: string): void;
   /** Change the nickname (item 9, once a day); the server answers with the account or a refusal. */
   saveNick(nick: string): void;
+  /** The whisper target the chat lines also go to (item 8's ID popup); "" clears it. */
+  whisperTo(id: string): void;
   /** The option object, for the option window and the page's option controls. */
   settings: SettingsStore;
   /** The ranking's list and its fetches on the lobby's connection, for the ranking window. */
@@ -113,6 +115,9 @@ export class LobbyView {
   /** The nickname popup's nick (item 9), for the keyboard. */
   private readonly nickInput = h("input", { id: "lobby-nick", autocomplete: "off" });
   private readonly nickButton = h("button", { class: "btn", type: "submit" }, "닉네임 바꾸기");
+  /** The whisper icon's ID popup (item 8), for the keyboard: the icon, the ID and OK in one. */
+  private readonly whisperInput = h("input", { id: "lobby-whisper", autocomplete: "off" });
+  private readonly whisperButton = h("button", { class: "btn", type: "submit" }, "귓말 대상 정하기");
   private readonly optionPanel: OptionPanel;
   private screen: LobbyScreen | null = null;
   private state: LobbyState;
@@ -133,7 +138,7 @@ export class LobbyView {
     this.welcome = welcome;
     this.actions = actions;
     this.state = state;
-    const { send, say, exit, filterChanged, profile, account, saveCharacter, saveGreeting, saveNick, settings, ranking } = actions;
+    const { send, say, exit, filterChanged, profile, account, saveCharacter, saveGreeting, saveNick, whisperTo, settings, ranking } = actions;
 
     const title = h("input", { id: "lobby-title", autocomplete: "off" });
     title.addEventListener("input", () => fitBytes(title, CREATE_TITLE_LIMIT));
@@ -181,6 +186,16 @@ export class LobbyView {
     this.showHue();
     this.nickInput.addEventListener("input", () => fitBytes(this.nickInput, NICK_LIMIT));
     this.showNick();
+    this.whisperInput.addEventListener("input", () => fitBytes(this.whisperInput, ID_LIMIT));
+    const locked = !hasItem(account()?.items ?? [], ITEM_WHISPER);
+    this.whisperInput.disabled = locked;
+    this.whisperButton.disabled = locked;
+    const setWhisper = (event: Event) => {
+      event.preventDefault();
+      // The popup's OK takes the ID as typed; empty clears the target.
+      if (this.screen) this.screen.setWhisper(this.whisperInput.value);
+      else whisperTo(this.whisperInput.value);
+    };
     const saveMyInfo = (event: Event) => {
       event.preventDefault();
       // The window's O: nothing changed closes without asking the server (0x43e110).
@@ -219,7 +234,7 @@ export class LobbyView {
       h(
         "p",
         { class: "keys" },
-        "방 줄을 누르면 들어가고 오른쪽 버튼은 방 정보입니다. CREATE GAME은 방 만들기, WAIT GAME은 기다리는 방만 보기, 내정보는 캐릭터 고르기(◀▶ 또는 이름 칸을 누른 채 끌기, Enter 저장), 리모컨의 OPTION은 옵션 창(같은 설정이 아래 옵션 부분에도 있음), 리모컨의 랭킹은 랭킹 창(아래 랭킹 창 버튼으로도 열고 넘기며, FIND 창에서 아이디를 넣고 Enter), F2~F10은 채팅 줄에 단축 메시지 넣기, F1은 도움말 화면(다시 F1이나 Esc로 닫기), Esc는 메시지·열린 창 닫기(없으면 나가기)입니다.",
+        "방 줄을 누르면 들어가고 오른쪽 버튼은 방 정보입니다. CREATE GAME은 방 만들기, WAIT GAME은 기다리는 방만 보기, 내정보는 캐릭터 고르기(◀▶ 또는 이름 칸을 누른 채 끌기, Enter 저장), 리모컨의 OPTION은 옵션 창(같은 설정이 아래 옵션 부분에도 있음), 리모컨의 랭킹은 랭킹 창(아래 랭킹 창 버튼으로도 열고 넘기며, FIND 창에서 아이디를 넣고 Enter), F2~F10은 채팅 줄에 단축 메시지 넣기, 채팅 아래 귓말·마스크 아이콘은 아이디 창(Enter 없음, 편집기 뒤 OK·취소 버튼, 귓말은 아래 귓말 대상 칸으로도), F1은 도움말 화면(다시 F1이나 Esc로 닫기), Esc는 메시지·열린 창 닫기(없으면, 또는 아이디 창이 열려 있으면 나가기)입니다.",
       ),
       h(
         "form",
@@ -241,6 +256,17 @@ export class LobbyView {
         { class: "row", onsubmit: saveNickname },
         h("div", { class: "field" }, h("label", { for: "lobby-nick" }, `닉네임 (내정보 닉네임 창, 아이템 9, 하루 한 번, 최대 ${NICK_LIMIT - 1}바이트)`), this.nickInput),
         this.nickButton,
+      ),
+      h(
+        "form",
+        { class: "row", onsubmit: setWhisper },
+        h(
+          "div",
+          { class: "field" },
+          h("label", { for: "lobby-whisper" }, `귓말 대상 아이디 (로비 귓말 아이콘의 아이디 창, 아이템 8, 비우면 해제, 최대 ${ID_LIMIT - 1}바이트)`),
+          this.whisperInput,
+        ),
+        this.whisperButton,
       ),
       h(
         "form",
@@ -298,6 +324,7 @@ export class LobbyView {
             saveCharacter,
             saveGreeting,
             saveNick,
+            whisperTo,
             fadeIn,
             settings,
             ranking,

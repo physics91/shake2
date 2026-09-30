@@ -248,10 +248,28 @@ export function roomInfoStatus(info: { status: "round" | "over" | "waiting"; rou
   return info.status === "over" ? "게임종료" : "대 기 중";
 }
 
+// Mask and whisper icons (lit 0x42ad33, pressed 0x42c5c2), lit only with the account's item
+
+/** new_button art, the lit icon at the hit's corner; the pressed art too, only while clear. */
+export const LOBBY_ITEM_ICONS = {
+  /** Item 3: the ID popup in mask mode ([0x495398] = 1, 0x42fa90). */
+  mask: { lit: [156, 148, 185, 178] as Rect, pressed: [94, 148, 125, 177] as Rect, at: { x: 71, y: 535 }, hit: [71, 535, 99, 564] as Rect },
+  /** Item 8: the ID popup in whisper mode (0x42fa30). */
+  whisper: { lit: [126, 148, 155, 178] as Rect, pressed: [63, 148, 93, 177] as Rect, at: { x: 100, y: 535 }, hit: [100, 535, 129, 564] as Rect },
+};
+export type LobbyItemIcon = keyof typeof LOBBY_ITEM_ICONS;
+
+/** The icon under a release, whisper first (0x459c25), inclusive; the item is the caller's to test. */
+export function lobbyItemIconAt(x: number, y: number): LobbyItemIcon | null {
+  if (inside(LOBBY_ITEM_ICONS.whisper.hit, x, y)) return "whisper";
+  if (inside(LOBBY_ITEM_ICONS.mask.hit, x, y)) return "mask";
+  return null;
+}
+
 // Help balloons (0x42b450), shown while the 풍선 도움말 option is on (on by default)
 
 export interface LobbyHelpContext {
-  popup: "create" | "password" | "remote" | "roomInfo" | "userInfo" | null;
+  popup: "create" | "password" | "remote" | "roomInfo" | "userInfo" | "id" | null;
   /** The message box is up: the lobby's own balloons stop, a popup's go on. */
   message: boolean;
   waitingOnly: boolean;
@@ -270,8 +288,8 @@ const MAIN_HELP: HelpEntry[] = [
   { rect: USER_PREV.hit, text: "이전리스트 보기" },
   { rect: USER_NEXT.hit, text: "다음 리스트 보기", x: (x) => Math.min(x, 693) },
   { rect: [619, 158, 749, 376], text: "유져 정보 보기", x: (x) => Math.min(x, 705) },
-  { rect: [71, 535, 99, 564], text: "마스크 설정 및 해지(현재지원안함)" },
-  { rect: [100, 535, 129, 564], text: "채팅창에서 /w 아이디" },
+  { rect: LOBBY_ITEM_ICONS.mask.hit, text: "마스크 설정 및 해지(현재지원안함)" },
+  { rect: LOBBY_ITEM_ICONS.whisper.hit, text: "채팅창에서 /w 아이디" },
   { rect: MY_INFO.hit, text: "내 정보보기 및 수정", x: (x) => Math.min(x, 674) },
   { rect: SHOP.hit, text: "현재 지원안함", x: (x) => Math.min(x, 705) },
   { rect: REMOTE.hit, text: "랭킹, 옵션등 보조기능 사용", x: () => 633 },
@@ -324,6 +342,8 @@ export function lobbyHelpAt(x: number, y: number, context: LobbyHelpContext): { 
   if (context.popup === "roomInfo") return firstHelp(ROOM_INFO_HELP, x, y);
   if (context.popup === "userInfo") return firstHelp(USER_INFO_HELP, x, y);
   if (context.popup === "remote") return firstHelp(REMOTE_HELP, x, y);
+  // The ID popup has none of its own and stops the lobby's (0x42b4ca → 0x42bf0c).
+  if (context.popup === "id") return null;
   if (context.message) return null;
   const main = firstHelp(MAIN_HELP, x, y);
   if (main) {
@@ -411,4 +431,36 @@ export function createTitle(text: string): { title: string } | { message: string
   if (text.startsWith(" ")) return { message: "방제목을 입력하세요" };
   if (text === "") return null;
   return { title: text };
+}
+
+// ID popup (open 0x42f600, close 0x42f5b0, draw 0x42eca0; OK 0x459b9a)
+
+/**
+ * new_basicwindow, the mode's icon (new_button), the ID label and the pressed OK and 취소
+ * (new_button2); the ID in 굴림 13, white on black. OK in mask mode sends C->S 0x5e with the ID; in
+ * whisper mode the ID becomes the whisper target ([0x4927c8]), an empty one clearing it.
+ */
+export const ID_POPUP = {
+  window: { src: [2, 2, 240, 181] as Rect, at: { x: 137, y: 329 } },
+  icon: { mask: [166, 10, 192, 36] as Rect, whisper: [126, 148, 155, 178] as Rect, at: { x: 188, y: 384 } },
+  label: { src: [111, 220, 179, 240] as Rect, at: { x: 228, y: 388 } },
+  text: { x: 194, y: 420 },
+  colour: "#ffffff",
+  outline: "#000000",
+  ok: { hit: [144, 470, 175, 501] as Rect, pressed: [1, 147, 33, 179] as Rect, at: { x: 144, y: 470 } },
+  cancel: { hit: [331, 470, 362, 501] as Rect, pressed: [34, 146, 66, 178] as Rect, at: { x: 331, y: 470 } },
+};
+/** The editor is set to 0xb (0x42f600): 10 bytes. */
+export const ID_LIMIT = 11;
+
+/** A release on the ID popup: OK, then 취소; any other is swallowed. */
+export function idPopupAt(x: number, y: number): "ok" | "cancel" | null {
+  if (inside(ID_POPUP.ok.hit, x, y)) return "ok";
+  if (inside(ID_POPUP.cancel.hit, x, y)) return "cancel";
+  return null;
+}
+
+/** 0x42eef0's ID branch: 7 px a byte from the text. */
+export function idCaret(caret: number): Point {
+  return { x: ID_POPUP.text.x + 7 * caret, y: ID_POPUP.text.y };
 }
