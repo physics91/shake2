@@ -8,7 +8,7 @@ import { animDue } from "../sim/constants.ts";
 import { isTeamMode, MODE_NAMES } from "../sim/modes.ts";
 import type { GameMode } from "../sim/types.ts";
 import type { Sheet } from "./assets.ts";
-import { loadImage, loadImageSheet, loadSheet } from "./assets.ts";
+import { loadImage, loadImageSheet } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
 import { CaretBlink, commandCycle } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
@@ -68,6 +68,7 @@ import { portraitSheetName } from "./scene.ts";
 import { CursorAnim, drawBalloon, drawCaret, drawChatLines, drawHelpScreen, drawThumb, Notice, Pointer } from "./screenKit.ts";
 import { blit } from "./sprite.ts";
 import { FONT_12, FONT_13, FONT_COURIER_15, outlinedText, plainText, YELLOW } from "./text.ts";
+import { loadTintedSheet } from "./tintArt.ts";
 
 export interface RoomScreenAssets {
   background: HTMLImageElement;
@@ -138,6 +139,7 @@ export class RoomScreen {
   private readonly scroll = new ChatScroll();
   private readonly caret = new CaretBlink();
   private readonly startBlink = new CaretBlink();
+  /** The slots' `_p.spr`, by character and hue (portraitKey). */
   private readonly portraits = new Map<string, Sheet | null>();
   private readonly faces = new Map<number, { frame: number; lastMs: number }>();
   private room: RoomInfo;
@@ -266,12 +268,14 @@ export class RoomScreen {
     return !this.isHost || this.room.players.some((p) => p.id !== me.id && !p.ready);
   }
 
+  /** Each slot's portrait turned by its hue as it is read (0x4406db: 0x413d30 with the slot's +0x90). */
   private loadPortraits(): void {
     for (const player of this.room.players) {
-      if (this.portraits.has(player.character)) continue;
-      this.portraits.set(player.character, null);
-      loadSheet("character", portraitSheetName(player.character)).then(
-        (sheet) => this.portraits.set(player.character, sheet),
+      const key = portraitKey(player);
+      if (this.portraits.has(key)) continue;
+      this.portraits.set(key, null);
+      loadTintedSheet("character", portraitSheetName(player.character), player.hue).then(
+        (sheet) => this.portraits.set(key, sheet),
         () => undefined,
       );
     }
@@ -554,9 +558,9 @@ export class RoomScreen {
     outlinedText(ctx, "100", x + SLOT_ART.points.x, y + SLOT_ART.points.y, "#ffffff", FONT_13);
   }
 
-  /** `<character>_p.spr` from its top-left, frames 0,1,2,1 at 5 fps (0x413d30 without the slot's hue). */
+  /** `<character>_p.spr` with the slot's hue from its top-left, frames 0,1,2,1 at 5 fps. */
   private drawPortrait(player: LobbyPlayer, x: number, y: number, now: number): void {
-    const sheet = this.portraits.get(player.character);
+    const sheet = this.portraits.get(portraitKey(player));
     const anim = sheet?.meta.animations[0];
     if (!sheet || !anim || anim.frames.length === 0) return;
     let face = this.faces.get(player.id);
@@ -654,4 +658,8 @@ export class RoomScreen {
   private drawCursor(now: number): void {
     if (this.pointer.inside) this.cursor.draw(this.ctx, this.options.assets.cursor, now, this.pointer.mouse);
   }
+}
+
+function portraitKey(player: LobbyPlayer): string {
+  return `${player.character}@${player.hue}`;
 }
