@@ -117,6 +117,14 @@ describe("parseClientMessage", () => {
     expect(parseClientMessage('{"type":"set-greeting","greeting":"안녕"}')).toEqual({ type: "set-greeting", greeting: "안녕" });
   });
 
+  it("takes scene 5's guild (the old C->S 0x4a) as a whole number, without its password", () => {
+    expect(parseClientMessage('{"type":"set-guild","guild":4}')).toEqual({ type: "set-guild", guild: 4 });
+    expect(parseClientMessage('{"type":"set-guild","guild":-1}')).toEqual({ type: "set-guild", guild: -1 });
+    expect(parseClientMessage('{"type":"set-guild","guild":1.5}')).toBeNull();
+    expect(parseClientMessage('{"type":"set-guild","guild":"4"}')).toBeNull();
+    expect(parseClientMessage('{"type":"set-guild"}')).toBeNull();
+  });
+
   it("takes the typing flag as a boolean (state packet +0x2c)", () => {
     expect(parseClientMessage('{"type":"typing","on":true}')).toEqual({ type: "typing", on: true });
     expect(parseClientMessage('{"type":"typing","on":false}')).toEqual({ type: "typing", on: false });

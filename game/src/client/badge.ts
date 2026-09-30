@@ -2,12 +2,12 @@
 // screens draw them by the name (0x441940, 0x442900), and the level's title and the guild's name.
 import type { Rect } from "../assets/types.ts";
 import type { Badge } from "../server/protocol.ts";
+import { GUILD_COUNT } from "../server/protocol.ts";
 import { guildRect, rankRect } from "./hudLayout.ts";
 import type { Point } from "./roomLayout.ts";
 import { blit } from "./sprite.ts";
 
-/** guild.dat's lines (0x4416f0 counts them into [0x496c8c]): marks 0..264. */
-export const GUILD_COUNT = 265;
+export { GUILD_COUNT };
 /** 0x442900's badges: 1 쉐이크 마스터 .. 12 루키; 13's art is blank and 0 a negative rect. */
 export const LEVELS = 12;
 

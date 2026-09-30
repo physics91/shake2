@@ -7,6 +7,7 @@ import type { Channel } from "./gate.ts";
 import {
   CHECK_INTERVAL_MS,
   Gate,
+  GUILD_FAILED,
   LOGIN_RETRY_MAX_MS,
   LOGIN_RETRY_MS,
   NICK_CHANGE_INTERVAL_MS,
@@ -21,7 +22,7 @@ import {
 } from "./gate.ts";
 import { Lobby } from "./lobby.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
-import { PROTOCOL_VERSION } from "./protocol.ts";
+import { GUILD_COUNT, PROTOCOL_VERSION } from "./protocol.ts";
 
 const PASSWORD = "pass1";
 const defaults = { character: "bobo", items: [12], pairs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] };
@@ -291,6 +292,38 @@ describe("the gate's saves over the auth connection (scene 5)", () => {
     expect(t.last(1, "welcome")?.account.character).toBe("doona");
     t.gate.handle(1, { type: "set-character", character: "bobo", hue: 5, useId: true });
     expect(t.last(1, "profile")).toEqual({ type: "profile", character: "bobo", hue: 5, useId: true });
+  });
+
+  it("takes scene 5's guild (the old C->S 0x4a) as a guild.dat line, −1 to leave, and refuses the rest", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    t.gate.handle(1, { type: "set-guild", guild: 4 });
+    expect(t.last(1, "saved")).toBeUndefined();
+    await t.login(1, "tester");
+    t.gate.handle(1, { type: "set-guild", guild: 4 });
+    expect(t.last(1, "saved")?.account.guild).toBe(4);
+    expect(t.accounts.get("tester")?.guild).toBe(4);
+    t.gate.handle(1, { type: "set-guild", guild: -1 });
+    expect(t.last(1, "saved")?.account.guild).toBe(-1);
+    // Line 0 is guild.dat's "없음", which is no guild to join; past the last line there is none.
+    for (const guild of [0, GUILD_COUNT, -2]) {
+      t.inbox.set(1, []);
+      t.gate.handle(1, { type: "set-guild", guild });
+      expect(t.last(1, "error")?.message).toBe(GUILD_FAILED);
+      expect(t.last(1, "saved")).toBeUndefined();
+    }
+    expect(t.accounts.get("tester")?.guild).toBe(-1);
+  });
+
+  it("shows a new guild by the name in the lobby the account is in", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    t.connect(2, "203.0.113.2");
+    await t.enter(2, "tester");
+    await t.login(1, "tester");
+    t.gate.handle(1, { type: "set-guild", guild: 13 });
+    t.channels[0].lobby.tick();
+    expect(t.last(2, "lobby")?.users[0]?.card.guild).toBe(13);
   });
 
   it("shows a save over the auth connection in the lobby the account is in", async () => {

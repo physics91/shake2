@@ -1,13 +1,15 @@
 // Scene 5, the old "My Status" menu, as the start screen's page between the login and the server
 // list (AGENTS.md; findings_scene5.md). StartScreen keeps the frame, the fades, the quit box, the
 // message box and the cursor; this draws the page (0x41cf30) and takes its input (0x41dfc0).
-// Geometry: statusLayout.ts; the option page's rules: statusOption.ts. What needs the account or
-// ranking server stays blank, or does what 0311 does when no answer comes.
+// Geometry: statusLayout.ts; the option page's rules: statusOption.ts. The account's rows come from
+// the login record; what needs the ranking server stays blank, or does what 0311 does when no answer comes.
 import { cp949Bytes } from "../server/cp949.ts";
+import type { OwnAccount } from "../server/protocol.ts";
 import { animDue } from "../sim/constants.ts";
 import type { Sheet } from "./assets.ts";
 import { loadCp949, loadImage, loadSheet } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
+import { guildLines, guildMark, guildName, levelBadge, levelTitle } from "./badge.ts";
 import { CaretBlink } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
@@ -22,6 +24,7 @@ import type { Control, Keys, SettingsStore } from "./settings.ts";
 import { blit } from "./sprite.ts";
 import type { GuildScroll, HoverButton, StatusButton } from "./statusLayout.ts";
 import {
+  ACCOUNT_ROWS,
   BANNER,
   CARET,
   caretX,
@@ -31,22 +34,27 @@ import {
   FACE_AT,
   faceCell,
   FIELDS,
+  GUILD_BAR,
   GUILD_LIST,
   GUILD_TRACK,
-  guildEntries,
-  guildIcon,
+  guildOfRow,
+  guildRowAt,
   hueBox,
   hueFromKnob,
+  ID_TEXT,
   KNOB,
+  levelTitleAt,
   LIGHT_BLUE,
   MAIN_BUTTONS,
   newGuildScroll,
   OPTION_PAGE,
   ORANGE,
+  padNumber,
   PORTRAIT_AT,
   RANKING,
   scrollDown,
   scrollUp,
+  showGuildRow,
   STATUS_BUTTONS,
   STATUS_TEXT,
   statusKeyName,
@@ -68,23 +76,27 @@ export interface StatusAssets {
   ranking: HTMLImageElement;
   faces: HTMLImageElement;
   guildIcons: HTMLImageElement;
+  /** mark.shk, the level badges. */
+  marks: HTMLImageElement;
   banner: Sheet;
-  guilds: { id: number; name: string }[];
+  /** guild.dat's lines. */
+  guilds: string[];
 }
 
 export async function loadStatusAssets(): Promise<StatusAssets> {
   const image = (name: string) => loadImage(`image/${name}.png`);
-  const [background, option, images, ranking, faces, guildIcons, banner, guilds] = await Promise.all([
+  const [background, option, images, ranking, faces, guildIcons, marks, banner, guilds] = await Promise.all([
     image("shake1_status"),
     image("shake1_option"),
     image("images"),
     image("ranking"),
     image("Wg_char"),
     image("guild"),
+    image("mark"),
     loadSheet("misc", "banner1"),
-    loadCp949("guild.dat").then(guildEntries),
+    loadCp949("guild.dat").then(guildLines),
   ]);
-  return { background, option, images, ranking, faces, guildIcons, banner, guilds };
+  return { background, option, images, ranking, faces, guildIcons, marks, banner, guilds };
 }
 
 /** What scene 5 keeps between its visits, as 0311 keeps it in memory: the character, the check, the list's place. */
@@ -117,8 +129,12 @@ export interface StatusPageOptions {
   announce(text: string): void;
   /** The message box (0x443700). */
   message(text: string): void;
+  /** The login record's account, or none without the account server. */
+  account(): OwnAccount | null;
   /** 확인 (C->S 0x48, 0x4480c0): the ID check, the nick and the greeting; busy until the answer. */
   save(profile: { nick: string; greeting: string; useId: boolean }): void;
+  /** pw ▶ (the old C->S 0x4a, 0x448290): the guild.dat line to join, −1 to leave; busy until the answer. */
+  joinGuild(guild: number): void;
   /** ▲ and ▼: the character practice and the lobby use (0x48c1dc). */
   characterChanged(id: string): void;
 }
@@ -150,8 +166,9 @@ export class StatusPage {
   /** [0x494430]: the field the editor is on; [0x494428] the caret shown. */
   private focus = 0;
   private editing = false;
-  /** [0x494330]: the nick's colour, set after the text is drawn, so a frame late; black at first. */
+  /** [0x494330], [0x4942a8]: the nick's and the ID's colours, set after the text is drawn, so a frame late; black at first. */
   private nickColour = BLACK;
+  private idColour = BLACK;
   private banner = { frame: 0, lastMs: Number.NEGATIVE_INFINITY };
   private portrait: { id: string; hue: number; sheet: Sheet | null; frame: number; lastMs: number } | null = null;
   /** [0x48c32b]: the press was on the hue knob, so the held button drags it. */
@@ -217,8 +234,23 @@ export class StatusPage {
     this.resetFields();
     this.loadPortrait();
     this.options.announce(
-      `내 정보 화면. 캐릭터 ${this.character}. 아래 버튼: Go game(서버 목록), Practice(혼자 연습), Ranking, Option, Exit. 닉네임·인사말 칸은 Tab으로 바꿉니다.`,
+      `내 정보 화면. ${this.accountText()}캐릭터 ${this.character}. 아래 버튼: Go game(서버 목록), Practice(혼자 연습), Ranking, Option, Exit. ` +
+        "닉네임·인사말 칸은 Tab으로 바꿉니다. 길드는 목록에서 고른 뒤 ▶로 가입합니다.",
     );
+  }
+
+  /** The account's rows, read out. */
+  private accountText(): string {
+    const account = this.options.account();
+    if (!account) return "";
+    return `아이디 ${account.id}, 길드 ${this.guildName(account.guild)}, 레벨 ${levelTitle(account.level).replace(/\s+/g, "") || "없음"}, ` +
+      `순위 ${account.rank}, 셀 포인트 ${account.cell}, 승 ${account.wins}. `;
+  }
+
+  /** −1's name is guild.dat's first line, "없음" (0x4419e0), as S->C 0x4a names it. */
+  private guildName(guild: number): string {
+    const { guilds } = this.options.assets;
+    return guild < 0 ? (guilds[0] ?? "") : guildName(guilds, guild);
   }
 
   /** The fields from the account, the password cleared, the editor on the nick (0x41f030, 0x41e7f8). */
@@ -479,14 +511,36 @@ export class StatusPage {
       this.loadPortrait();
       this.options.announce(`색조 ${state.hue}`);
     } else if (inside(MAIN_BUTTONS.guildPassword.hit, x, y)) {
-      // No guild row can be chosen (0x41ec42 checks a list box 0311 never fills), so always this.
       sounds.play(MENU_SOUNDS.secondary);
-      this.options.message(STATUS_TEXT.chooseGuild);
+      // The remake's guilds have no passwords, so none is asked for (R: 0311 wants one past "없음").
+      if (state.guild.selected < 0) this.options.message(STATUS_TEXT.chooseGuild);
+      else this.options.joinGuild(guildOfRow(state.guild.selected));
     } else {
+      const row = guildRowAt(x, y, state.guild.top, this.options.assets.guilds.length);
       const field = FIELDS.findIndex((f) => inside(f.hit, x, y));
-      if (field >= 0) this.setFocus(field);
+      if (row !== null) this.chooseGuild(row);
+      else if (field >= 0) this.setFocus(field);
     }
     this.refocus();
+  }
+
+  /** A row clicked (0x41ec80): chosen, with SND 0x26. */
+  private chooseGuild(row: number): void {
+    const { assets, sounds, state } = this.options;
+    state.guild.selected = row;
+    sounds.play(MENU_SOUNDS.secondary);
+    this.options.announce(`길드 목록 ${row + 1}/${assets.guilds.length}: ${assets.guilds[row]}. ▶로 ${row === 0 ? "탈퇴" : "가입"}합니다.`);
+  }
+
+  /** The keyboard's step through the list (R): the next or previous row chosen as its click does, and shown. */
+  stepGuild(step: 1 | -1): void {
+    if (this.page !== "main") return;
+    const { assets, state } = this.options;
+    const count = assets.guilds.length;
+    if (count === 0) return;
+    const row = Math.max(0, Math.min(count - 1, state.guild.selected + step));
+    showGuildRow(state.guild, row, count);
+    this.chooseGuild(row);
   }
 
   private setFocus(field: number): void {
@@ -547,10 +601,9 @@ export class StatusPage {
     this.drawGuilds(ctx);
     this.drawCharacter(ctx, now, held);
     const [nick, greeting, password] = this.fields.map((line) => line.view());
-    // The ID (0x493fb0) has no writer in 0311: its place at ID_TEXT stays empty.
+    this.drawAccount(ctx);
     if (nick.text) plainText(ctx, nick.text, FIELDS[0].text.x, FIELDS[0].text.y, this.nickColour, FONT_13);
     if (greeting.text) plainText(ctx, greeting.text, FIELDS[1].text.x, FIELDS[1].text.y, ORANGE, FONT_13);
-    // No guild, level, rank, cell point, wins or last login without the account server.
     if (password.text) plainText(ctx, "*".repeat(cp949Bytes(password.text)), FIELDS[2].text.x, FIELDS[2].text.y, ORANGE, FONT_13);
     const knob = clampKnob(state.guild);
     blit(ctx, assets.images, state.guild.dragging ? KNOB.dragging : KNOB.idle, GUILD_TRACK[0], knob - 5);
@@ -558,6 +611,7 @@ export class StatusPage {
     const mark = state.useId ? CHECK_MARK.useId : CHECK_MARK.useNick;
     blit(ctx, assets.images, CHECK_MARK.src, mark.x, mark.y);
     this.nickColour = state.useId ? WHITE : ORANGE;
+    this.idColour = state.useId ? ORANGE : WHITE;
     if (this.editing && this.caret.shown(now)) {
       const line = [nick, greeting, password][this.focus];
       ctx.fillStyle = CARET.colour;
@@ -565,16 +619,51 @@ export class StatusPage {
     }
   }
 
-  /** Ten rows from the list's top, icon and name (0x41d387); no row is ever chosen. */
+  /**
+   * The account's rows (0x41d320; no writer in 0311, the login record's here, R): the ID, the guild's
+   * mark and name, the level's badge and title, rank, cell point and wins. No last login: the
+   * remake keeps none. Nothing without the account server.
+   */
+  private drawAccount(ctx: CanvasRenderingContext2D): void {
+    const account = this.options.account();
+    if (!account) return;
+    const { assets } = this.options;
+    plainText(ctx, account.id, ID_TEXT.x, ID_TEXT.y, this.idColour, FONT_13);
+    const { guild, rank, cell, wins } = ACCOUNT_ROWS;
+    const mark = guildMark(account.guild);
+    if (mark) blit(ctx, assets.guildIcons, mark, guild.mark.x, guild.mark.y);
+    plainText(ctx, this.guildName(account.guild), guild.name.x, guild.name.y, ORANGE, FONT_13);
+    // 0311 crashes on a level outside 1..12 (0x41d5ac); the remake draws none (R).
+    const badge = levelBadge(account.level);
+    if (badge) {
+      const title = levelTitle(account.level);
+      const at = levelTitleAt(title);
+      blit(ctx, assets.marks, badge, at.badge.x, at.badge.y);
+      plainText(ctx, title, at.title.x, at.title.y, ORANGE, FONT_13);
+    }
+    plainText(ctx, padNumber(account.rank, rank.width), rank.x, rank.y, ORANGE, FONT_13);
+    plainText(ctx, padNumber(account.cell, cell.width), cell.x, cell.y, ORANGE, FONT_13);
+    plainText(ctx, padNumber(account.wins, wins.width), wins.x, wins.y, ORANGE, FONT_13);
+  }
+
+  /**
+   * Ten rows from the list's top (0x41d387): the mark, the chosen row's bar, the name. Each row's mark
+   * is the one its guild shows by the name (R: 0311 draws line k with cell k − 1, guildOfRow).
+   */
   private drawGuilds(ctx: CanvasRenderingContext2D): void {
     const { assets, state } = this.options;
     for (let row = 0; row < GUILD_LIST.rows; row++) {
-      const entry = assets.guilds[state.guild.top + row];
-      if (!entry) break;
+      const line = state.guild.top + row;
+      const name = assets.guilds[line];
+      if (name === undefined) break;
       const y = GUILD_LIST.firstY + GUILD_LIST.step * row;
-      const icon = guildIcon(entry.id, assets.guildIcons.width);
-      if (icon) blit(ctx, assets.guildIcons, icon, GUILD_LIST.iconX, y);
-      plainText(ctx, entry.name, GUILD_LIST.nameX, y, LIGHT_BLUE, FONT_13);
+      const mark = guildMark(guildOfRow(line));
+      if (mark) blit(ctx, assets.guildIcons, mark, GUILD_LIST.iconX, y);
+      if (line === state.guild.selected) {
+        ctx.fillStyle = GUILD_BAR.fill;
+        ctx.fillRect(GUILD_BAR.x, y, GUILD_BAR.width, GUILD_BAR.height);
+      }
+      plainText(ctx, name, GUILD_LIST.nameX, y, LIGHT_BLUE, FONT_13);
     }
   }
 

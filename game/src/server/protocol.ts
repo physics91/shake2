@@ -6,10 +6,11 @@ import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEve
 import { cp949Bytes, cutBytes, trimChat, typeable } from "./cp949.ts";
 
 /**
- * 12: account cards (the user list's card, the room's nick, hue and badges, the room info's and the
- * friend list's badges). 11: accounts (login, sign-up, the version check, hello with a session and a channel).
+ * 13: scene 5's guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
+ * badges, the room info's and the friend list's badges). 11: accounts (login, sign-up, the version
+ * check, hello with a session and a channel).
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 export const MAX_MESSAGE_BYTES = 4096;
 export const MAX_NAME_LENGTH = 12;
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -107,6 +108,9 @@ export function shownName(player: { name: string; nick: string; useId: boolean }
   return player.useId || !player.nick ? player.name : player.nick;
 }
 
+/** guild.dat's lines (0x4416f0 counts them into [0x496c8c]): marks 0..264. */
+export const GUILD_COUNT = 265;
+
 /** A player with no account (two on one keyboard): no guild mark, no level badge (0x442900 draws 1..12). */
 export const NO_BADGE: Badge = { guild: -1, level: 0 };
 
@@ -166,6 +170,11 @@ export type ClientMessage =
   | { type: "set-status"; nick: string; greeting: string; useId: boolean }
   /** The my-info window's greeting popup (C->S 0x58, 0x44b120). */
   | { type: "set-greeting"; greeting: string }
+  /**
+   * Scene 5's pw ▶ (the old C->S 0x4a, 0x448290): the guild.dat line to join, −1 to leave. The
+   * remake's guilds have no passwords, so none is sent (R).
+   */
+  | { type: "set-guild"; guild: number }
   /** The own chat line is open or closed: the keys go unread and the "chat" mark shows (state packet +0x2c). */
   | { type: "typing"; on: boolean }
   /** The option window's friend list (C->S 0x63): the own list and where each friend is now. */
@@ -466,6 +475,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return typeof data.token === "string" && data.token.length <= 64 ? { type: "hello", token: data.token } : null;
     case "set-greeting":
       return typeof data.greeting === "string" && data.greeting.length <= 64 ? { type: "set-greeting", greeting: data.greeting } : null;
+    case "set-guild":
+      return isInt(data.guild, -0x8000, 0x7fff) ? { type: "set-guild", guild: data.guild } : null;
     case "set-status":
       return shortText(data.nick) && typeof data.greeting === "string" && data.greeting.length <= 64 && typeof data.useId === "boolean"
         ? { type: "set-status", nick: data.nick, greeting: data.greeting, useId: data.useId }

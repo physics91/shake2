@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACCOUNT_ROWS,
   clampKnob,
   dragKnob,
   faceCell,
-  guildEntries,
-  guildIcon,
+  guildOfRow,
+  guildRowAt,
+  levelTitleAt,
   newGuildScroll,
+  padNumber,
   scrollDown,
   scrollUp,
+  showGuildRow,
   STATUS_BUTTONS,
   hueBox,
   hueFromKnob,
@@ -59,20 +63,57 @@ describe("the hue box (0x41d7c0, 0x458e22)", () => {
 });
 
 describe("guild list", () => {
-  it("reads guild.dat's lines, the first without an icon", () => {
-    expect(guildEntries("없음\r\nTSL\r\nswing")).toEqual([
-      { id: -1, name: "없음" },
-      { id: 0, name: "TSL" },
-      { id: 1, name: "swing" },
-    ]);
-    expect(guildEntries("없음\r\nTSL\r\n")).toHaveLength(2);
-    expect(guildEntries("없음\r\n\r\nTSL")[1]).toEqual({ id: 0, name: "" });
+  it("stands a row for guild.dat's line, the mark by the name, and 없음 for leaving (R)", () => {
+    expect(guildOfRow(0)).toBe(-1);
+    expect(guildOfRow(1)).toBe(1);
+    expect(guildOfRow(264)).toBe(264);
   });
 
-  it("finds an icon by its number in rows of 15", () => {
-    expect(guildIcon(-1, 225)).toBeNull();
-    expect(guildIcon(0, 225)).toEqual([0, 0, 15, 13]);
-    expect(guildIcon(16, 225)).toEqual([15, 13, 30, 26]);
+  it("picks the row under a click among the ten shown, below the count", () => {
+    expect(guildRowAt(140, 274, 0, 265)).toBe(0);
+    expect(guildRowAt(140, 290, 0, 265)).toBe(0);
+    expect(guildRowAt(140, 291, 0, 265)).toBe(1);
+    expect(guildRowAt(299, 440, 20, 265)).toBe(29);
+    // The box's last pixels would be an eleventh row, which is not drawn.
+    expect(guildRowAt(140, 444, 0, 265)).toBeNull();
+    expect(guildRowAt(134, 300, 0, 265)).toBeNull();
+    expect(guildRowAt(140, 300, 259, 265)).toBe(260);
+    expect(guildRowAt(140, 400, 259, 265)).toBeNull();
+  });
+
+  it("brings a row stepped to from the keyboard into view with a knob that gives the same top again", () => {
+    const scroll = newGuildScroll();
+    clampKnob(scroll);
+    showGuildRow(scroll, 5, 265);
+    expect(scroll).toMatchObject({ top: 0, knob: 303 });
+    // A pixel of the knob is 260 / 115 rows: the first top past 0 is 2.
+    showGuildRow(scroll, 10, 265);
+    expect(scroll).toMatchObject({ top: 2, knob: 304 });
+    for (const row of [40, 264, 100, 3, 0]) {
+      showGuildRow(scroll, row, 265);
+      expect(row).toBeGreaterThanOrEqual(scroll.top);
+      expect(row).toBeLessThanOrEqual(scroll.top + 9);
+      expect(scroll.knob).toBeGreaterThanOrEqual(303);
+      expect(scroll.knob).toBeLessThanOrEqual(418);
+      // The wheel's next notch reads the top from the knob: it must be the one shown.
+      const next = { ...scroll };
+      scrollDown(next, 265, 5);
+      expect(next.top).toBe(scroll.top);
+    }
+    const short = newGuildScroll();
+    showGuildRow(short, 8, 9);
+    expect(short).toMatchObject({ top: 0 });
+  });
+
+  it("right-aligns the numbers as Shake1's %15d and %12d do, all ending at x 506", () => {
+    expect(padNumber(42, 15)).toBe(`${" ".repeat(13)}42`);
+    expect(padNumber(0, 12)).toHaveLength(12);
+    for (const row of [ACCOUNT_ROWS.rank, ACCOUNT_ROWS.cell, ACCOUNT_ROWS.wins]) expect(row.x + 7 * row.width).toBe(506);
+  });
+
+  it("puts the level's title at 508 − 7·strlen and its badge 18 px before it", () => {
+    expect(levelTitleAt("쉐이크 마스터")).toEqual({ title: { x: 417, y: 299 }, badge: { x: 399, y: 299 } });
+    expect(levelTitleAt("루 키 ")).toEqual({ title: { x: 466, y: 299 }, badge: { x: 448, y: 299 } });
   });
 
   it("scrolls from the knob's last place, 2 px a held frame", () => {

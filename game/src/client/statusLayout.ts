@@ -3,7 +3,10 @@
 // The remake draws Shake1's status.shk under it (AGENTS.md, R); every rect, art and text place here
 // is 0311's.
 import type { Rect } from "../assets/types.ts";
+import { cp949Bytes } from "../server/cp949.ts";
+import { NO_BADGE } from "../server/protocol.ts";
 import type { Point } from "./roomLayout.ts";
+import { inside } from "./roomLayout.ts";
 
 /** A button with hover art only: scene 5 has no pressed art and no balloons (0x41f580, 0x41f8a0). */
 export interface HoverButton {
@@ -50,6 +53,31 @@ export const LIGHT_BLUE = "#c8e5fd";
 
 /** The ID (0x493fb0, which 0311 never fills) at (140,73), 굴림체 13. */
 export const ID_TEXT: Point = { x: 140, y: 73 };
+
+/**
+ * The account's rows (0x41d320), font 13 orange. 0311 has no writer for any of them; Shake1 fills
+ * them at login (0x411a50), and the remake from the login record (R). Rank, cell point and wins are
+ * Shake1's "%15d", "%12d" and "%15d", so all three end at x 506.
+ */
+export const ACCOUNT_ROWS = {
+  guild: { mark: { x: 140, y: 200 } as Point, name: { x: 157, y: 200 } as Point },
+  level: { right: 508, y: 299, badgeGap: 18 },
+  rank: { x: 401, y: 325, width: 15 },
+  cell: { x: 422, y: 353, width: 12 },
+  wins: { x: 401, y: 381, width: 15 },
+};
+
+/** printf's "%*d": the number right-aligned in `width` characters of the fixed-pitch 굴림체. */
+export function padNumber(value: number, width: number): string {
+  return String(value).padStart(width);
+}
+
+/** The level's title right-aligned at 508 (x = 508 − 7·strlen) and its badge 18 px before it (0x41d4f5). */
+export function levelTitleAt(title: string): { title: Point; badge: Point } {
+  const { right, y, badgeGap } = ACCOUNT_ROWS.level;
+  const x = right - 7 * cp949Bytes(title);
+  return { title: { x, y }, badge: { x: x - badgeGap, y } };
+}
 
 /**
  * The three edit fields (0x41ed31..0x41eeb8, Tab 0x41f110): their click rects, text places, the
@@ -114,20 +142,27 @@ export const GUILD_LIST = {
   nameX: 152,
 };
 
-/** guild.shk's 15 × 13 icons, as many to a row as its width holds (0x441807, 0x441940); −1 has none. */
-export function guildIcon(id: number, sheetWidth: number): Rect | null {
-  const columns = Math.trunc(sheetWidth / 15);
-  if (id < 0 || columns === 0) return null;
-  const x = (id % columns) * 15;
-  const y = Math.trunc(id / columns) * 13;
-  return [x, y, x + 15, y + 13];
+/** The chosen row's bar (0x412d50): 565 colour 0x001F, 134 × 13 at (152, y), under the name. */
+export const GUILD_BAR = { x: 152, width: 134, height: 13, fill: "#0000ff" };
+
+/**
+ * The row a click in the list picks (0x41ec80): (y − 274) / 17 from the top, below the count. 0311
+ * counts a list box it never fills, so no row is ever picked there; the remake takes the ten shown (R).
+ */
+export function guildRowAt(x: number, y: number, top: number, count: number): number | null {
+  if (!inside(GUILD_LIST.box, x, y)) return null;
+  const shown = Math.trunc((y - GUILD_LIST.firstY) / GUILD_LIST.step);
+  const row = top + shown;
+  return shown < GUILD_LIST.rows && row < count ? row : null;
 }
 
-/** guild.dat (0x4416f0): cp949 lines read in text mode; the first, "없음", has no icon (−1). */
-export function guildEntries(text: string): { id: number; name: string }[] {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  if (lines.at(-1) === "") lines.pop();
-  return lines.map((name, i) => ({ id: i - 1, name }));
+/**
+ * The guild a row stands for (R): row k is guild.dat's line k, whose mark and name every list and
+ * window draws by the name (0x441940, 0x42dc93); row 0, "없음", leaves (−1). 0311's list numbers
+ * line k as k − 1 (0x4419e0), draws that cell by it and sends that number (0x448290): one off.
+ */
+export function guildOfRow(row: number): number {
+  return row === 0 ? NO_BADGE.guild : row;
 }
 
 /** The track (308,298)-(326,423); the knob, images.shk, is drawn from (308, knob − 5). */
@@ -139,22 +174,47 @@ const SPAN = GUILD_TRACK[3] - GUILD_TRACK[1] - 10;
 /** The x87 code multiplies by 100.0f and 0.01f, which is a hair under 1. */
 const HUNDREDTH = Math.fround(0.01);
 
-/** [0x4944cc] the first row shown; [0x494298] the knob's y; [0x48c328] held on the track. */
+/** [0x4944cc] the first row shown; [0x494298] the knob's y; [0x48c328] held on the track; [0x46d85c] the chosen row, −1 none. */
 export interface GuildScroll {
   top: number;
   knob: number;
   dragging: boolean;
+  selected: number;
 }
 
 /** The reset (0x4205e0) puts the knob on the track's top; the first draw brings it down to 303. */
 export function newGuildScroll(): GuildScroll {
-  return { top: 0, knob: GUILD_TRACK[1], dragging: false };
+  return { top: 0, knob: GUILD_TRACK[1], dragging: false, selected: -1 };
 }
 
 /** The first row for the knob's previous place (each step moves the knob after this). */
 function topFor(scroll: GuildScroll, count: number): number {
   if (scroll.knob - KNOB_TOP === 0) return scroll.top;
-  return Math.trunc(((scroll.knob - KNOB_TOP) / SPAN) * 100 * HUNDREDTH * (count - 5));
+  return knobTop(scroll.knob, count);
+}
+
+function knobTop(knob: number, count: number): number {
+  return Math.trunc(((knob - KNOB_TOP) / SPAN) * 100 * HUNDREDTH * (count - 5));
+}
+
+/**
+ * A row stepped to from the keyboard brought into the ten shown (R: 0311 has no such step): the knob
+ * goes where its top shows the row, so the next ▲, ▼ or wheel notch goes on from there.
+ */
+export function showGuildRow(scroll: GuildScroll, row: number, count: number): void {
+  if (row >= scroll.top && row < scroll.top + GUILD_LIST.rows) return;
+  if (count < 10) {
+    reset(scroll);
+    return;
+  }
+  let knob = KNOB_TOP;
+  if (row >= scroll.top + GUILD_LIST.rows) {
+    while (knob < KNOB_BOTTOM && knobTop(knob, count) < row - (GUILD_LIST.rows - 1)) knob++;
+  } else {
+    while (knob < KNOB_BOTTOM && knobTop(knob + 1, count) <= row) knob++;
+  }
+  scroll.knob = knob;
+  scroll.top = knobTop(knob, count);
 }
 
 function reset(scroll: GuildScroll): void {
@@ -220,6 +280,10 @@ export const RANKING = {
 export const STATUS_TEXT = {
   notFound: "찾을 수 없습니다.",
   chooseGuild: "길드를 선택하세요",
+  /** S->C 0x4a's answer (0x445464): resource 35 over "되었습니다". */
+  guildSaved: "길드가 수정\n되었습니다",
+  /** Its refusal (resource 36). */
+  guildFailed: "길드 수정 실패",
   /** 확인's answer: 0311's text for it is not known; the my-info window's (S->C 0x1a) is used (R). */
   saved: "수정 되었습니다.",
 };

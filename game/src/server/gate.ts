@@ -5,12 +5,12 @@
 // the login's session goes into that row's lobby (the game part). How the servers knew the player
 // is not in the client, so sessions, the throttle and the refusals' causes are the remake's (R).
 import type { AccountBook, AccountRecord } from "./accounts.ts";
-import { GREETING_MAX_BYTES, isNick, nameKey, REGISTERED } from "./accounts.ts";
+import { GREETING_MAX_BYTES, isNick, nameKey, NO_GUILD, REGISTERED } from "./accounts.ts";
 import { cutBytes, typeable } from "./cp949.ts";
 import { hasItem, ITEM_NICK } from "./items.ts";
 import type { Lobby } from "./lobby.ts";
 import type { ChannelRow, ClientMessage, OwnAccount } from "./protocol.ts";
-import { PROTOCOL_VERSION } from "./protocol.ts";
+import { GUILD_COUNT, PROTOCOL_VERSION } from "./protocol.ts";
 import type { Peer } from "./room.ts";
 
 /** A session nothing has used for this long is forgotten; the client logs in again. */
@@ -34,6 +34,9 @@ export const NICK_CHANGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const NICK_ONCE = 0xfc;
 export const NICK_TAKEN_CODE = 0xfd;
 export const NICK_FAILED = 0xfe;
+
+/** S->C 0x4a's refusal text (resource 36, 0x445464 for an id below −1). */
+export const GUILD_FAILED = "길드 수정 실패";
 
 /** hello's refusals (S->C 0x0a +8, 0x445970): the client's texts for 0, 2 and 3. */
 export const REFUSED_LOGIN = 0;
@@ -179,6 +182,9 @@ export class Gate {
       case "set-status":
         this.setStatus(connection, message.nick, message.greeting, message.useId);
         return;
+      case "set-guild":
+        this.setGuild(connection, message.guild);
+        return;
       case "set-character":
         if (!connection.joined) {
           this.setCharacter(connection, message.character, message.hue, message.useId);
@@ -281,6 +287,19 @@ export class Gate {
   private setGreeting(connection: Connection, greeting: string): void {
     if (connection.account === null) return;
     this.save(connection, { greeting: greetingText(greeting) });
+  }
+
+  /**
+   * Scene 5's pw ▶ (the old C->S 0x4a): a guild.dat line past "없음", or −1 to leave (R: the lost
+   * server's guilds had passwords and masters; the remake's are guild.dat's, open to all).
+   */
+  private setGuild(connection: Connection, guild: number): void {
+    if (connection.account === null) return;
+    if (guild !== NO_GUILD && (guild < 1 || guild >= GUILD_COUNT)) {
+      connection.peer.send({ type: "error", message: GUILD_FAILED });
+      return;
+    }
+    this.save(connection, { guild });
   }
 
   /** Scene 5's 확인 (C->S 0x48): the nick by the nickname popup's rules, then the rest with it. */

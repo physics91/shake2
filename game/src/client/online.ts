@@ -57,6 +57,7 @@ import { newSlide } from "./startLayout.ts";
 import type { LoginSent, ServerList, ServerRow, StartScene } from "./startScreen.ts";
 import { LOGIN_FAILED } from "./startScreen.ts";
 import { defaultServerUrl, StartView } from "./startView.ts";
+import { STATUS_TEXT } from "./statusLayout.ts";
 import { newStatusState } from "./statusScreen.ts";
 import { choiceGroup, h, readPreference, writePreference } from "./ui.ts";
 
@@ -136,8 +137,8 @@ class OnlineSession {
   private channels: ChannelRow[] = [];
   /** The page's form logged in to go straight into the first row. */
   private enterAfterLogin = false;
-  /** Scene 5's 확인 waits for its answer on the auth connection. */
-  private statusSaving = false;
+  /** Scene 5's 확인 or pw ▶ waits for its answer on the auth connection. */
+  private statusSaving: "status" | "guild" | null = null;
   /** The load queries sent, by row index: when, for the ping. */
   private readonly asked = new Map<number, number>();
   /** [0x49272c]: the game server has not answered the version yet; a close now means it is full. */
@@ -233,10 +234,8 @@ class OnlineSession {
           writePreference("p1", character);
           if (this.account) this.auth.send({ type: "set-character", character, hue, useId });
         },
-        saveStatus: (profile) => {
-          this.statusSaving = this.account !== null && this.auth.send({ type: "set-status", ...profile });
-          return this.statusSaving;
-        },
+        saveStatus: (profile) => this.saveStatus("status", { type: "set-status", ...profile }),
+        saveGuild: (guild) => this.saveStatus("guild", { type: "set-guild", guild }),
         characterChanged: (character) => writePreference("p1", character),
         // The web site's sign-up and checks go to the account server (R); a send that finds it gone
         // connects again, so the next try can go (the original made a new connection each time).
@@ -302,9 +301,15 @@ class OnlineSession {
     this.auth.send({ type: "login", id, password });
   }
 
+  /** Scene 5's save on the auth connection, answered by saved or a refusal; false with nothing to send it to. */
+  private saveStatus(kind: "status" | "guild", message: ClientMessage): boolean {
+    this.statusSaving = this.account !== null && this.auth.send(message) ? kind : null;
+    return this.statusSaving !== null;
+  }
+
   private authStateChanged(state: AuthState): void {
     if (state !== "failed") return;
-    this.statusSaving = false;
+    this.statusSaving = null;
     if (this.enterAfterLogin) {
       this.enterAfterLogin = false;
       this.showError("인증 서버에 접속하지 못했습니다.");
@@ -344,16 +349,15 @@ class OnlineSession {
         return;
       case "saved":
         this.account = message.account;
-        if (this.statusSaving) this.startView?.statusSaved(message.account);
-        this.statusSaving = false;
+        if (this.statusSaving === "status") this.startView?.statusSaved(message.account);
+        else if (this.statusSaving === "guild") this.startView?.guildSaved();
+        this.statusSaving = null;
         return;
       case "nick-refused":
-        if (this.statusSaving) this.startView?.saveRefused(message.code);
-        this.statusSaving = false;
-        return;
       case "error":
-        if (this.statusSaving) this.startView?.saveRefused(message.message);
-        this.statusSaving = false;
+        if (this.statusSaving === "guild") this.startView?.saveRefused(STATUS_TEXT.guildFailed);
+        else if (this.statusSaving === "status") this.startView?.saveRefused(message.type === "error" ? message.message : message.code);
+        this.statusSaving = null;
         return;
       default:
         return;

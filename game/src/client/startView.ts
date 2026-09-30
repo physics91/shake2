@@ -30,6 +30,8 @@ export interface StartActions {
   saveCharacter(character: string, hue: number, useId: boolean): void;
   /** Scene 5's 확인; false without the account server. */
   saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
+  /** Scene 5's pw ▶; false likewise. */
+  saveGuild(guild: number): boolean;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
   /** The sign-up window's 가입하기; false without the account server. */
@@ -64,6 +66,9 @@ const STATUS_MIRRORS: readonly [StatusCommand, string][] = [
   ["characterUp", "앞 캐릭터 (내 정보 화면 ▲)"],
   ["characterDown", "다음 캐릭터 (내 정보 화면 ▼)"],
   ["ok", "확인: 닉네임·인사말 저장 (내 정보 화면)"],
+  ["guildPrevious", "앞 길드 고르기 (내 정보 화면 길드 목록)"],
+  ["guildNext", "다음 길드 고르기 (내 정보 화면 길드 목록)"],
+  ["guildJoin", "▶: 고른 길드에 가입, 없음이면 탈퇴 (내 정보 화면)"],
   ["ranking", "Ranking (내 정보 화면)"],
   ["option", "Option: 옵션 쪽 (내 정보 화면)"],
   ["exit", "Exit: 종료 상자 (내 정보 화면)"],
@@ -215,6 +220,7 @@ export class StartView {
           practice: actions.practice,
           saveCharacter: actions.saveCharacter,
           saveStatus: actions.saveStatus,
+          saveGuild: actions.saveGuild,
           characterChanged: actions.characterChanged,
           register: actions.register,
           check: actions.check,
@@ -260,6 +266,10 @@ export class StartView {
 
   statusSaved(account: OwnAccount): void {
     this.withScreen((screen) => screen.statusSaved(account));
+  }
+
+  guildSaved(): void {
+    this.withScreen((screen) => screen.guildSaved());
   }
 
   /** The account server's answer to the sign-up window. */

@@ -187,7 +187,10 @@ export interface ServerList {
 
 export type StartScene = "logo" | "loading" | "login" | "status" | "servers";
 
-/** Scene 5's buttons the page's hidden controls stand for, and the page each is on (null: all). */
+/**
+ * Scene 5's buttons the page's hidden controls stand for, and the page each is on (null: all); a
+ * step stands for scrolling the guild list to the next or previous row and clicking it.
+ */
 const STATUS_COMMANDS = {
   go: { page: null, hit: STATUS_BUTTONS.go.hit },
   practice: { page: null, hit: STATUS_BUTTONS.practice.hit },
@@ -197,6 +200,9 @@ const STATUS_COMMANDS = {
   characterUp: { page: "main", hit: MAIN_BUTTONS.characterUp.hit },
   characterDown: { page: "main", hit: MAIN_BUTTONS.characterDown.hit },
   ok: { page: "main", hit: MAIN_BUTTONS.ok.hit },
+  guildPrevious: { page: "main", step: -1 },
+  guildNext: { page: "main", step: 1 },
+  guildJoin: { page: "main", hit: MAIN_BUTTONS.guildPassword.hit },
   musicOn: { page: "option", hit: OPTION_PAGE.music.on.hit },
   musicOff: { page: "option", hit: OPTION_PAGE.music.off.hit },
   soundOn: { page: "option", hit: OPTION_PAGE.sound.on.hit },
@@ -208,7 +214,7 @@ const STATUS_COMMANDS = {
   key3: { page: "option", hit: OPTION_PAGE.keys[2].hit },
   optionOk: { page: "option", hit: OPTION_PAGE.ok.hit },
   optionCancel: { page: "option", hit: OPTION_PAGE.cancel.hit },
-} satisfies Record<string, { page: StatusPageName | null; hit: Rect }>;
+} satisfies Record<string, { page: StatusPageName | null } & ({ hit: Rect } | { step: 1 | -1 })>;
 
 export type StatusCommand = keyof typeof STATUS_COMMANDS;
 
@@ -248,6 +254,8 @@ export interface StartScreenOptions {
   saveCharacter(character: string, hue: number, useId: boolean): void;
   /** Scene 5's 확인 (C->S 0x48); false when there is no account server to send it to. */
   saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
+  /** Scene 5's pw ▶ (the old C->S 0x4a); false likewise. */
+  saveGuild(guild: number): boolean;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
   /** The sign-up window's 가입하기; false when there is no account server to send it to. */
@@ -320,7 +328,9 @@ export class StartScreen {
       state: options.status,
       announce: (text) => this.announce(text),
       message: (text) => this.showMessage(text),
+      account: () => options.account(),
       save: (profile) => this.saveStatus(profile),
+      joinGuild: (guild) => this.saveGuild(guild),
       characterChanged: (character) => options.characterChanged(character),
     });
     this.signUp = new SignUpWindow({
@@ -411,6 +421,13 @@ export class StartScreen {
     this.showMessage(STATUS_TEXT.saved);
   }
 
+  /** pw ▶'s answer (S->C 0x4a, 0x445464): busy off, the account's guild is the server's now. */
+  guildSaved(): void {
+    if (this.scene !== "status") return;
+    this.busy = false;
+    this.showMessage(STATUS_TEXT.guildSaved);
+  }
+
   /** A save refused (S->C 0x57's codes, or the server's text). */
   saveRefused(code: number | string): void {
     this.busy = false;
@@ -452,12 +469,13 @@ export class StartScreen {
   /** A hidden control for scene 5: the release a click on that button makes, on scene 5 and its page only. */
   statusCommand(command: StatusCommand): void {
     if (this.scene !== "status") return;
-    const { page, hit } = STATUS_COMMANDS[command];
-    if (page !== null && page !== this.statusPage.pageName) {
-      this.announce(page === "option" ? "옵션 쪽이 열려 있지 않습니다." : "내 정보 쪽이 열려 있지 않습니다.");
+    const entry: { page: StatusPageName | null; hit?: Rect; step?: 1 | -1 } = STATUS_COMMANDS[command];
+    if (entry.page !== null && entry.page !== this.statusPage.pageName) {
+      this.announce(entry.page === "option" ? "옵션 쪽이 열려 있지 않습니다." : "내 정보 쪽이 열려 있지 않습니다.");
       return;
     }
-    this.release(Math.trunc((hit[0] + hit[2]) / 2), Math.trunc((hit[1] + hit[3]) / 2));
+    if (entry.step) this.statusStep(entry.step);
+    else if (entry.hit) this.release(Math.trunc((entry.hit[0] + entry.hit[2]) / 2), Math.trunc((entry.hit[1] + entry.hit[3]) / 2));
   }
 
   /** A hidden control for the sign-up window: the release a click there makes, on the login only. */
@@ -572,6 +590,17 @@ export class StartScreen {
     this.announce("저장하는 중…");
   }
 
+  /** pw ▶ (0x41ebd8): busy on until the answer, as 확인. */
+  private saveGuild(guild: number): void {
+    if (this.busy) return;
+    if (!this.options.saveGuild(guild)) {
+      this.showMessage(AUTH_FAILED);
+      return;
+    }
+    this.busy = true;
+    this.announce("저장하는 중…");
+  }
+
   /** Go game: scene 5 fades out and the server list in, its notice window open, its rows asked for. */
   private goServers(): void {
     this.statusPage.leave();
@@ -635,6 +664,12 @@ export class StartScreen {
     if (this.scene === "login") this.loginRelease(x, y);
     else if (this.scene === "status") this.statusRelease(x, y);
     else this.serversRelease(x, y);
+  }
+
+  /** The guild list's step from the keyboard, taken only where a click on the list would be. */
+  private statusStep(step: 1 | -1): void {
+    if (this.blocked || this.helpScreen || this.message || this.quitBox) return;
+    this.statusPage.stepGuild(step);
   }
 
   /** Scene 5 (0x45a8d3): the quit box takes the click while it is up. */
