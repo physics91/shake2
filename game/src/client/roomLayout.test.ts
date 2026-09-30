@@ -9,9 +9,13 @@ import {
   helpAt,
   helpBox,
   mapPreviewRect,
+  ROOM_ITEM_ICONS,
   roomNumberText,
   shownMapName,
+  SLOT_ICONS,
+  SLOT_ORIGINS,
   slotAt,
+  slotIconAt,
   stepList,
   teamAt,
   THUMB,
@@ -169,6 +173,15 @@ describe("room help balloons (0x426570)", () => {
     expect(helpAt(400, 150, { ...context, isHost: false })).toBeNull();
   });
 
+  it("names the kick icon's place on every taken slot, the host's own too, for the host alone (0x31)", () => {
+    // Slot 0 (65,105): the icon's balloon rect is (L+91,T+41)-(L+119,T+70), whether or not the icon is lit.
+    expect(helpAt(65 + 91, 105 + 41, context)?.text).toBe("강제 퇴장 아이콘");
+    expect(helpAt(65 + 119, 105 + 70, context)?.text).toBe("강제 퇴장 아이콘");
+    expect(helpAt(65 + 91, 196 + 50, context)?.text).toBe("강제 퇴장 아이콘");
+    expect(helpAt(65 + 91, 105 + 41, { ...context, isHost: false })).toBeNull();
+    expect(helpAt(304 + 100, 105 + 50, context)?.text).not.toBe("강제 퇴장 아이콘");
+  });
+
   it("sizes the box at 6 px per byte + 2, hung 20 px above the point", () => {
     expect(helpBox("방번호 표시", 100, 50)).toEqual({
       rect: [103, 30, 103 + 6 * 11 + 2, 46],
@@ -216,5 +229,35 @@ describe("endsBusy", () => {
     expect(endsBusy(room, { ...room, mapId: "desert01", music: 3, mode: 2 })).toBe(false);
     expect(endsBusy(room, { ...room, hostId: 2, players: [player(2, 2)] })).toBe(false);
     expect(endsBusy(room, { ...room, players: [player(1, 1), player(2, 2), player(3, 1)] })).toBe(false);
+  });
+});
+
+describe("the account's item icons in the room (0x425560, 0x428b40)", () => {
+  it("finds kick, mask and whisper by x on a slot, from T+41 to its bottom − 14", () => {
+    const { x, y } = SLOT_ORIGINS[3];
+    expect(slotIconAt(3, x + 92, y + 41)).toBe("kick");
+    expect(slotIconAt(3, x + 119, y + 68)).toBe("kick");
+    expect(slotIconAt(3, x + 120, y + 50)).toBe("mask");
+    expect(slotIconAt(3, x + 146, y + 50)).toBe("mask");
+    expect(slotIconAt(3, x + 147, y + 50)).toBe("whisper");
+    expect(slotIconAt(3, x + 174, y + 50)).toBe("whisper");
+    expect(slotIconAt(3, x + 91, y + 50)).toBeNull();
+    expect(slotIconAt(3, x + 175, y + 50)).toBeNull();
+    expect(slotIconAt(3, x + 100, y + 40)).toBeNull();
+    expect(slotIconAt(3, x + 100, y + 69)).toBeNull();
+  });
+
+  it("draws each lit at L+91, L+120, L+147 and T+41, the kick's pressed art one pixel right", () => {
+    expect(SLOT_ICONS.kick).toMatchObject({ lit: [285, 61, 313, 90], pressed: [285, 91, 313, 120], at: { x: 91, y: 41 }, pressedAt: { x: 92, y: 41 } });
+    expect(SLOT_ICONS.mask).toMatchObject({ lit: [285, 1, 312, 30], pressed: [285, 31, 312, 60], at: { x: 120, y: 41 }, pressedAt: { x: 120, y: 41 } });
+    expect(SLOT_ICONS.whisper).toMatchObject({ lit: [251, 94, 279, 123], pressed: [222, 94, 250, 123], at: { x: 147, y: 41 }, pressedAt: { x: 147, y: 41 } });
+  });
+
+  it("puts the bottom mask and whisper icons where their balloons are", () => {
+    expect(ROOM_ITEM_ICONS.mask).toEqual({ lit: [285, 1, 312, 30], pressed: [285, 31, 312, 60], at: { x: 71, y: 535 }, hit: [71, 535, 100, 564] });
+    expect(ROOM_ITEM_ICONS.whisper).toEqual({ lit: [251, 94, 279, 123], pressed: [222, 94, 250, 123], at: { x: 101, y: 535 }, hit: [101, 535, 128, 563] });
+    const context = { isHost: false, slots: [null, null, null, null, null, null], closed: [false, false, false, false, false, false] };
+    expect(helpAt(80, 550, context)?.text).toBe("마스크 설정 및 해지(현재지원안함)");
+    expect(helpAt(110, 550, context)?.text).toBe("채팅창에서 /w 아이디");
   });
 });

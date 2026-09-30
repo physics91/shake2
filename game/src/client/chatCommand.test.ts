@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { atoi, banSlot, chatSubmit, ChatTimers, USERS_INTERVAL_MS } from "./chatCommand.ts";
+import { atoi, banSlot, chatSubmit, ChatTimers, targetWhisper, USERS_INTERVAL_MS } from "./chatCommand.ts";
 
 describe("chat commands (0x446200)", () => {
   it("sends a line that does not start with / as chat, trailing blanks cut and leading ones kept", () => {
@@ -96,5 +96,14 @@ describe("chat timers ([0x497158], [0x49715c])", () => {
     expect(timers.chat("하나", 1)).toBe(true);
     expect(timers.users(USERS_INTERVAL_MS - 1)).toBe(false);
     expect(timers.users(USERS_INTERVAL_MS)).toBe(true);
+  });
+});
+
+describe("the whisper target ([0x4927c8], 0x4468f6)", () => {
+  it("sends a chat line to the target as a whisper too, and leaves commands alone", () => {
+    expect(targetWhisper("tester2", chatSubmit("안녕  ", false))).toEqual({ to: "tester2", text: "안녕" });
+    expect(targetWhisper("tester2", chatSubmit("/users", true))).toBeNull();
+    expect(targetWhisper("tester2", chatSubmit("/w tester3 hi", true))).toBeNull();
+    expect(targetWhisper("", chatSubmit("안녕", false))).toBeNull();
   });
 });

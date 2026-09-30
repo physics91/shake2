@@ -4,6 +4,7 @@
 import type { Rect } from "../assets/types.ts";
 import { chatLine as sendableChat, RANDOM_MAP, shownName } from "../server/protocol.ts";
 import type { ClientMessage, LobbyPlayer, RoomInfo } from "../server/protocol.ts";
+import { hasItem, ITEM_KICK, ITEM_MASK, ITEM_WHISPER } from "../server/items.ts";
 import { animDue } from "../sim/constants.ts";
 import { isTeamMode, MODE_NAMES } from "../sim/modes.ts";
 import type { GameMode } from "../sim/types.ts";
@@ -21,7 +22,7 @@ import { macroOpens, macroSlot } from "./macro.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
 import type { SettingsStore } from "./settings.ts";
 import { attachCapture } from "./screenCapture.ts";
-import type { Button, ListKind } from "./roomLayout.ts";
+import type { Button, ListKind, SlotIcon } from "./roomLayout.ts";
 import {
   CHAT_INPUT,
   CHAT_LOG,
@@ -46,6 +47,7 @@ import {
   ROOM_EDITOR_LIMIT,
   ROOM_NUMBER_AT,
   ROOM_TITLE_AT,
+  ROOM_ITEM_ICONS,
   roomNumberText,
   SCROLL_DOWN,
   SCROLL_TRACK,
@@ -53,8 +55,10 @@ import {
   SHOP,
   shownMapName,
   SLOT_ART,
+  SLOT_ICONS,
   SLOT_ORIGINS,
   slotAt,
+  slotIconAt,
   START,
   stepList,
   TEAM_BUTTONS,
@@ -127,6 +131,10 @@ export interface RoomScreenOptions {
   kickedOut(): void;
   /** Two players on one PC only: a seated player's slot clicked picks their next character (R). */
   pickCharacter?(slot: number): void;
+  /** The account's items (0x45f140), which light the slot and bottom icons; none without an account. */
+  items?(): readonly number[];
+  /** A slot's whisper icon ([0x4927c8]): that ID gets every later chat line as a whisper too. */
+  whisperTo?(id: string): void;
 }
 
 /** The overlays that stop the hover and pressed art, the caret and the dropdowns (0x426d10). */
@@ -364,7 +372,14 @@ export class RoomScreen {
         send({ type: "set-slot", slot, open: this.room.closed[slot] });
         // 0x45a591: the busy cursor until a reply; the mouse and keys still work.
         this.cursor.set(true);
-      } else if (this.playerAt(slot)) this.options.pickCharacter?.(slot);
+      } else {
+        const player = this.playerAt(slot);
+        if (!player) return;
+        // 0x428b40 then the item's gate (0x45a5c3); the 2P pick (R) takes the rest of the slot.
+        const icon = slotIconAt(slot, x, y);
+        if (icon && this.iconLit(icon)) this.useSlotIcon(icon, player);
+        else this.options.pickCharacter?.(slot);
+      }
       return;
     }
     if (inside(EXIT.hit, x, y)) {
@@ -388,6 +403,37 @@ export class RoomScreen {
       const dir = inside(prev.hit, x, y) ? -1 : inside(next.hit, x, y) ? 1 : 0;
       if (dir !== 0) this.choose(kind, stepList(kind, this.listIndex(kind), this.listEntries(kind).length - 1, dir));
     }
+  }
+
+  /** Whether the local account's items light a slot icon: the kick only for the host (0x425560). */
+  private iconLit(icon: SlotIcon): boolean {
+    const items = this.options.items?.() ?? [];
+    if (icon === "kick") return this.isHost && hasItem(items, ITEM_KICK);
+    return hasItem(items, icon === "mask" ? ITEM_MASK : ITEM_WHISPER);
+  }
+
+  /**
+   * A lit icon on another's slot (0x45a5c3): the kick is C->S 0x44 with the busy cursor, as /ban;
+   * the whisper icon makes that ID the whisper target. The mask's C->S 0x5e is not sent: its server
+   * rule is lost and was not in service then (R).
+   */
+  private useSlotIcon(icon: SlotIcon, player: LobbyPlayer): void {
+    if (icon === "kick") {
+      this.options.send({ type: "kick", slot: player.slot });
+      this.cursor.set(true);
+    } else if (icon === "whisper") {
+      this.options.whisperTo?.(player.name);
+      this.status.textContent = `귓말 대상: ${player.name}. 이제 채팅 줄이 ${player.name}에게 귓말로도 갑니다.`;
+    } else {
+      this.status.textContent = "마스크는 지원하지 않습니다.";
+    }
+  }
+
+  /** The page's mirror of a slot icon: a release in the middle of it, with the canvas's gates. */
+  slotIcon(slot: number, icon: SlotIcon): void {
+    const { x, y } = SLOT_ORIGINS[slot];
+    const [from, to] = SLOT_ICONS[icon].hit;
+    this.release(x + Math.floor((from + to) / 2), y + 54);
   }
 
   /** 0x4286d0: the dropdown closes and the chat line opens again, empty. */
@@ -498,6 +544,9 @@ export class RoomScreen {
     ctx.drawImage(assets.background, 0, 0);
     outlinedText(ctx, roomNumberText(this.room.number), ROOM_NUMBER_AT.x, ROOM_NUMBER_AT.y, "#ffffff", FONT_COURIER_15, "left", OUTLINE.blue);
     outlinedText(ctx, this.room.title, ROOM_TITLE_AT.x, ROOM_TITLE_AT.y, "#ffffff", FONT_COURIER_15, "left", OUTLINE.blue);
+    const items = this.options.items?.() ?? [];
+    if (hasItem(items, ITEM_MASK)) this.button(ROOM_ITEM_ICONS.mask.lit, ROOM_ITEM_ICONS.mask.at);
+    if (hasItem(items, ITEM_WHISPER)) this.button(ROOM_ITEM_ICONS.whisper.lit, ROOM_ITEM_ICONS.whisper.at);
     for (let slot = 0; slot < SLOT_ORIGINS.length; slot++) this.drawSlot(slot, now);
     const me = this.me;
     if (this.startBlink.shown(now) && me && (this.isHost || !me.ready)) this.button(START.blink, START.at);
@@ -555,6 +604,9 @@ export class RoomScreen {
     this.drawPortrait(player, x + SLOT_ART.portrait.x, y + SLOT_ART.portrait.y, now);
     // No gender icon: every remake account's is 0.
     drawBadge(ctx, assets, player.badge, { x: x + SLOT_ART.guild.x, y: y + SLOT_ART.guild.y }, { x: x + SLOT_ART.rank.x, y: y + SLOT_ART.rank.y });
+    for (const icon of ["kick", "mask", "whisper"] as const) {
+      if (this.iconLit(icon)) this.button(SLOT_ICONS[icon].lit, { x: x + SLOT_ICONS[icon].at.x, y: y + SLOT_ICONS[icon].at.y });
+    }
     outlinedText(ctx, "100", x + SLOT_ART.points.x, y + SLOT_ART.points.y, "#ffffff", FONT_13);
   }
 
@@ -627,10 +679,17 @@ export class RoomScreen {
       this.button([b.src[0], TEAM_ROW.pressedSrc, b.src[1], TEAM_ROW.pressedSrc + TEAM_ROW.height], { x: b.x, y: TEAM_ROW.y });
     }
     const slot = slotAt(x, y, this.me?.slot ?? -1);
+    const origin = SLOT_ORIGINS[slot];
     if (slot >= 0 && this.isHost && !this.playerAt(slot)) {
-      const origin = SLOT_ORIGINS[slot];
       blit(this.ctx, assets.object1, this.room.closed[slot] ? SLOT_ART.pressClosed : SLOT_ART.pressOpen, origin.x, origin.y);
+    } else if (slot >= 0) {
+      const icon = slotIconAt(slot, x, y);
+      if (icon && this.iconLit(icon)) this.button(SLOT_ICONS[icon].pressed, { x: origin.x + SLOT_ICONS[icon].pressedAt.x, y: origin.y + SLOT_ICONS[icon].pressedAt.y });
     }
+    const items = this.options.items?.() ?? [];
+    const { mask, whisper } = ROOM_ITEM_ICONS;
+    if (hasItem(items, ITEM_MASK) && inside(mask.hit, x, y)) this.button(mask.pressed, mask.at);
+    else if (hasItem(items, ITEM_WHISPER) && inside(whisper.hit, x, y)) this.button(whisper.pressed, whisper.at);
   }
 
   /** The balloon (0x44d5d0): a 565 #6b71d6 box, the text in black then white 1 px down and right. */

@@ -103,6 +103,14 @@ export function chatSubmit(raw: string, inRoom: boolean): ChatSubmit {
 }
 
 /**
+ * The whisper target ([0x4927c8], set by a slot's whisper icon): a chat line goes to it as C->S 0x07
+ * first, past no timer, and then on as chat with the chat's own checks (0x4468f6). Commands do not.
+ */
+export function targetWhisper(target: string, submit: ChatSubmit): { to: string; text: string } | null {
+  return target && submit.kind === "chat" ? { to: target, text: submit.text } : null;
+}
+
+/**
  * /ban's slot (0x446512): the first taken slot, from 0, whose ID matches with _stricmp; the host's
  * own counts too. Null when none does, and then nothing is sent.
  */

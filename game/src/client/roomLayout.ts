@@ -81,6 +81,40 @@ export function teamPanelRect(team: number): Rect {
   return [228, top, 360, top + 70];
 }
 
+/**
+ * The account's item icons on every taken slot, the own one too (0x425560), lit by the local
+ * account's items whoever sits there: kick (the host with item 2), mask (item 3) and whisper
+ * (item 8), new_button art past the slot's origin. Pressed art (0x426d10) goes one pixel right for
+ * the kick; hits (0x428b40) run x L+92..119, 120..146, 147..174.
+ */
+export const SLOT_ICONS = {
+  kick: { lit: [285, 61, 313, 90] as Rect, pressed: [285, 91, 313, 120] as Rect, at: { x: 91, y: 41 }, pressedAt: { x: 92, y: 41 }, hit: [92, 119] },
+  mask: { lit: [285, 1, 312, 30] as Rect, pressed: [285, 31, 312, 60] as Rect, at: { x: 120, y: 41 }, pressedAt: { x: 120, y: 41 }, hit: [120, 146] },
+  whisper: { lit: [251, 94, 279, 123] as Rect, pressed: [222, 94, 250, 123] as Rect, at: { x: 147, y: 41 }, pressedAt: { x: 147, y: 41 }, hit: [147, 174] },
+};
+
+export type SlotIcon = keyof typeof SLOT_ICONS;
+
+/** The icon under the mouse on a slot (0x428b40): by x, from T+41 to the slot's bottom − 14. */
+export function slotIconAt(slot: number, x: number, y: number): SlotIcon | null {
+  const [left, top, , bottom] = slotRect(slot);
+  if (y < top + 41 || y > bottom - 14) return null;
+  for (const icon of ["kick", "mask", "whisper"] as const) {
+    const [from, to] = SLOT_ICONS[icon].hit;
+    if (x >= left + from && x <= left + to) return icon;
+  }
+  return null;
+}
+
+/**
+ * The mask and whisper icons under the chat (0x425560 step 4), lit by items 3 and 8, pressed while
+ * held; a click does nothing in the room (0x45a412). Their balloons are helpAt's.
+ */
+export const ROOM_ITEM_ICONS = {
+  mask: { lit: [285, 1, 312, 30] as Rect, pressed: [285, 31, 312, 60] as Rect, at: { x: 71, y: 535 }, hit: [71, 535, 100, 564] as Rect },
+  whisper: { lit: [251, 94, 279, 123] as Rect, pressed: [222, 94, 250, 123] as Rect, at: { x: 101, y: 535 }, hit: [101, 535, 128, 563] as Rect },
+};
+
 /** The slot under the mouse, or -1; the own slot is -1 too (0x428a30, 0x469948). */
 export function slotAt(x: number, y: number, ownSlot: number): number {
   const slot = SLOT_ORIGINS.findIndex((_, i) => inside(slotRect(i), x, y));
@@ -373,8 +407,8 @@ export function helpAt(x: number, y: number, context: HelpContext): { text: stri
     { rect: START.hit, text: "게임시작 버튼", x: (mx) => Math.min(mx, 705) },
     { rect: SHOP.hit, text: "현재 지원안함" },
     { rect: EXIT.hit, text: "대기실로 이동" },
-    { rect: [101, 535, 128, 563], text: "채팅창에서 /w 아이디" },
-    { rect: [71, 535, 100, 564], text: "마스크 설정 및 해지(현재지원안함)" },
+    { rect: ROOM_ITEM_ICONS.whisper.hit, text: "채팅창에서 /w 아이디" },
+    { rect: ROOM_ITEM_ICONS.mask.hit, text: "마스크 설정 및 해지(현재지원안함)" },
   ];
   for (const entry of fixed) {
     if (inside(entry.rect, x, y)) return { text: entry.text, x: entry.x ? entry.x(x) : x, y };
@@ -389,6 +423,8 @@ export function helpAt(x: number, y: number, context: HelpContext): { text: stri
       continue;
     }
     if (player.host && inside([left + 8, top + 6, left + 79, top + 76], x, y)) return { text: "방장 빨간바탕표시", x, y };
+    // The kick icon's place, lit or not, the own slot too: for the host alone.
+    if (context.isHost && inside([left + 91, top + 41, left + 119, top + 70], x, y)) return { text: "강제 퇴장 아이콘", x, y };
     if (inside([left + 178, top + 43, left + 215, top + 70], x, y)) return { text: "게임에 걸려있는 셀포인트", x, y };
   }
   return null;

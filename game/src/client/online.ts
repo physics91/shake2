@@ -2,6 +2,7 @@ import type { Manifest } from "../assets/types.ts";
 import { cutBytes, typeable } from "../server/cp949.ts";
 import type { ChannelRow, ClientMessage, OwnAccount, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
 import { badgeOf, shownName, START_BARS, typingPacketDue } from "../server/protocol.ts";
+import { hasItem, ITEM_KICK, ITEM_WHISPER } from "../server/items.ts";
 import {
   chatLine,
   fromWireState,
@@ -32,7 +33,7 @@ import { addReply, deleteReply } from "./friends.ts";
 import { connectedPad, padFrame } from "./gamepad.ts";
 import type { KeyBinding } from "./input.ts";
 import { attachKeyboard, boundCodes, KeyState, soloKeys, soloKeysHelp, VERSUS_KEYS } from "./input.ts";
-import { banSlot, ChatTimers, chatSubmit } from "./chatCommand.ts";
+import { banSlot, ChatTimers, chatSubmit, targetWhisper } from "./chatCommand.ts";
 import type { LocalPlayer } from "./localGame.ts";
 import { startLocalGame } from "./localGame.ts";
 import type { LocalLists } from "./localRoom.ts";
@@ -188,6 +189,8 @@ class OnlineSession {
   private readonly ranking = new RankingBoard();
   /** The lobby's nickname popup waits for its save's answer, which comes as the greeting's does. */
   private lobbySaving: "nick" | null = null;
+  /** [0x4927c8]: the ID a slot's whisper icon chose; never cleared, as in the original. */
+  private whisperTarget = "";
 
   constructor(manifest: Manifest) {
     this.manifest = manifest;
@@ -441,6 +444,10 @@ class OnlineSession {
         send: (message) => this.send(message),
         say: (text) => this.say(text),
         kickedOut: () => this.leaveKicked(),
+        items: () => this.account?.items ?? [],
+        whisperTo: (id) => {
+          this.whisperTarget = id;
+        },
       });
       if (entering) this.roomView.showNotice(NOTICE.joinText);
       this.errorLine = this.roomView.errorLine;
@@ -551,6 +558,8 @@ class OnlineSession {
     if (line === null) return;
     const now = performance.now();
     const submit = chatSubmit(line, this.room !== null);
+    const whisper = targetWhisper(this.whisperTarget, submit);
+    if (whisper) this.send({ type: "whisper", ...whisper });
     switch (submit.kind) {
       case "chat":
         if (this.timers.chat(submit.text, now)) this.send({ type: "chat", text: submit.text });
@@ -1131,6 +1140,10 @@ interface RoomActions {
   kickedOut(): void;
   /** Two players on one PC only: the next character for a seated slot. */
   pickCharacter?(slot: number): void;
+  /** The account's items, which light the slot icons; none in the local room. */
+  items?(): readonly number[];
+  /** A slot's whisper icon: the whisper target. */
+  whisperTo?(id: string): void;
 }
 
 class RoomView {
@@ -1190,10 +1203,12 @@ class RoomView {
   private hostId = -1;
   private ready = false;
   private readonly pickCharacter: ((slot: number) => void) | undefined;
+  private readonly items: () => readonly number[];
 
   constructor(manifest: Manifest, welcome: Welcome, room: RoomInfo, chatLog: readonly string[], actions: RoomActions) {
     const { send, say } = actions;
     this.pickCharacter = actions.pickCharacter;
+    this.items = actions.items ?? (() => []);
     this.manifest = manifest;
     this.welcome = welcome;
     this.code = room.code;
@@ -1268,6 +1283,8 @@ class RoomView {
             leave: () => send({ type: "leave-room" }),
             kickedOut: () => actions.kickedOut(),
             pickCharacter: actions.pickCharacter,
+            items: actions.items,
+            whisperTo: actions.whisperTo,
           },
           this.room ?? room,
         );
@@ -1390,6 +1407,13 @@ class RoomView {
       h("span", {}, p.name, p.id === me ? " (나)" : "", p.id === room.hostId ? " · 방장" : ""),
       teams ? h("span", { class: "team-chip", style: `--team: ${teamColor(p.team)}` }, teamName(p.team)) : null,
       p.id === room.hostId ? null : h("span", { class: "ready" }, p.ready ? "준비 완료" : "대기"),
+      // The canvas's lit slot icons on another's slot, pressed in its middle.
+      p.id !== me && isHost && hasItem(this.items(), ITEM_KICK)
+        ? h("button", { class: "btn small", type: "button", onclick: () => this.screen?.slotIcon(slot, "kick") }, `${p.name} 강퇴 (강퇴 아이콘)`)
+        : null,
+      p.id !== me && hasItem(this.items(), ITEM_WHISPER)
+        ? h("button", { class: "btn small", type: "button", onclick: () => this.screen?.slotIcon(slot, "whisper") }, `${p.name}에게 귓말 (귓말 아이콘)`)
+        : null,
       this.pickCharacter
         ? h("button", { class: "btn small", type: "button", onclick: () => this.pickCharacter?.(slot) }, `${p.name} 캐릭터 바꾸기 (지금 ${p.character})`)
         : null,
