@@ -89,8 +89,19 @@ export function stepStatusCharacter(index: number, step: 1 | -1): number {
   return next === 18 || next > 19 ? 0 : next;
 }
 
-/** The hue box at hue 0 (0x41d7c0): white 35 × 13 at (489,153), its "0" black at (505,152). */
-export const HUE_BOX = { fill: [489, 153, 35, 13] as const, text: { x: 505, y: 152 } };
+/**
+ * The hue box, which is also the knob (0x41d7c0): white 35 × 13 at (489, 153 + d), its number black
+ * at (505, 152 + d), with d = hue / 10 as C divides; the knob's hit is that box (0x494318).
+ */
+export function hueBox(hue: number): { fill: readonly [number, number, number, number]; hit: Rect; text: Point } {
+  const d = Math.trunc(hue / 10);
+  return { fill: [489, 153 + d, 35, 13], hit: [489, 153 + d, 524, 166 + d], text: { x: 505, y: 152 + d } };
+}
+
+/** The knob held (0x458e68): hue = (mouse y − 159) · 10, clamped to ±180. */
+export function hueFromKnob(mouseY: number): number {
+  return Math.max(-180, Math.min(180, (mouseY - 159) * 10));
+}
 
 // The guild list (0x41d320) and its scroll bar (object 0x471888)
 

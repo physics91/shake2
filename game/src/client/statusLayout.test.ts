@@ -10,6 +10,8 @@ import {
   scrollDown,
   scrollUp,
   STATUS_BUTTONS,
+  hueBox,
+  hueFromKnob,
   stepStatusCharacter,
 } from "./statusLayout.ts";
 
@@ -36,6 +38,23 @@ describe("scene 5 layout", () => {
     expect(stepStatusCharacter(18, 1)).toBe(19);
     expect(stepStatusCharacter(19, 1)).toBe(0);
     expect(stepStatusCharacter(18, -1)).toBe(17);
+  });
+});
+
+describe("the hue box (0x41d7c0, 0x458e22)", () => {
+  it("moves down a pixel each 10 of hue, as C divides", () => {
+    expect(hueBox(0)).toEqual({ fill: [489, 153, 35, 13], hit: [489, 153, 524, 166], text: { x: 505, y: 152 } });
+    expect(hueBox(-15).fill[1]).toBe(152);
+    expect(hueBox(-9).fill[1]).toBe(153);
+    expect(hueBox(180).hit).toEqual([489, 171, 524, 184]);
+  });
+
+  it("takes the held knob's hue from the mouse's y, ten a pixel, clamped", () => {
+    expect(hueFromKnob(159)).toBe(0);
+    expect(hueFromKnob(160)).toBe(10);
+    expect(hueFromKnob(150)).toBe(-90);
+    expect(hueFromKnob(300)).toBe(180);
+    expect(hueFromKnob(0)).toBe(-180);
   });
 });
 

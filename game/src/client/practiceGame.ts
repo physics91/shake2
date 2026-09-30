@@ -23,6 +23,8 @@ import type { Settings } from "./settings.ts";
 export interface PracticeGameOptions {
   canvas: HTMLCanvasElement;
   local: PlayerSetup;
+  /** [0x492770]: scene 5's hue, which the local sprite is read with (0x45490f); the panel face and dummies keep hue 0. */
+  hue: number;
   sounds: SoundBank;
   /** The option object: Key1..Key3, the device and the F2..F10 macros. */
   settings: Readonly<Settings>;
@@ -68,7 +70,8 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     const first = await loadSceneAssets(PRACTICE_MAP, [local.character]);
     // srand(time(0)) on every load (0x4542e4): the seed is the clock's second.
     const next = createPractice(layoutFromLevel(PRACTICE_MAP, first.level.meta), local, Math.floor(Date.now() / 1000));
-    const assets = await loadSceneAssets(PRACTICE_MAP, next.players.map((p) => p.character));
+    const tint = { id: local.id, character: local.character, hue: options.hue, face: false, head: false };
+    const assets = await loadSceneAssets(PRACTICE_MAP, next.players.map((p) => p.character), [tint]);
     if (stopped) return;
     view?.dispose();
     state = next;

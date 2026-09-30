@@ -40,6 +40,7 @@ import { blindWindow, drawBlindFilter } from "./blind.ts";
 import { bubbleLines, CHAT_BUBBLE, CHAT_LINE, TYPING_MARK } from "./chat.ts";
 import { balloonAt, NET_TYPING_MARK } from "./matchChat.ts";
 import type { SceneAssets } from "./scene.ts";
+import { characterOf } from "./scene.ts";
 import { renderFinalResult, renderRoundResult, renderWait } from "./screens.ts";
 import { blit, blitBlended, drawFrame, drawFrameOrHalf, timedFrame } from "./sprite.ts";
 import { practiceHelp } from "./practiceHelp.ts";
@@ -495,7 +496,7 @@ function drawBombs(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: Ma
     }
     if (isMine(sprite.anim) && !view.localPlayerIds.includes(sprite.owner)) continue;
     const owner = state.players.find((p) => p.id === sprite.owner) ?? state.players[0];
-    const sheet = owner && assets.characters.get(owner.character)?.bomb;
+    const sheet = owner && characterOf(assets, owner)?.bomb;
     const anim = sheet?.meta.animations[sprite.anim];
     if (!sheet || !anim) continue;
     const at = playAreaPos(assets, sprite.x, sprite.y);
@@ -504,7 +505,7 @@ function drawBombs(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: Ma
 }
 
 function bodyAnim(assets: SceneAssets, player: PlayerState): { sheet: Sheet; anim: AnimationMeta; frame: number } | null {
-  const sheet = assets.characters.get(player.character)?.body;
+  const sheet = characterOf(assets, player)?.body;
   const anim = sheet?.meta.animations[player.anim];
   if (!sheet || !anim) return null;
   return { sheet, anim, frame: Math.min(player.frame, anim.frames.length - 1) };
@@ -628,7 +629,7 @@ function drawFaces(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: Ma
   const { practice } = state.rules;
   for (const player of state.players) {
     if (player.gone && !practice) continue;
-    const sheet = assets.characters.get(player.character)?.face;
+    const sheet = characterOf(assets, player)?.face;
     if (!sheet) continue;
     const deadAnim = practice && view.localPlayerIds.includes(player.id) ? 1 : 0;
     const face = view.faces.update(player, sheet, now, deadAnim);

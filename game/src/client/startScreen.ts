@@ -217,8 +217,8 @@ export interface StartScreenOptions {
   loggedIn(id: string): void;
   /** Scene 5's Go game: the server list's rows are made and asked for. */
   listServers(): void;
-  /** Scene 5's Practice (0x45aa37) with its character. */
-  practice(character: string): void;
+  /** Scene 5's Practice (0x45aa37) with its character and hue ([0x492770]). */
+  practice(character: string, hue: number): void;
   /** Scene 5's 확인: the nick and greeting kept. */
   saveProfile(profile: { nick: string; greeting: string }): void;
   /** Scene 5's ▲ and ▼. */
@@ -447,6 +447,7 @@ export class StartScreen {
     const detachPointer = this.pointer.attach(this.options.canvas, {
       moved: () => this.moved(),
       released: (x, y) => this.release(x, y),
+      pressed: (x, y) => this.press(x, y),
     });
     const onKey = (event: KeyboardEvent) => this.key(event);
     const onGesture = () => this.options.sounds.unlock();
@@ -466,6 +467,12 @@ export class StartScreen {
 
   private get blocked(): boolean {
     return this.frozen !== null;
+  }
+
+  /** A press (0x45ae58): scene 5 marks whether it was on the hue knob. */
+  private press(x: number, y: number): void {
+    if (this.scene !== "status" || this.blocked || this.helpScreen || this.message || this.quitBox) return;
+    this.statusPage.press(x, y);
   }
 
   private moved(): void {
@@ -499,7 +506,7 @@ export class StartScreen {
         break;
       case "practice":
         this.statusPage.leave();
-        this.options.practice(this.statusPage.character);
+        this.options.practice(this.statusPage.character, this.options.status.hue);
         break;
       case "exit":
         // The network box (0x443ce0); its YES resets scene 5 and leaves (0x4205e0).
@@ -806,7 +813,12 @@ export class StartScreen {
         this.drawLogin(now);
         break;
       case "status":
-        this.statusPage.draw(this.ctx, now, this.pointer.inside && !this.quitBox && !this.message ? this.pointer.mouse : null);
+        this.statusPage.draw(
+          this.ctx,
+          now,
+          this.pointer.inside && !this.quitBox && !this.message ? this.pointer.mouse : null,
+          this.pointer.held !== null,
+        );
         if (this.quitBox) drawPracticeBox(this.ctx, assets.box, this.quitBox, this.boxHover, this.pointer.held !== null);
         break;
       case "servers":

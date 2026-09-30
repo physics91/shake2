@@ -26,7 +26,13 @@ export class Pointer {
    */
   attach(
     canvas: HTMLCanvasElement,
-    handlers: { moved(): void; released(x: number, y: number): void; rightReleased?(x: number, y: number): void },
+    handlers: {
+      moved(): void;
+      released(x: number, y: number): void;
+      /** The left button's press, where it was pressed. */
+      pressed?(x: number, y: number): void;
+      rightReleased?(x: number, y: number): void;
+    },
   ): () => void {
     const toScreen = (event: PointerEvent): Point => {
       const rect = canvas.getBoundingClientRect();
@@ -50,6 +56,7 @@ export class Pointer {
       this.mouse = toScreen(event);
       this.held = { ...this.mouse };
       canvas.setPointerCapture?.(event.pointerId);
+      handlers.pressed?.(this.mouse.x, this.mouse.y);
     };
     const onUp = (event: PointerEvent) => {
       if (event.button === 2 && handlers.rightReleased) {

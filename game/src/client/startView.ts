@@ -20,7 +20,7 @@ export interface StartActions {
   /** Scene 5's Go game: the server list's rows. */
   listServers(): void;
   /** Scene 5's Practice. */
-  practice(character: string): void;
+  practice(character: string, hue: number): void;
   /** Scene 5's 확인. */
   saveProfile(profile: { nick: string; greeting: string }): void;
   /** Scene 5's ▲ and ▼. */

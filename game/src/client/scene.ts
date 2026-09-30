@@ -1,7 +1,8 @@
 import type { EffectKind } from "../sim/types.ts";
 import type { LevelAssets, Sheet } from "./assets.ts";
 import { loadImage, loadImageSheet, loadLevel, loadSheet } from "./assets.ts";
-import { bombColor } from "./hudLayout.ts";
+import { bombColor, portraitRect } from "./hudLayout.ts";
+import { loadTintedSheet, WorkSurface } from "./tintArt.ts";
 
 export interface CharacterAssets {
   body: Sheet;
@@ -33,9 +34,24 @@ export interface HudImages {
   gameResult: HTMLImageElement;
 }
 
+/** A player's tint as its sheets are read for the match. */
+export interface PlayerTint {
+  id: number;
+  character: string;
+  hue: number;
+  /** The W_Character panel face turns too (network, 0x44de67); practice's does not. */
+  face: boolean;
+  /** The 46 × 40 head is precomputed in its slot's work surface (0x4406ca), hue 0 too: network rooms. */
+  head: boolean;
+}
+
 export interface SceneAssets {
   level: LevelAssets;
   characters: Map<string, CharacterAssets>;
+  /** Players whose sheets were read with a hue (0x4633c0), by player id. */
+  tinted: Map<number, CharacterAssets>;
+  /** The result, wait and final screens' heads, turned into the slots' work surfaces, by player id. */
+  heads: Map<number, WorkSurface>;
   fire: Sheet;
   items: Sheet;
   /** Map object sheets Object_A, Object_B and Object_C.spr, all loaded for every map (0x411530). */
@@ -98,8 +114,35 @@ async function loadHud(): Promise<HudImages> {
   return Object.fromEntries(entries) as unknown as HudImages;
 }
 
-export async function loadSceneAssets(levelId: string, characterNames: readonly string[]): Promise<SceneAssets> {
+/** A player's sheets: its own when read with a hue, else its character's. */
+export function characterOf(assets: SceneAssets, player: { id: number; character: string }): CharacterAssets | undefined {
+  return assets.tinted.get(player.id) ?? assets.characters.get(player.character);
+}
+
+async function loadTinted(tint: PlayerTint): Promise<CharacterAssets> {
+  const [body, face, bomb] = await Promise.all([
+    loadTintedSheet("character", tint.character, tint.hue),
+    loadTintedSheet("w_character", faceSheetName(tint.character), tint.face ? tint.hue : 0),
+    loadSheet("bomb", `bomb_${bombColor(tint.character)}`),
+  ]);
+  return { body, face, bomb };
+}
+
+function heads(portraits: HTMLImageElement, tints: readonly PlayerTint[]): Map<number, WorkSurface> {
+  const surfaces = new Map<number, WorkSurface>();
+  for (const tint of tints) {
+    if (!tint.head) continue;
+    const surface = new WorkSurface();
+    surface.recolour(portraits, portraitRect(tint.character), tint.hue);
+    surfaces.set(tint.id, surface);
+  }
+  return surfaces;
+}
+
+export async function loadSceneAssets(levelId: string, characterNames: readonly string[], tints: readonly PlayerTint[] = []): Promise<SceneAssets> {
   const unique = [...new Set(characterNames)];
+  const turned = tints.filter((tint) => tint.hue !== 0);
+  const tinted = Promise.all(turned.map(async (tint) => [tint.id, await loadTinted(tint)] as const));
   const [level, characters, fire, items, objectA, objectB, objectC, digits, clock, hurry, marker, teamMarker, badState, ground, egg, revival, shadow, cursor, hud] = await Promise.all([
     loadLevel(levelId),
     Promise.all(unique.map(async (name) => [name, await loadCharacter(name)] as const)),
@@ -124,6 +167,8 @@ export async function loadSceneAssets(levelId: string, characterNames: readonly 
   return {
     level,
     characters: new Map(characters),
+    tinted: new Map(await tinted),
+    heads: heads(hud.portraits, tints),
     fire,
     items,
     objectSheets: [objectA, objectB, objectC],

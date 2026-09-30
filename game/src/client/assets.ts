@@ -4,7 +4,8 @@ import { BitmapFont } from "./bitmapFont.ts";
 const BASE = `${import.meta.env.BASE_URL}assets/`;
 
 export interface Sheet {
-  image: HTMLImageElement;
+  /** The sheet's PNG, or a canvas holding it turned by a tint (tintArt.ts). */
+  image: HTMLImageElement | HTMLCanvasElement;
   meta: SheetMeta;
 }
 

@@ -193,7 +193,7 @@ class OnlineSession {
         startMusic: () => playWaitingMusic(sounds, this.manifest, "lobby"),
         loggedIn: (id) => writePreference("online.name", id),
         listServers: () => this.listServer(),
-        practice: (character) => this.startPractice(character),
+        practice: (character, hue) => this.startPractice(character, hue),
         saveProfile: ({ nick, greeting }) => {
           writePreference("online.name", nick);
           writePreference("online.greeting", greeting);
@@ -698,11 +698,12 @@ class OnlineSession {
    * Practice (0x4542d0, scene 9) with the character scene 5 chose. Its Esc box's YES goes to the
    * server list (0x458bc5) and its time limit to scene 5 (0x406235), each with the fade.
    */
-  private startPractice(character: string): void {
+  private startPractice(character: string, hue: number): void {
     this.runLocal("혼자 연습", practiceKeysHelp(), this.shownPicture(), () => this.backToList(), (screen, finish) =>
       startPracticeGame({
         canvas: screen.canvas,
         local: { id: 1, name: readPreference("online.name") || "1P", character },
+        hue,
         sounds,
         settings: settings.current,
         announce: screen.announce,

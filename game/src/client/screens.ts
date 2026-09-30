@@ -59,7 +59,7 @@ export function renderFinalResult(ctx: CanvasRenderingContext2D, assets: SceneAs
   ctx.drawImage(assets.hud.gameResult, 0, 0);
   for (const player of state.players) {
     const top = finalRowTop(player.slot);
-    blit(ctx, assets.hud.portraits, portraitRect(player.character), FINAL_ROW.portrait.x, top + FINAL_ROW.portrait.dy);
+    drawHead(ctx, assets, player, FINAL_ROW.portrait.x, top + FINAL_ROW.portrait.dy);
     drawTeambar(ctx, assets, state, player, FINAL_ROW, top);
     drawBadges(ctx, assets, FINAL_ROW, top);
     outlinedText(ctx, player.name, FINAL_ROW.name.x, top + FINAL_ROW.name.dy, "#ffffff", FONT_13);
@@ -97,8 +97,15 @@ function drawRoundScreen(
   if (draw) blit(ctx, assets.hud.sd, DRAW_BLIT.src, DRAW_BLIT.x, DRAW_BLIT.y);
 }
 
+/** A head: its slot's work surface in a network room (0x40ff21, 0x4106f1), else Wg_char's cell. */
+function drawHead(ctx: CanvasRenderingContext2D, assets: SceneAssets, player: PlayerState, x: number, y: number): void {
+  const head = assets.heads.get(player.id);
+  if (head) head.draw(ctx, x, y);
+  else blit(ctx, assets.hud.portraits, portraitRect(player.character), x, y);
+}
+
 function drawIdentity(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, player: PlayerState, base: number): void {
-  blit(ctx, assets.hud.portraits, portraitRect(player.character), RESULT_ROW.portrait.x, base + RESULT_ROW.portrait.dy);
+  drawHead(ctx, assets, player, RESULT_ROW.portrait.x, base + RESULT_ROW.portrait.dy);
   drawTeambar(ctx, assets, state, player, RESULT_ROW, base);
   drawBadges(ctx, assets, RESULT_ROW, base);
   outlinedText(ctx, player.name, RESULT_ROW.name.x, base + RESULT_ROW.name.dy, "#ffffff", FONT_13);

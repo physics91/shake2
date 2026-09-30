@@ -35,7 +35,8 @@ import {
   GUILD_TRACK,
   guildEntries,
   guildIcon,
-  HUE_BOX,
+  hueBox,
+  hueFromKnob,
   KNOB,
   LIGHT_BLUE,
   MAIN_BUTTONS,
@@ -55,6 +56,8 @@ import {
 } from "./statusLayout.ts";
 import { StatusOption } from "./statusOption.ts";
 import { FONT_12, FONT_13, outlinedText, plainText, YELLOW } from "./text.ts";
+import { clampHue } from "./tint.ts";
+import { loadTintedSheet, workSurface } from "./tintArt.ts";
 
 export interface StatusAssets {
   /** Shake1's status.shk (R: 0311 has none), opaque. */
@@ -88,13 +91,15 @@ export async function loadStatusAssets(): Promise<StatusAssets> {
 export interface StatusState {
   /** [0x49442c] = [0x48c1dc]: an index of CHARACTER_IDS. */
   character: number;
+  /** [0x494438]: the hue ± and knob's, −180..180; practice's sprite takes it ([0x492770]). */
+  hue: number;
   /** [0x4699e8]: show the ID rather than the nick; 1 at start, and not the my-info window's flag. */
   useId: boolean;
   guild: GuildScroll;
 }
 
 export function newStatusState(savedCharacter: string | null): StatusState {
-  return { character: Math.max(0, characterIndex(savedCharacter ?? "")), useId: true, guild: newGuildScroll() };
+  return { character: Math.max(0, characterIndex(savedCharacter ?? "")), hue: 0, useId: true, guild: newGuildScroll() };
 }
 
 export type StatusAction = "go" | "practice" | "exit";
@@ -148,7 +153,9 @@ export class StatusPage {
   /** [0x494330]: the nick's colour, set after the text is drawn, so a frame late; black at first. */
   private nickColour = BLACK;
   private banner = { frame: 0, lastMs: Number.NEGATIVE_INFINITY };
-  private portrait: { id: string; sheet: Sheet | null; frame: number; lastMs: number } | null = null;
+  private portrait: { id: string; hue: number; sheet: Sheet | null; frame: number; lastMs: number } | null = null;
+  /** [0x48c32b]: the press was on the hue knob, so the held button drags it. */
+  private knobHeld = false;
 
   constructor(options: StatusPageOptions) {
     this.options = options;
@@ -274,9 +281,15 @@ export class StatusPage {
     this.option?.poll(this.held);
   }
 
-  /** Each 30 fps frame with the button held (0x458e22): the knob's drag, then ▲ and ▼ of the list. */
+  /** The press (0x45ae58): whether it is on the hue knob. */
+  press(x: number, y: number): void {
+    this.knobHeld = this.page === "main" && inside(hueBox(this.options.state.hue).hit, x, y);
+  }
+
+  /** Each 30 fps frame with the button held (0x458e22): the knob's drag, ▲ and ▼ of the list, the hue knob. */
   hold(x: number, y: number): void {
     const scroll = this.options.state.guild;
+    if (this.knobHeld) this.options.state.hue = hueFromKnob(y);
     if (this.page !== "main") {
       scroll.dragging = false;
       return;
@@ -430,6 +443,8 @@ export class StatusPage {
 
   private mainRelease(x: number, y: number): void {
     const { sounds, state } = this.options;
+    const knobWasHeld = this.knobHeld;
+    this.knobHeld = false;
     if (inside(USE_ID_BOX, x, y)) {
       state.useId = true;
       this.options.announce("아이디 사용");
@@ -439,6 +454,7 @@ export class StatusPage {
     } else if (inside(MAIN_BUTTONS.characterUp.hit, x, y) || inside(MAIN_BUTTONS.characterDown.hit, x, y)) {
       sounds.play(MENU_SOUNDS.secondary);
       state.character = stepStatusCharacter(state.character, inside(MAIN_BUTTONS.characterUp.hit, x, y) ? -1 : 1);
+      state.hue = 0;
       this.loadPortrait();
       this.options.characterChanged(this.character);
       this.options.announce(`캐릭터 ${this.character}`);
@@ -447,6 +463,15 @@ export class StatusPage {
       this.account = { nick, greeting };
       this.options.save({ nick, greeting });
       this.options.announce("닉네임과 인사말을 이 브라우저에 저장했습니다.");
+    } else if (inside(MAIN_BUTTONS.hueDown.hit, x, y) || inside(MAIN_BUTTONS.hueUp.hit, x, y)) {
+      sounds.play(MENU_SOUNDS.secondary);
+      state.hue = clampHue(state.hue + (inside(MAIN_BUTTONS.hueUp.hit, x, y) ? 1 : -1));
+      this.loadPortrait();
+      this.options.announce(`색조 ${state.hue}`);
+    } else if (knobWasHeld && inside(hueBox(state.hue).hit, x, y)) {
+      // The knob let go on itself (0x41efc8): the portrait is read again with the hue.
+      this.loadPortrait();
+      this.options.announce(`색조 ${state.hue}`);
     } else if (inside(MAIN_BUTTONS.guildPassword.hit, x, y)) {
       // No guild row can be chosen (0x41ec42 checks a list box 0311 never fills), so always this.
       sounds.play(MENU_SOUNDS.secondary);
@@ -455,7 +480,6 @@ export class StatusPage {
       const field = FIELDS.findIndex((f) => inside(f.hit, x, y));
       if (field >= 0) this.setFocus(field);
     }
-    // The hue buttons and knob recolour the portrait (0x414760, not decoded): left out (R).
     this.refocus();
   }
 
@@ -464,12 +488,14 @@ export class StatusPage {
     this.fields[field].focus();
   }
 
+  /** 0x413d30(6, character, hue): `_p.spr` read again, turned by the hue, from frame 0. */
   private loadPortrait(): void {
     const id = this.character;
-    if (this.portrait?.id === id) return;
-    const portrait = { id, sheet: null as Sheet | null, frame: 0, lastMs: Number.NEGATIVE_INFINITY };
+    const { hue } = this.options.state;
+    if (this.portrait?.id === id && this.portrait.hue === hue) return;
+    const portrait = { id, hue, sheet: null as Sheet | null, frame: 0, lastMs: Number.NEGATIVE_INFINITY };
     this.portrait = portrait;
-    loadSheet("character", portraitSheetName(id)).then(
+    loadTintedSheet("character", portraitSheetName(id), hue).then(
       (sheet) => {
         portrait.sheet = sheet;
       },
@@ -479,14 +505,14 @@ export class StatusPage {
 
   // Frames
 
-  /** 0x41cf30: background, banner, the page, the bottom row's hover and the version. */
-  draw(ctx: CanvasRenderingContext2D, now: number, mouse: Point | null): void {
+  /** 0x41cf30: background, banner, the page, the bottom row's hover and the version. `held`: the left button is down. */
+  draw(ctx: CanvasRenderingContext2D, now: number, mouse: Point | null, held: boolean): void {
     const { assets } = this.options;
     ctx.drawImage(assets.background, 0, 0);
     this.drawBanner(ctx, now);
     if (this.page === "ranking") this.drawRanking(ctx, now, mouse);
     else if (this.option) this.drawOption(ctx, this.option, now, mouse);
-    else this.drawMain(ctx, now, mouse);
+    else this.drawMain(ctx, now, mouse, held);
     // Notices come only from the server (S->C 0x101): none. Option's hover only while its page is closed.
     const bottom = (Object.keys(STATUS_BUTTONS) as StatusButton[]).filter((name) => name !== "option" || !this.option);
     if (mouse) this.drawHover(ctx, bottom.map((name) => STATUS_BUTTONS[name]), mouse);
@@ -510,10 +536,10 @@ export class StatusPage {
   }
 
   /** 0x41d320, then its hover art (0x41f8a0), the check and colours (0x41da90) and the caret. */
-  private drawMain(ctx: CanvasRenderingContext2D, now: number, mouse: Point | null): void {
+  private drawMain(ctx: CanvasRenderingContext2D, now: number, mouse: Point | null, held: boolean): void {
     const { assets, state } = this.options;
     this.drawGuilds(ctx);
-    this.drawCharacter(ctx, now);
+    this.drawCharacter(ctx, now, held);
     const [nick, greeting, password] = this.fields.map((line) => line.view());
     // The ID (0x493fb0) has no writer in 0311: its place at ID_TEXT stays empty.
     if (nick.text) plainText(ctx, nick.text, FIELDS[0].text.x, FIELDS[0].text.y, this.nickColour, FONT_13);
@@ -547,12 +573,19 @@ export class StatusPage {
   }
 
   /**
-   * The face (Wg_char, keyed), `_p.spr` under it and the hue box at 0 (0x41d7c0). The name label
-   * cells of 0311's Wg_char hold head icons, not names, so the label is left out (R).
+   * The face (Wg_char, keyed), `_p.spr` under it and the hue box (0x41d7c0). The name label cells
+   * of 0311's Wg_char hold head icons, not names, so the label is left out (R). With a hue the face
+   * goes through work surface 6, turned again only while the button is held (0x41d8d6), so after a
+   * ± it shows the hue before the click until the next press.
    */
-  private drawCharacter(ctx: CanvasRenderingContext2D, now: number): void {
+  private drawCharacter(ctx: CanvasRenderingContext2D, now: number, held: boolean): void {
     const { assets, state } = this.options;
-    blit(ctx, assets.faces, faceCell(state.character), FACE_AT.x, FACE_AT.y);
+    if (state.hue === 0) blit(ctx, assets.faces, faceCell(state.character), FACE_AT.x, FACE_AT.y);
+    else {
+      const surface = workSurface(6);
+      if (held) surface.recolour(assets.faces, faceCell(state.character), state.hue);
+      surface.draw(ctx, FACE_AT.x, FACE_AT.y);
+    }
     const portrait = this.portrait;
     const anim = portrait?.sheet?.meta.animations[0];
     if (portrait?.sheet && anim && anim.frames.length > 0) {
@@ -562,11 +595,12 @@ export class StatusPage {
         portrait.lastMs = now;
       }
     }
-    const [x, y, w, h] = HUE_BOX.fill;
+    const box = hueBox(state.hue);
+    const [x, y, w, h] = box.fill;
     ctx.fillStyle = WHITE;
     ctx.fillRect(x, y, w, h);
     // Drawn in the DC's default font (System), which the remake has not got: 굴림체 12 (R).
-    plainText(ctx, "0", HUE_BOX.text.x, HUE_BOX.text.y, BLACK, FONT_12);
+    plainText(ctx, String(state.hue), box.text.x, box.text.y, BLACK, FONT_12);
   }
 
   /**
