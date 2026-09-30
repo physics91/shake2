@@ -150,6 +150,63 @@ export const GREETING_POPUP = {
   cancel: { hit: [468, 341, 498, 371] as Rect, pressed: [34, 146, 66, 178] as Rect, at: { x: 468, y: 341 } },
 };
 
+/**
+ * The colour popup "캐릭터 꾸미기" (draw 0x43cd8a): new_charchange's upper half over the 내캐릭터
+ * box, the Wg_char face through work surface 6, the knob on its track. O and X are new_button2's
+ * pressed art, ◀ and ▶ new_button's.
+ */
+export const COLOUR_POPUP = {
+  src: [1, 1, 288, 259] as Rect,
+  at: { x: 393, y: 97 },
+  face: { x: 495, y: 182 },
+  knob: { src: [355, 344, 368, 358] as Rect, y: 267 },
+  ok: { hit: [403, 317, 433, 347] as Rect, pressed: [328, 10, 360, 42] as Rect, at: { x: 403, y: 317 } },
+  cancel: { hit: [637, 316, 667, 347] as Rect, pressed: [361, 10, 393, 42] as Rect, at: { x: 637, y: 316 } },
+  left: { hit: [474, 267, 486, 281] as Rect, pressed: [319, 343, 335, 359] as Rect, at: { x: 471, y: 266 } },
+  right: { hit: [580, 267, 592, 281] as Rect, pressed: [336, 343, 353, 359] as Rect, at: { x: 578, y: 266 } },
+  track: [488, 267, 576, 281] as Rect,
+};
+
+/** The colour icon's new_button art while the account has item 20: lit, and pressed while held (0x43c790). */
+export const COLOUR_ICON = { lit: [175, 191, 203, 219] as Rect, pressed: [204, 191, 232, 219] as Rect, at: { x: 479, y: 229 } };
+
+/** [0x496334] the slider's hue and [0x46ea44] the knob's x, a float. */
+export interface ColourSlider {
+  hue: number;
+  knob: number;
+}
+
+/** Opening the popup (0x43e2c0) puts the hue at 0 and the knob at 526, not at the hue the character has. */
+export function newColourSlider(): ColourSlider {
+  return { hue: 0, knob: 526 };
+}
+
+const KNOB_STEP = 0.21;
+
+/**
+ * 0x43e580 at a held or released point: ◀ and ▶ move the hue 1 and the knob 0.21 px, clamping at
+ * the knob's stops (so ◀ from 526 snaps from −153 to −180); the track sets the hue from x. Whether
+ * it changed anything.
+ */
+export function slideColour(slider: ColourSlider, x: number, y: number): boolean {
+  if (inside(COLOUR_POPUP.left.hit, x, y)) {
+    slider.hue -= 1;
+    slider.knob = Math.fround(slider.knob - KNOB_STEP);
+    if (slider.hue < -180 || slider.knob <= 494) Object.assign(slider, { hue: -180, knob: 488 });
+  } else if (inside(COLOUR_POPUP.right.hit, x, y)) {
+    slider.hue += 1;
+    slider.knob = Math.fround(slider.knob + KNOB_STEP);
+    if (slider.hue > 180 || slider.knob >= 564) Object.assign(slider, { hue: 180, knob: 564 });
+  } else if (inside(COLOUR_POPUP.track, x, y)) {
+    if (x <= 494) Object.assign(slider, { hue: -180, knob: 488 });
+    else if (x >= 564) Object.assign(slider, { hue: 180, knob: 564 });
+    else Object.assign(slider, { hue: Math.trunc(((x - 530) / 37) * 180), knob: x - 6 });
+  } else {
+    return false;
+  }
+  return true;
+}
+
 function button(hit: Rect, hover: Rect | null, pressed: Rect, at: Point = { x: hit[0], y: hit[1] }): Button {
   return { hit, hover, pressed, at };
 }
@@ -212,13 +269,19 @@ const GREETING_HELP: HelpEntry[] = [
   { rect: GREETING_POPUP.cancel.hit, text: "취소 버튼(esc)" },
 ];
 
-/** The balloon under the mouse: the greeting popup's while it is open, else the window's. */
+const COLOUR_HELP: HelpEntry[] = [
+  { rect: COLOUR_POPUP.ok.hit, text: "입력 및 수정 확인(enter)" },
+  { rect: COLOUR_POPUP.cancel.hit, text: "취소 버튼(esc)" },
+  { rect: [474, 267, 592, 281], text: "화살표로 색 조절" },
+];
+
+/** The balloon under the mouse: the open popup's, else the window's. */
 export function myInfoHelpAt(
   x: number,
   y: number,
-  at: { useId: boolean; greeting?: boolean },
+  at: { useId: boolean; popup?: "greeting" | "colour" },
 ): { text: string; x: number; y: number } | null {
-  const entries = at.greeting ? GREETING_HELP : MAIN_HELP;
+  const entries = at.popup === "greeting" ? GREETING_HELP : at.popup === "colour" ? COLOUR_HELP : MAIN_HELP;
   const entry = entries.find((e) => inside(e.rect, x, y));
   if (!entry) return null;
   const text = typeof entry.text === "string" ? entry.text : entry.text(at.useId);

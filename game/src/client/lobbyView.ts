@@ -1,6 +1,7 @@
 // The lobby (scene 4, "LOBBY") as a page: the original's screen on a canvas (lobbyScreen.ts) and,
 // under it, page controls for the keyboard and screen readers. The room code join is the remake's.
 import { cutBytes, typeable } from "../server/cp949.ts";
+import { hasItem, ITEM_COLOUR } from "../server/items.ts";
 import type { Badge, ClientMessage, LobbyUser, OwnAccount, RoomStatus, RoomSummary } from "../server/protocol.ts";
 import { RANDOM_MAP, ROOM_CHAT_LIMIT, ROOM_CODE_LENGTH, shownName } from "../server/protocol.ts";
 import type { FriendRecord } from "./optionWindow.ts";
@@ -37,8 +38,8 @@ export interface LobbyActions {
   profile: MyProfile;
   /** The login record as last sent. */
   account(): OwnAccount | null;
-  /** Save the character and the ID check (set-character); the server answers with profile or an error. */
-  saveCharacter(character: string, useId: boolean): void;
+  /** Save the character, its hue and the ID check (set-character); the server answers with profile or an error. */
+  saveCharacter(character: string, hue: number, useId: boolean): void;
   /** Save the greeting (set-greeting); the server answers with the account. */
   saveGreeting(text: string): void;
   /** The option object, for the option window and the page's option controls. */
@@ -91,6 +92,8 @@ export class LobbyView {
     { id: "lobby-character" },
     ...CHARACTER_IDS.map((id, i) => h("option", { value: id }, CHARACTER_NAMES[i].replace(/\s+/g, ""))),
   );
+  /** The colour popup's hue (item 20), for the keyboard: −180..180. */
+  private readonly hueInput = h("input", { id: "lobby-hue", type: "number", min: "-180", max: "180", step: "1" });
   private readonly optionPanel: OptionPanel;
   private screen: LobbyScreen | null = null;
   private state: LobbyState;
@@ -156,11 +159,13 @@ export class LobbyView {
     };
     this.chatInput.addEventListener("input", () => fitBytes(this.chatInput, ROOM_CHAT_LIMIT));
     this.characterSelect.value = profile.character;
+    this.showHue();
     const saveMyInfo = (event: Event) => {
       event.preventDefault();
       // The window's O: nothing changed closes without asking the server (0x43e110).
-      if (this.characterSelect.value === profile.character) return;
-      saveCharacter(this.characterSelect.value, profile.useId);
+      const hue = this.hueInput.disabled ? profile.hue : Math.max(-180, Math.min(180, Math.trunc(Number(this.hueInput.value) || 0)));
+      if (this.characterSelect.value === profile.character && hue === profile.hue) return;
+      saveCharacter(this.characterSelect.value, hue, profile.useId);
     };
     this.optionPanel = new OptionPanel({
       settings,
@@ -200,6 +205,7 @@ export class LobbyView {
         "form",
         { class: "row", onsubmit: saveMyInfo },
         h("div", { class: "field" }, h("label", { for: "lobby-character" }, "내 캐릭터 (내정보)"), this.characterSelect),
+        h("div", { class: "field" }, h("label", { for: "lobby-hue" }, "캐릭터 색조 −180~180 (내정보 색조 창, 아이템 20)"), this.hueInput),
         h("button", { class: "btn", type: "submit" }, "저장"),
       ),
       h(
@@ -376,8 +382,15 @@ export class LobbyView {
   /** S->C 0x1a: the saved character; the window closes and says so. */
   profileSaved(): void {
     this.characterSelect.value = this.actions.profile.character;
+    this.showHue();
     this.errorLine.textContent = "수정 되었습니다.";
     this.screen?.profileSaved();
+  }
+
+  /** The hue field holds the account's hue, and takes a new one only with the colour item, as the icon does. */
+  private showHue(): void {
+    this.hueInput.value = String(this.actions.profile.hue);
+    this.hueInput.disabled = !hasItem(this.actions.account()?.items ?? [], ITEM_COLOUR);
   }
 
   /** S->C 0x58: the greeting popup closes. */

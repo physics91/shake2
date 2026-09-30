@@ -4,11 +4,11 @@
 import type { Rect } from "../assets/types.ts";
 import { animDue } from "../sim/constants.ts";
 import { cp949Bytes, trimChat } from "../server/cp949.ts";
-import { hasItem, ITEM_MASK, ITEM_WHISPER } from "../server/items.ts";
+import { hasItem, ITEM_COLOUR, ITEM_MASK, ITEM_WHISPER } from "../server/items.ts";
 import type { Badge, ClientMessage, OwnAccount, RoomStatus, RoomSummary, UserCard } from "../server/protocol.ts";
 import { chatLine as sendableChat, RANDOM_MAP, shownName } from "../server/protocol.ts";
 import type { Sheet } from "./assets.ts";
-import { loadCp949, loadImage, loadImageSheet, loadSheet } from "./assets.ts";
+import { loadCp949, loadImage, loadImageSheet } from "./assets.ts";
 import { drawBadge, guildLines, guildName, levelTitle } from "./badge.ts";
 import type { SoundBank } from "./audio.ts";
 import { CaretBlink, commandCycle, lobbyKeyOpensChat } from "./chat.ts";
@@ -72,11 +72,14 @@ import {
   userRowY,
   WAIT_GAME,
 } from "./lobbyLayout.ts";
+import type { ColourSlider } from "./myInfoLayout.ts";
 import {
   CHARACTER_IDS,
   CHARACTER_NAME_AT,
   CHARACTER_NAMES,
   characterIndex,
+  COLOUR_ICON,
+  COLOUR_POPUP,
   DROPDOWN,
   dropdownHeight,
   dropdownLineAt,
@@ -92,8 +95,10 @@ import {
   MY_INFO_WINDOW,
   myInfoButtonAt,
   myInfoHelpAt,
+  newColourSlider,
   OWNED,
   PORTRAIT_AT,
+  slideColour,
   stepCharacter,
   USE_ID_MARK,
 } from "./myInfoLayout.ts";
@@ -111,7 +116,9 @@ import type { SettingsStore } from "./settings.ts";
 import { FRAME_MS } from "./startLayout.ts";
 import { portraitSheetName } from "./scene.ts";
 import { blit } from "./sprite.ts";
+import { faceCell } from "./statusLayout.ts";
 import { FONT_12, FONT_13, FONT_14, FONT_COURIER_15, outlinedText, plainText, YELLOW } from "./text.ts";
+import { loadTintedSheet, workSurface } from "./tintArt.ts";
 
 export interface LobbyScreenAssets {
   background: HTMLImageElement;
@@ -131,6 +138,8 @@ export interface LobbyScreenAssets {
   statusWindow: HTMLImageElement;
   charChange: HTMLImageElement;
   winObject: HTMLImageElement;
+  /** Wg_char: the colour popup's face. */
+  faces: HTMLImageElement;
   /** The option window (scene 13) and its friend popup. */
   option: HTMLImageElement;
   basicWindow: HTMLImageElement;
@@ -143,7 +152,7 @@ export interface LobbyScreenAssets {
 
 export async function loadLobbyAssets(): Promise<LobbyScreenAssets> {
   const image = (name: string) => loadImage(`image/${name}.png`);
-  const [background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, option, basicWindow, userInfo, guilds, cursor] = await Promise.all([
+  const [background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, faces, option, basicWindow, userInfo, guilds, cursor] = await Promise.all([
     image("new_status"),
     image("new_banner"),
     image("new_button"),
@@ -158,13 +167,14 @@ export async function loadLobbyAssets(): Promise<LobbyScreenAssets> {
     image("new_statuswindow"),
     image("new_charchange"),
     image("new_winobject"),
+    image("Wg_char"),
     image("new_option"),
     image("new_basicwindow"),
     image("new_userinfo"),
     loadCp949("guild.dat").then(guildLines),
     loadImageSheet("cursor"),
   ]);
-  return { background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, option, basicWindow, userInfo, guilds, cursor };
+  return { background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, faces, option, basicWindow, userInfo, guilds, cursor };
 }
 
 export interface LobbyScreenOptions {
@@ -190,7 +200,7 @@ export interface LobbyScreenOptions {
   /** The account's login record as last sent: the my-info window's other fields, the items the user info window tests. */
   account(): OwnAccount | null;
   /** The my-info window's O with a change (C->S 0x1a); the answer comes to profileSaved. */
-  saveCharacter(character: string, useId: boolean): void;
+  saveCharacter(character: string, hue: number, useId: boolean): void;
   /** The greeting popup's O (C->S 0x58); the answer comes to greetingSaved. */
   saveGreeting(text: string): void;
   /** The first frames fade in, as after the server list (0x449172). */
@@ -220,9 +230,13 @@ interface MyInfo {
   character: number;
   arrow: number;
   snapshot: number;
+  /** [0x484714] as the window changes it: the colour popup's O sets it; X, Esc and a refused save drop it. */
+  hue: number;
   useId: boolean;
   dropdown: boolean;
   greeting: boolean;
+  /** The colour popup ([0x496330]) and its slider, open only with item 20. */
+  colour: ColourSlider | null;
   busy: boolean;
   /** The portrait's frame: the sprite is loaded again on each change, from frame 0 (0x413d30). */
   face: { frame: number; lastMs: number };
@@ -253,6 +267,8 @@ export class LobbyScreen {
   /** The greeting popup's editor (0x43ea00: 36 bytes). */
   private readonly greetingLine: ChatLine;
   private myInfo: MyInfo | null = null;
+  /** The 30 fps frame clock the colour popup's held slider steps on (0x458dbf); null while not held. */
+  private slideAt: number | null = null;
   /** The option window (scene 13). */
   private option: OptionScreen | null = null;
   private readonly portraits = new Map<string, Sheet | null>();
@@ -466,20 +482,33 @@ export class LobbyScreen {
   }
 
   /** Each frame the button is held (0x42f810): the track drags the chat log's thumb. */
-  private holdFrame(): void {
+  private holdFrame(now: number): void {
     // While the help screen shows, the mouse is dropped every frame (0x458750).
     if (this.helpScreen) this.pointer.held = null;
     const held = this.pointer.held;
     if (this.option) return;
     const info = this.myInfo;
+    const slider = held && info?.colour && !info.busy && !this.message ? info.colour : null;
+    if (!slider) this.slideAt = null;
     if (info) {
       // Held on the name box, the character list opens (0x458dbf → 0x43ece0).
-      if (held && !info.dropdown && !info.greeting && !info.busy && !this.message && myInfoButtonAt(held.x, held.y) === "names") info.dropdown = true;
+      if (!held || info.busy || this.message) return;
+      if (!info.dropdown && !info.greeting && !info.colour && myInfoButtonAt(held.x, held.y) === "names") info.dropdown = true;
+      else if (slider) this.slideHeld(slider, held, now);
       return;
     }
     if (!held || !this.clear) return;
     if (inside(LOBBY_SCROLL.track, held.x, held.y)) this.scroll.hold(this.log.length, held.y);
     else this.scroll.dragging = false;
+  }
+
+  /** The colour popup's slider on each 30 fps frame held, the first at once (0x43e580). */
+  private slideHeld(slider: ColourSlider, held: { x: number; y: number }, now: number): void {
+    if (this.slideAt === null || now - this.slideAt > 1000) this.slideAt = now - FRAME_MS;
+    while (now - this.slideAt >= FRAME_MS) {
+      this.slideAt += FRAME_MS;
+      slideColour(slider, held.x, held.y);
+    }
   }
 
   /** A release (0x459796): the message box takes every one, then the open popup, then the lobby. */
@@ -647,13 +676,15 @@ export class LobbyScreen {
       character,
       arrow: character,
       snapshot: character,
+      hue: this.options.profile.hue,
       useId: this.options.profile.useId,
       dropdown: false,
       greeting: false,
+      colour: null,
       busy: false,
       face: { frame: 0, lastMs: performance.now() },
     };
-    this.loadPortrait(character);
+    this.loadPortrait(character, this.myInfo.hue);
     this.openPopup("myInfo", `내 정보 창: 캐릭터 ${CHARACTER_NAMES[character].replace(/\s+/g, "")}. ◀▶로 고르고 Enter로 저장, Esc로 취소합니다.`);
   }
 
@@ -691,21 +722,22 @@ export class LobbyScreen {
     this.closePopup(true);
   }
 
-  private loadPortrait(index: number): void {
-    const id = CHARACTER_IDS[index];
-    if (this.portraits.has(id)) return;
-    this.portraits.set(id, null);
-    loadSheet("character", portraitSheetName(id)).then(
-      (sheet) => this.portraits.set(id, sheet),
+  /** `_p.spr` into slot 6 turned by the hue as it is read (0x413d30, path a). */
+  private loadPortrait(index: number, hue: number): void {
+    const key = portraitKey(index, hue);
+    if (this.portraits.has(key)) return;
+    this.portraits.set(key, null);
+    loadTintedSheet("character", portraitSheetName(CHARACTER_IDS[index]), hue).then(
+      (sheet) => this.portraits.set(key, sheet),
       () => undefined,
     );
   }
 
-  /** A new character is shown: its sprite is loaded again with anim 0 (0x413d30, 0x462e30). */
+  /** A new character is shown: its sprite is loaded again with anim 0 and the window's hue (0x413d30, 0x462e30). */
   private showCharacter(info: MyInfo, index: number): void {
     info.character = index;
     info.face = { frame: 0, lastMs: performance.now() };
-    this.loadPortrait(index);
+    this.loadPortrait(index, info.hue);
     this.status.textContent = `캐릭터 ${CHARACTER_NAMES[index].replace(/\s+/g, "")}`;
   }
 
@@ -719,6 +751,13 @@ export class LobbyScreen {
       const j = dropdownLineAt(x, y, lines.length);
       if (j >= 0) this.showCharacter(info, lines[j]);
       info.dropdown = false;
+      return;
+    }
+    if (info.colour) {
+      if (inside(COLOUR_POPUP.ok.hit, x, y)) this.closeColour(true);
+      else if (inside(COLOUR_POPUP.cancel.hit, x, y)) this.closeColour(false);
+      // The slider takes the release point too.
+      else if (slideColour(info.colour, x, y)) this.status.textContent = `색조 ${info.colour.hue}`;
       return;
     }
     if (info.greeting) {
@@ -748,23 +787,50 @@ export class LobbyScreen {
         this.greetingLine.text = this.options.profile.greeting;
         this.status.textContent = "인사말 창: 입력하고 Enter, 닫으려면 Esc.";
         break;
-      // 머니 충전, SHOP and the item arrows do nothing; the colour and nickname icons need items.
+      case "colour":
+        if (hasItem(this.options.account()?.items ?? [], ITEM_COLOUR)) this.openColour(info);
+        break;
+      // 머니 충전, SHOP and the item arrows do nothing; the nickname icon needs item 9 and its window.
       default:
         break;
     }
+  }
+
+  /** The colour icon (0x43e2c0): the popup at hue 0, the knob at 526, the face turned once. */
+  private openColour(info: MyInfo): void {
+    info.colour = newColourSlider();
+    workSurface(6).recolour(this.options.assets.faces, faceCell(info.character), 0);
+    this.status.textContent = "색조 창: ◀▶나 막대로 색조를 고르고 Enter로 정함, Esc로 취소합니다. 지금 색조 0.";
+  }
+
+  /**
+   * O or Enter keeps the slider's hue for the window (0x43e510, 0x43ec40); X or Esc keeps the one it
+   * had (0x43e4b0). Either way `_p.spr` is read again with it and the popup closes (0x43e920).
+   * Nothing is sent: the window's O sends it.
+   */
+  private closeColour(keep: boolean): void {
+    const info = this.myInfo;
+    if (!info?.colour) return;
+    if (keep) info.hue = info.colour.hue;
+    info.colour = null;
+    info.face = { frame: 0, lastMs: performance.now() };
+    this.loadPortrait(info.character, info.hue);
+    this.status.textContent = keep ? `색조 ${info.hue}로 정함. 내정보의 O로 저장합니다.` : "색조 창을 닫음";
   }
 
   /** O or Enter (0x43e110): nothing changed closes; a change is sent and the window waits for the reply. */
   private saveMyInfo(): void {
     const info = this.myInfo;
     if (!info || info.busy) return;
-    if (info.character === info.snapshot && info.useId === this.options.profile.useId) {
+    const { profile } = this.options;
+    if (info.character === info.snapshot && info.hue === profile.hue && info.useId === profile.useId) {
       this.closeMyInfo();
       return;
     }
     info.busy = true;
     this.status.textContent = "저장하는 중…";
-    this.options.saveCharacter(CHARACTER_IDS[info.character], info.useId);
+    // The hue the popup kept (R: 0311 sends the slider's, which is 0 until the popup opens).
+    this.options.saveCharacter(CHARACTER_IDS[info.character], info.hue, info.useId);
   }
 
   /** The greeting popup's O or Enter (0x44b120): trailing blanks cut; empty closes, all blank does nothing. */
@@ -1012,6 +1078,7 @@ export class LobbyScreen {
     if (this.helpScreen) this.helpScreen = false;
     else if (this.message) this.hideMessage();
     else if (this.myInfo?.greeting) this.closeGreeting();
+    else if (this.myInfo?.colour) this.closeColour(false);
     // X and Esc drop the edits: the character shown goes back (0x43ecc0).
     else if (this.myInfo) this.closeMyInfo();
     // Esc on the remote leaves the chat line closed; only its X opens it again.
@@ -1038,6 +1105,8 @@ export class LobbyScreen {
       this.submitPassword();
     } else if (this.myInfo?.greeting) {
       this.submitGreeting();
+    } else if (this.myInfo?.colour) {
+      this.closeColour(true);
     } else if (this.myInfo) {
       this.saveMyInfo();
     }
@@ -1049,7 +1118,7 @@ export class LobbyScreen {
     const { ctx } = this;
     const { assets } = this.options;
     ctx.imageSmoothingEnabled = false;
-    this.holdFrame();
+    this.holdFrame(now);
     if (this.message && now - this.message.since >= MESSAGE_BOX.hideMs) this.hideMessage();
     if (this.helpScreen) {
       // 0x40ca70: the help screen instead of the lobby; the message box still shows over it.
@@ -1370,8 +1439,13 @@ export class LobbyScreen {
     this.drawMyInfoFields();
     this.drawPortrait(info, now);
     outlinedText(ctx, CHARACTER_NAMES[info.character], CHARACTER_NAME_AT.x, CHARACTER_NAME_AT.y, FIELD_COLOUR, FONT_14);
+    // The item icons over their dimmed art in the window: the colour one with item 20. The
+    // nickname one (item 9) waits for its window.
+    if (hasItem(this.options.account()?.items ?? [], ITEM_COLOUR)) this.button(COLOUR_ICON.lit, COLOUR_ICON.at);
     // A popup is not drawn while the message box is up (0x443980); the button art only with the list closed.
-    if (info.greeting) {
+    if (info.colour) {
+      if (!this.message) this.drawColourPopup(info, info.colour);
+    } else if (info.greeting) {
       if (!this.message) this.drawGreetingPopup(now);
     } else if (!info.dropdown) {
       this.drawMyInfoButtons();
@@ -1406,7 +1480,7 @@ export class LobbyScreen {
 
   /** `_p.spr` from its top-left, its one animation at its own rate (0x462b90, 0x4620e0). */
   private drawPortrait(info: MyInfo, now: number): void {
-    const sheet = this.portraits.get(CHARACTER_IDS[info.character]);
+    const sheet = this.portraits.get(portraitKey(info.character, info.hue));
     const anim = sheet?.meta.animations[0];
     if (!sheet || !anim || anim.frames.length === 0) return;
     if (animDue(now, info.face.lastMs, anim.unknown_u16)) {
@@ -1430,6 +1504,24 @@ export class LobbyScreen {
       }
       if (b.hover) blit(this.ctx, sheet, b.hover, b.at.x, b.at.y);
     }
+    if (held && myInfoButtonAt(x, y) === "colour" && hasItem(this.options.account()?.items ?? [], ITEM_COLOUR)) this.button(COLOUR_ICON.pressed, COLOUR_ICON.at);
+  }
+
+  /**
+   * The colour popup (0x43cd8a): the face through work surface 6, turned by the slider's hue only
+   * while the button is held; the knob at its x cut to a pixel; O, X, ◀ and ▶ pressed.
+   */
+  private drawColourPopup(info: MyInfo, slider: ColourSlider): void {
+    const { ctx } = this;
+    const { assets } = this.options;
+    const popup = COLOUR_POPUP;
+    blit(ctx, assets.charChange, popup.src, popup.at.x, popup.at.y);
+    const surface = workSurface(6);
+    if (this.pointer.held) surface.recolour(assets.faces, faceCell(info.character), slider.hue);
+    surface.draw(ctx, popup.face.x, popup.face.y);
+    this.button(popup.knob.src, { x: Math.trunc(slider.knob), y: popup.knob.y });
+    const pressed = [popup.cancel, popup.ok, popup.left, popup.right].find((b) => this.pressedOver(b.hit));
+    if (pressed) blit(ctx, pressed === popup.cancel || pressed === popup.ok ? assets.button2 : assets.button, pressed.pressed, pressed.at.x, pressed.at.y);
   }
 
   /** The greeting popup (0x43c790, 0x43e040): new_charchange's lower half, two lines of 굴림체 13, its caret, O and X held. */
@@ -1452,9 +1544,10 @@ export class LobbyScreen {
   /** 0x43d9a0: none while the list is open; under the message box only the popup's. */
   private drawMyInfoBalloon(info: MyInfo): void {
     if (!this.balloons || !this.pointer.inside || info.dropdown) return;
-    if (this.message && !info.greeting) return;
+    const popup = info.colour ? "colour" : info.greeting ? "greeting" : undefined;
+    if (this.message && !popup) return;
     const { x, y } = this.pointer.mouse;
-    const balloon = myInfoHelpAt(x, y, { useId: info.useId, greeting: info.greeting });
+    const balloon = myInfoHelpAt(x, y, { useId: info.useId, popup });
     if (balloon) drawBalloon(this.ctx, balloon.text, balloon.x, balloon.y);
   }
 
@@ -1469,4 +1562,8 @@ export class LobbyScreen {
       plainText(ctx, CHARACTER_NAMES[index], DROPDOWN.text.x, DROPDOWN.text.y + DROPDOWN.text.step * j, colour, FONT_12);
     });
   }
+}
+
+function portraitKey(index: number, hue: number): string {
+  return `${CHARACTER_IDS[index]}@${hue}`;
 }

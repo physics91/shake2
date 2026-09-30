@@ -483,7 +483,7 @@ class OnlineSession {
       },
       profile: this.profile,
       account: () => this.account,
-      saveCharacter: (character, useId) => this.send({ type: "set-character", character, hue: this.profile.hue, useId }),
+      saveCharacter: (character, hue, useId) => this.send({ type: "set-character", character, hue, useId }),
       saveGreeting: (greeting) => this.send({ type: "set-greeting", greeting }),
       settings,
     }, fadeIn);

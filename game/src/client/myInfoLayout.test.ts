@@ -11,6 +11,8 @@ import {
   greetingLines,
   myInfoButtonAt,
   myInfoHelpAt,
+  newColourSlider,
+  slideColour,
   stepCharacter,
 } from "./myInfoLayout.ts";
 
@@ -93,5 +95,54 @@ describe("my-info buttons and balloons (0x43c790, 0x43d9a0)", () => {
     expect(myInfoHelpAt(660, 510, { useId: false })?.text).toBe("취소 버튼(esc)");
     expect(myInfoHelpAt(560, 470, { useId: false })?.text).toBe("현재 지원안함");
     expect(myInfoHelpAt(300, 300, { useId: false })).toBeNull();
+  });
+});
+
+describe("my-info colour popup (0x43cd8a, 0x43e580)", () => {
+  it("opens at hue 0 with the knob at 526, whatever the hue was", () => {
+    expect(newColourSlider()).toEqual({ hue: 0, knob: 526 });
+  });
+
+  it("steps ◀ one hue and 0.21 px a held frame, and snaps from −153 to −180 at the knob's stop", () => {
+    const slider = newColourSlider();
+    for (let i = 0; i < 152; i++) expect(slideColour(slider, 480, 274)).toBe(true);
+    expect(slider.hue).toBe(-152);
+    expect(slider.knob).toBeGreaterThan(494);
+    slideColour(slider, 480, 274);
+    expect(slider).toEqual({ hue: -180, knob: 488 });
+    slideColour(slider, 480, 274);
+    expect(slider).toEqual({ hue: -180, knob: 488 });
+  });
+
+  it("steps ▶ up to 180 and the knob to 564", () => {
+    const slider = newColourSlider();
+    for (let i = 0; i < 180; i++) slideColour(slider, 585, 274);
+    expect(slider.hue).toBe(180);
+    expect(slider.knob).toBeLessThan(564);
+    slideColour(slider, 585, 274);
+    expect(slider).toEqual({ hue: 180, knob: 564 });
+  });
+
+  it("sets the hue from the track: (x − 530) / 37 · 180 cut toward 0, the knob 6 px left of the mouse", () => {
+    const slider = newColourSlider();
+    slideColour(slider, 531, 270);
+    expect(slider).toEqual({ hue: 4, knob: 525 });
+    slideColour(slider, 520, 270);
+    expect(slider).toEqual({ hue: -48, knob: 514 });
+    slideColour(slider, 494, 270);
+    expect(slider).toEqual({ hue: -180, knob: 488 });
+    slideColour(slider, 564, 281);
+    expect(slider).toEqual({ hue: 180, knob: 564 });
+    expect(slideColour(slider, 530, 290)).toBe(false);
+    expect(slideColour(slider, 487, 270)).toBe(false);
+    expect(slider).toEqual({ hue: 180, knob: 564 });
+  });
+
+  it("has its own balloons over O, X and the slider", () => {
+    expect(myInfoHelpAt(410, 330, { useId: false, popup: "colour" })?.text).toBe("입력 및 수정 확인(enter)");
+    expect(myInfoHelpAt(650, 330, { useId: false, popup: "colour" })?.text).toBe("취소 버튼(esc)");
+    expect(myInfoHelpAt(500, 274, { useId: false, popup: "colour" })?.text).toBe("화살표로 색 조절");
+    expect(myInfoHelpAt(100, 510, { useId: false, popup: "colour" })).toBeNull();
+    expect(myInfoHelpAt(290, 350, { useId: false, popup: "greeting" })?.text).toBe("입력 및 수정 확인(enter)");
   });
 });
