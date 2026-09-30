@@ -262,6 +262,12 @@ export class AccountBook {
     return this.ranked;
   }
 
+  /** Where the ID is in the ranking, 0 the first; −1 for one not ranked. Any case (the highlight's _stricmp). */
+  rankedIndex(id: string): number {
+    const account = this.byId.get(nameKey(id));
+    return account && isRanked(account) ? this.ranking().indexOf(account) : -1;
+  }
+
   standing(id: string): Standing {
     const account = this.byId.get(nameKey(id));
     const ranking = this.ranking();

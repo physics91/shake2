@@ -16,6 +16,7 @@ import { characterIndex, nickRefusal } from "./myInfoLayout.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
 import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
+import type { RankingAccess } from "./ranking.ts";
 import { inside } from "./roomLayout.ts";
 import { CursorAnim, drawBalloon, drawCaret, drawDarkness, drawHelpScreen, Fade, freezeCanvas, Pointer } from "./screenKit.ts";
 import { attachCapture } from "./screenCapture.ts";
@@ -56,7 +57,7 @@ import {
   toggleSlide,
 } from "./startLayout.ts";
 import type { SettingsStore } from "./settings.ts";
-import { MAIN_BUTTONS, OPTION_PAGE, STATUS_BUTTONS, STATUS_TEXT } from "./statusLayout.ts";
+import { MAIN_BUTTONS, OPTION_PAGE, RANKING, STATUS_BUTTONS, STATUS_TEXT } from "./statusLayout.ts";
 import type { StatusAssets, StatusPageName, StatusState } from "./statusScreen.ts";
 import { loadStatusAssets, StatusPage } from "./statusScreen.ts";
 import { fitText, FONT_12, FONT_13, outlinedText, plainText, YELLOW } from "./text.ts";
@@ -203,6 +204,9 @@ const STATUS_COMMANDS = {
   guildPrevious: { page: "main", step: -1 },
   guildNext: { page: "main", step: 1 },
   guildJoin: { page: "main", hit: MAIN_BUTTONS.guildPassword.hit },
+  rankingUp: { page: "ranking", hit: RANKING.up.hit },
+  rankingDown: { page: "ranking", hit: RANKING.down.hit },
+  rankingFind: { page: "ranking", hit: RANKING.search.hit },
   musicOn: { page: "option", hit: OPTION_PAGE.music.on.hit },
   musicOff: { page: "option", hit: OPTION_PAGE.music.off.hit },
   soundOn: { page: "option", hit: OPTION_PAGE.sound.on.hit },
@@ -256,6 +260,8 @@ export interface StartScreenOptions {
   saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
   /** Scene 5's pw ▶ (the old C->S 0x4a); false likewise. */
   saveGuild(guild: number): boolean;
+  /** The ranking's list and fetches over the auth connection (ranklist_2.asp in 0311). */
+  ranking: RankingAccess;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
   /** The sign-up window's 가입하기; false when there is no account server to send it to. */
@@ -332,6 +338,13 @@ export class StartScreen {
       save: (profile) => this.saveStatus(profile),
       joinGuild: (guild) => this.saveGuild(guild),
       characterChanged: (character) => options.characterChanged(character),
+      ranking: {
+        get rows() {
+          return options.ranking.rows;
+        },
+        page: (page) => this.waitFor(options.ranking.page(page)),
+        search: (id) => this.waitFor(options.ranking.search(id)),
+      },
     });
     this.signUp = new SignUpWindow({
       stage: options.stage,
@@ -471,7 +484,7 @@ export class StartScreen {
     if (this.scene !== "status") return;
     const entry: { page: StatusPageName | null; hit?: Rect; step?: 1 | -1 } = STATUS_COMMANDS[command];
     if (entry.page !== null && entry.page !== this.statusPage.pageName) {
-      this.announce(entry.page === "option" ? "옵션 쪽이 열려 있지 않습니다." : "내 정보 쪽이 열려 있지 않습니다.");
+      this.announce({ option: "옵션 쪽이 열려 있지 않습니다.", ranking: "랭킹 쪽이 열려 있지 않습니다.", main: "내 정보 쪽이 열려 있지 않습니다." }[entry.page]);
       return;
     }
     if (entry.step) this.statusStep(entry.step);
@@ -590,6 +603,16 @@ export class StartScreen {
     this.announce("저장하는 중…");
   }
 
+  /** A ranking fetch holds the busy cursor as 0x447290's blocking socket held the frame (0x43f0b0). */
+  private async waitFor(fetch: Promise<boolean>): Promise<boolean> {
+    this.busy = true;
+    try {
+      return await fetch;
+    } finally {
+      this.busy = false;
+    }
+  }
+
   /** pw ▶ (0x41ebd8): busy on until the answer, as 확인. */
   private saveGuild(guild: number): void {
     if (this.busy) return;
@@ -672,8 +695,9 @@ export class StartScreen {
     this.statusPage.stepGuild(step);
   }
 
-  /** Scene 5 (0x45a8d3): the quit box takes the click while it is up. */
+  /** Scene 5 (0x45a8d3): the quit box takes the click while it is up; busy, the mouse is not read (0x458750). */
   private statusRelease(x: number, y: number): void {
+    if (this.busy) return;
     if (this.quitBox) {
       const result = boxClick(this.quitBox, x, y);
       if (result) this.answer(result);

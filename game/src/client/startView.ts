@@ -5,6 +5,7 @@ import type { Manifest } from "../assets/types.ts";
 import { cutBytes, typeable } from "../server/cp949.ts";
 import type { OwnAccount } from "../server/protocol.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
+import type { RankingAccess } from "./ranking.ts";
 import { settings, sounds } from "./shell.ts";
 import type { CheckKind } from "./signUpLayout.ts";
 import type { LoginSent, ServerList, ServerRow, SignUpCommand, StartScene, StatusCommand } from "./startScreen.ts";
@@ -32,6 +33,8 @@ export interface StartActions {
   saveStatus(profile: { nick: string; greeting: string; useId: boolean }): boolean;
   /** Scene 5's pw ▶; false likewise. */
   saveGuild(guild: number): boolean;
+  /** Scene 5's ranking page. */
+  ranking: RankingAccess;
   /** Scene 5's ▲ and ▼. */
   characterChanged(character: string): void;
   /** The sign-up window's 가입하기; false without the account server. */
@@ -70,6 +73,9 @@ const STATUS_MIRRORS: readonly [StatusCommand, string][] = [
   ["guildNext", "다음 길드 고르기 (내 정보 화면 길드 목록)"],
   ["guildJoin", "▶: 고른 길드에 가입, 없음이면 탈퇴 (내 정보 화면)"],
   ["ranking", "Ranking (내 정보 화면)"],
+  ["rankingUp", "▲: 앞 랭킹 쪽 (랭킹 쪽)"],
+  ["rankingDown", "▼: 다음 랭킹 쪽 (랭킹 쪽)"],
+  ["rankingFind", "찾기: 넣은 아이디의 쪽 (랭킹 쪽)"],
   ["option", "Option: 옵션 쪽 (내 정보 화면)"],
   ["exit", "Exit: 종료 상자 (내 정보 화면)"],
   ["musicOn", "음악 켬 (옵션 쪽)"],
@@ -221,6 +227,7 @@ export class StartView {
           saveCharacter: actions.saveCharacter,
           saveStatus: actions.saveStatus,
           saveGuild: actions.saveGuild,
+          ranking: actions.ranking,
           characterChanged: actions.characterChanged,
           register: actions.register,
           check: actions.check,

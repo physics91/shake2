@@ -2,7 +2,7 @@
 // list (AGENTS.md; findings_scene5.md). StartScreen keeps the frame, the fades, the quit box, the
 // message box and the cursor; this draws the page (0x41cf30) and takes its input (0x41dfc0).
 // Geometry: statusLayout.ts; the option page's rules: statusOption.ts. The account's rows come from
-// the login record; what needs the ranking server stays blank, or does what 0311 does when no answer comes.
+// the login record, the ranking's from the remake's server (ranking.ts).
 import { cp949Bytes } from "../server/cp949.ts";
 import type { OwnAccount } from "../server/protocol.ts";
 import { animDue } from "../sim/constants.ts";
@@ -19,6 +19,7 @@ import { CHARACTER_IDS, characterIndex } from "./myInfoLayout.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
 import type { Point } from "./roomLayout.ts";
 import { inside } from "./roomLayout.ts";
+import type { RankingAccess } from "./ranking.ts";
 import { portraitSheetName } from "./scene.ts";
 import type { Control, Keys, SettingsStore } from "./settings.ts";
 import { blit } from "./sprite.ts";
@@ -52,6 +53,7 @@ import {
   padNumber,
   PORTRAIT_AT,
   RANKING,
+  rankingMatch,
   scrollDown,
   scrollUp,
   showGuildRow,
@@ -63,7 +65,7 @@ import {
   USE_NICK_BOX,
 } from "./statusLayout.ts";
 import { StatusOption } from "./statusOption.ts";
-import { FONT_12, FONT_13, outlinedText, plainText, YELLOW } from "./text.ts";
+import { FONT_12, FONT_13, FONT_14, outlinedText, plainText, YELLOW } from "./text.ts";
 import { clampHue } from "./tint.ts";
 import { loadTintedSheet, workSurface } from "./tintArt.ts";
 
@@ -137,6 +139,8 @@ export interface StatusPageOptions {
   joinGuild(guild: number): void;
   /** ▲ and ▼: the character practice and the lobby use (0x48c1dc). */
   characterChanged(id: string): void;
+  /** The ranking's list and fetches; each fetch holds the busy cursor until it is answered. */
+  ranking: RankingAccess;
 }
 
 /** The key boxes' labels on option.shk, for a screen reader. */
@@ -173,6 +177,8 @@ export class StatusPage {
   private portrait: { id: string; hue: number; sheet: Sheet | null; frame: number; lastMs: number } | null = null;
   /** [0x48c32b]: the press was on the hue knob, so the held button drags it. */
   private knobHeld = false;
+  /** [0x494450]: the ranking page's page; FIND does not change it (it writes the window's). */
+  private rankingPage = 1;
 
   constructor(options: StatusPageOptions) {
     this.options = options;
@@ -379,7 +385,10 @@ export class StatusPage {
     for (let i = 0; i < this.keys.length; i++) this.keys[i] = this.keySnapshot[i];
   }
 
-  /** Ranking (0x41de70): refused while open; 0311 then asks the dead ranking server and gets no rows. */
+  /**
+   * Ranking (0x41de70): refused while open. 0x41f1c0 clears the editor, sets page 1 and asks for
+   * it; the list is not cleared, so a failed fetch shows the last one.
+   */
   private openRanking(): void {
     if (this.page === "ranking") return;
     this.restoreKeys();
@@ -387,7 +396,34 @@ export class StatusPage {
     this.options.sounds.play(MENU_SOUNDS.primary);
     this.page = "ranking";
     this.search.open();
-    this.options.announce("랭킹 화면. 랭킹 서버가 없어 목록이 비어 있습니다. 찾을 아이디를 넣고 찾기 버튼을 누릅니다.");
+    this.rankingPage = 1;
+    this.options.announce("랭킹 화면. 찾을 아이디를 넣고 찾기 버튼을 누릅니다.");
+    void this.fetchRanking(1);
+  }
+
+  /** 0x447290: the page when rows came; the page number follows only then. */
+  private async fetchRanking(page: number): Promise<void> {
+    const ok = await this.options.ranking.page(page);
+    if (this.page !== "ranking") return;
+    if (ok) this.rankingPage = page;
+    this.options.announce(ok ? this.rankingText(page) : "목록이 바뀌지 않았습니다.");
+  }
+
+  /** FIND (0x447700) with the editor's text: its page, or "찾을 수 없습니다.". Scene 5's page stays. */
+  private async findRanking(): Promise<void> {
+    const id = this.search.view().text;
+    const found = await this.options.ranking.search(id);
+    if (this.page !== "ranking") return;
+    if (found) this.options.announce(this.rankingText(null));
+    else this.options.message(STATUS_TEXT.notFound);
+  }
+
+  /** The rows, read out. */
+  private rankingText(page: number | null): string {
+    const rows = this.options.ranking.rows;
+    const found = rankingMatch(rows, this.search.view().text);
+    const lines = rows.map((row, i) => `${i === found ? "찾은 아이디 " : ""}${row.rank}위 ${row.id} 셀포인트 ${row.cell} 승 ${row.wins}`);
+    return `${page === null ? "" : `랭킹 ${page}쪽. `}${lines.join(", ")}`;
   }
 
   /** Option (0x41df00 → 0x41f2c0): refused while open; the ranking page closes; the live keys are snapshot. */
@@ -465,17 +501,25 @@ export class StatusPage {
   }
 
   private rankingRelease(x: number, y: number): void {
-    const { sounds } = this.options;
-    // ▲ on page 1 asks again only when its first row ranks below 1: with no rows, nothing.
-    if (inside(RANKING.up.hit, x, y)) return;
+    const { sounds, ranking } = this.options;
+    if (inside(RANKING.up.hit, x, y)) {
+      if (this.rankingPage > 1) {
+        sounds.play(MENU_SOUNDS.primary);
+        void this.fetchRanking(this.rankingPage - 1);
+      } else if ((ranking.rows[0]?.rank ?? 0) > 1) {
+        // Page 1 whose list a FIND moved: page 1 again, without a sound.
+        void this.fetchRanking(1);
+      }
+      return;
+    }
     if (inside(RANKING.down.hit, x, y)) {
-      // The next page is asked for and does not come: the page stays.
       sounds.play(MENU_SOUNDS.primary);
+      void this.fetchRanking(this.rankingPage + 1);
       return;
     }
     if (inside(RANKING.search.hit, x, y)) {
       sounds.play(MENU_SOUNDS.primary);
-      this.options.message(STATUS_TEXT.notFound);
+      void this.findRanking();
       return;
     }
     this.search.focus();
@@ -735,11 +779,33 @@ export class StatusPage {
     }
   }
 
-  /** ranking.shk at (18,7), no rows, the search ID and its caret, and the page's hover art. */
+  /**
+   * The list (0x41db60), plain text: the row of the ID typed in font 14 #00FF00, the rest in font
+   * 13 with the rank white, the ID green and the numbers violet; each level's badge at x 132.
+   */
+  private drawRankingRows(ctx: CanvasRenderingContext2D, typed: string): void {
+    const layout = RANKING.rows;
+    const rows = this.options.ranking.rows;
+    const found = rankingMatch(rows, typed);
+    rows.forEach((row, i) => {
+      const y = layout.firstY + layout.step * i;
+      const font = i === found ? FONT_14 : FONT_13;
+      const colour = (normal: string) => (i === found ? layout.found : normal);
+      plainText(ctx, padNumber(row.rank, layout.rank.width), layout.rank.x, y, colour(layout.rank.colour), font);
+      const badge = levelBadge(row.level);
+      if (badge) blit(ctx, this.options.assets.marks, badge, layout.badge.x, y);
+      plainText(ctx, row.id, layout.id.x, y, colour(layout.id.colour), font);
+      plainText(ctx, padNumber(row.cell, layout.cell.width), layout.cell.x, y, colour(layout.numbers), font);
+      plainText(ctx, padNumber(row.wins, layout.wins.width), layout.wins.x, y, colour(layout.numbers), font);
+    });
+  }
+
+  /** ranking.shk at (18,7), the list's rows, the search ID and its caret, and the page's hover art. */
   private drawRanking(ctx: CanvasRenderingContext2D, now: number, mouse: Point | null): void {
     const { assets } = this.options;
     ctx.drawImage(assets.ranking, RANKING.panel.x, RANKING.panel.y);
     const line = this.search.view();
+    this.drawRankingRows(ctx, line.text);
     if (line.text) plainText(ctx, line.text, RANKING.field.text.x, RANKING.field.text.y, LIGHT_BLUE, FONT_13);
     if (this.caret.shown(now)) {
       ctx.fillStyle = CARET.colour;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
-import { AccountBook, ID_TAKEN, REGISTERED } from "./accounts.ts";
+import { AccountBook, ID_TAKEN, levelFor, REGISTERED } from "./accounts.ts";
 import { FriendBook } from "./friends.ts";
 import type { Channel } from "./gate.ts";
 import {
@@ -22,7 +22,7 @@ import {
 } from "./gate.ts";
 import { Lobby } from "./lobby.ts";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
-import { GUILD_COUNT, PROTOCOL_VERSION } from "./protocol.ts";
+import { GUILD_COUNT, PROTOCOL_VERSION, RANKING_PAGE_ROWS } from "./protocol.ts";
 
 const PASSWORD = "pass1";
 const defaults = { character: "bobo", items: [12], pairs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] };
@@ -313,6 +313,40 @@ describe("the gate's saves over the auth connection (scene 5)", () => {
       expect(t.last(1, "saved")).toBeUndefined();
     }
     expect(t.accounts.get("tester")?.guild).toBe(-1);
+  });
+
+  it("answers ranking pages of 15 and an ID's page to a connection logged in or in a lobby (ranklist_2.asp)", async () => {
+    const ids = [..."abcdefghijklmnopq"].map((letter) => `rank${letter}`);
+    const t = await makeGate([...ids, "tester"]);
+    ids.forEach((id, i) => t.accounts.update(id, { cell: 1000 - 10 * i, wins: i + 1, guild: i === 0 ? 7 : -1 }));
+    t.connect(1);
+    t.gate.handle(1, { type: "ranking", page: 1 });
+    expect(t.last(1, "ranking")).toBeUndefined();
+
+    await t.login(1, "tester");
+    t.gate.handle(1, { type: "ranking", page: 1 });
+    const first = t.last(1, "ranking");
+    expect(first?.page).toBe(1);
+    expect(first?.rows).toHaveLength(RANKING_PAGE_ROWS);
+    expect(first?.rows[0]).toEqual({ rank: 1, id: "ranka", cell: 1000, wins: 1, level: 1, guild: 7, gender: 0 });
+    expect(first?.rows[14]).toMatchObject({ rank: 15, id: "ranko", level: levelFor(15, ids.length) });
+    t.gate.handle(1, { type: "ranking", page: 2 });
+    expect(t.last(1, "ranking")?.rows.map((row) => [row.rank, row.id])).toEqual([[16, "rankp"], [17, "rankq"]]);
+    // Past the last page no rows come; "tester" has no match and is on none.
+    t.gate.handle(1, { type: "ranking", page: 3 });
+    expect(t.last(1, "ranking")).toEqual({ type: "ranking", page: 3, rows: [] });
+
+    t.gate.handle(1, { type: "ranking-search", id: "RANKQ" });
+    expect(t.last(1, "ranking-search")).toMatchObject({ page: 2, rows: [{ rank: 16 }, { rank: 17 }] });
+    for (const id of ["tester", "nobody"]) {
+      t.gate.handle(1, { type: "ranking-search", id });
+      expect(t.last(1, "ranking-search")).toEqual({ type: "ranking-search", page: null, rows: [] });
+    }
+
+    t.connect(2, "203.0.113.2");
+    await t.enter(2, "ranka");
+    t.gate.handle(2, { type: "ranking", page: 1 });
+    expect(t.last(2, "ranking")?.rows).toHaveLength(RANKING_PAGE_ROWS);
   });
 
   it("shows a new guild by the name in the lobby the account is in", async () => {

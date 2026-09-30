@@ -10,6 +10,7 @@ import {
   levelTitleAt,
   newGuildScroll,
   padNumber,
+  rankingMatch,
   scrollDown,
   scrollUp,
   showGuildRow,
@@ -157,5 +158,14 @@ describe("guild list", () => {
     scroll.knob = 350;
     scrollDown(scroll, 9, 2);
     expect(scroll).toMatchObject({ top: 0, knob: 303 });
+  });
+});
+
+describe("the ranking page's rows (0x41db60)", () => {
+  it("finds the row of the ID typed whatever its case, and none for no text", () => {
+    const rows = [{ id: "ranka" }, { id: "Tester1" }];
+    expect(rankingMatch(rows, "TESTER1")).toBe(1);
+    expect(rankingMatch(rows, "tester")).toBe(-1);
+    expect(rankingMatch(rows, "")).toBe(-1);
   });
 });

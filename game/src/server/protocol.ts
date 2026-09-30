@@ -6,11 +6,11 @@ import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEve
 import { cp949Bytes, cutBytes, trimChat, typeable } from "./cp949.ts";
 
 /**
- * 13: scene 5's guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
+ * 14: the ranking (ranking, ranking-search). 13: scene 5's guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
  * badges, the room info's and the friend list's badges). 11: accounts (login, sign-up, the version
  * check, hello with a session and a channel).
  */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 export const MAX_MESSAGE_BYTES = 4096;
 export const MAX_NAME_LENGTH = 12;
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -111,6 +111,23 @@ export function shownName(player: { name: string; nick: string; useId: boolean }
 /** guild.dat's lines (0x4416f0 counts them into [0x496c8c]): marks 0..264. */
 export const GUILD_COUNT = 265;
 
+/** The ranking art's boxes: 15 rows a page (new_ranking.shk, ranking.shk; ranking.jpg @2002-03-25 shows 1..15). */
+export const RANKING_PAGE_ROWS = 15;
+
+/**
+ * A ranklist_2.asp row as 0x447290 reads it: rank, ID, cell point, wins, level, a field never read
+ * (not sent), guild, gender. The remake's genders are all 0 (R).
+ */
+export interface RankingRow {
+  rank: number;
+  id: string;
+  cell: number;
+  wins: number;
+  level: number;
+  guild: number;
+  gender: number;
+}
+
 /** A player with no account (two on one keyboard): no guild mark, no level badge (0x442900 draws 1..12). */
 export const NO_BADGE: Badge = { guild: -1, level: 0 };
 
@@ -175,6 +192,10 @@ export type ClientMessage =
    * remake's guilds have no passwords, so none is sent (R).
    */
   | { type: "set-guild"; guild: number }
+  /** The ranking's page (ranklist_2.asp?page=N, 0x447290), 1 the first: scene 5's and the lobby's ranking window. */
+  | { type: "ranking"; page: number }
+  /** FIND (ranklist_2.asp?search=ID, 0x447700): the page the ID is on. */
+  | { type: "ranking-search"; id: string }
   /** The own chat line is open or closed: the keys go unread and the "chat" mark shows (state packet +0x2c). */
   | { type: "typing"; on: boolean }
   /** The option window's friend list (C->S 0x63): the own list and where each friend is now. */
@@ -338,6 +359,10 @@ export type ServerMessage =
   | { type: "version"; version: number }
   /** hello refused (S->C 0x0a result): 0 "로그인 실패", 2 "이미 로그인 되어 있습니다", 3 "레벨이 맞지 않습니다". */
   | { type: "refused"; code: number }
+  /** A ranking page's rows, none past the last page (the client then keeps the list it has). */
+  | { type: "ranking"; page: number; rows: RankingRow[] }
+  /** FIND's answer: the ID's page and its rows, or null ("Not Found") for an ID not ranked. */
+  | { type: "ranking-search"; page: number | null; rows: RankingRow[] }
   /** A save taken (scene 5's Go and 확인, the greeting popup's S->C 0x58): the account now. */
   | { type: "saved"; account: OwnAccount }
   /** A nick not taken (S->C 0x57, 0x44b080): 0xfc once a day, 0xfd taken by another, 0xfe any other failure. */
@@ -433,7 +458,7 @@ export function gameChatLine(raw: string): string | null {
   return text.trim() && cp949Bytes(text) < GAME_CHAT_LIMIT ? text : null;
 }
 
-/** An ID the friend popup could have typed: cp949, 1 to 10 bytes. */
+/** An ID the friend popup or the ranking's FIND could have typed (editors of 0xb): cp949, 1 to 10 bytes. */
 export function isFriendId(value: unknown): value is string {
   return typeof value === "string" && value !== "" && typeable(value) === value && cp949Bytes(value) <= FRIEND_ID_BYTES;
 }
@@ -477,6 +502,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return typeof data.greeting === "string" && data.greeting.length <= 64 ? { type: "set-greeting", greeting: data.greeting } : null;
     case "set-guild":
       return isInt(data.guild, -0x8000, 0x7fff) ? { type: "set-guild", guild: data.guild } : null;
+    case "ranking":
+      return isInt(data.page, 1, 0x7fffffff) ? { type: "ranking", page: data.page } : null;
+    case "ranking-search":
+      return isFriendId(data.id) ? { type: "ranking-search", id: data.id } : null;
     case "set-status":
       return shortText(data.nick) && typeof data.greeting === "string" && data.greeting.length <= 64 && typeof data.useId === "boolean"
         ? { type: "set-status", nick: data.nick, greeting: data.greeting, useId: data.useId }

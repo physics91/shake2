@@ -45,6 +45,7 @@ import type { LobbyState } from "./lobbyView.ts";
 import { LobbyView } from "./lobbyView.ts";
 import { listedTrack, playWaitingMusic } from "./music.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
+import { RankingBoard } from "./ranking.ts";
 import { chatEntry, chatLineClass, kickLine, shownChat, usersLine, whisperAllowLine, whisperLines } from "./roomChat.ts";
 import { KICKED_TEXT, NOTICE } from "./roomLayout.ts";
 import { loadRoomAssets, RoomScreen } from "./roomScreen.ts";
@@ -183,6 +184,8 @@ class OnlineSession {
   private local: { room: RoomInfo; lists: LocalLists; log: string[] } | null = null;
   /** Practice or a two-player match running on this PC. */
   private localGame: { stop(): void } | null = null;
+  /** The ranking's list, scene 5's and the lobby window's. */
+  private readonly ranking = new RankingBoard();
 
   constructor(manifest: Manifest) {
     this.manifest = manifest;
@@ -236,6 +239,7 @@ class OnlineSession {
         },
         saveStatus: (profile) => this.saveStatus("status", { type: "set-status", ...profile }),
         saveGuild: (guild) => this.saveStatus("guild", { type: "set-guild", guild }),
+        ranking: this.ranking.access((message) => this.account !== null && this.auth.send(message)),
         characterChanged: (character) => writePreference("p1", character),
         // The web site's sign-up and checks go to the account server (R); a send that finds it gone
         // connects again, so the next try can go (the original made a new connection each time).
@@ -310,6 +314,7 @@ class OnlineSession {
   private authStateChanged(state: AuthState): void {
     if (state !== "failed") return;
     this.statusSaving = null;
+    this.ranking.drop();
     if (this.enterAfterLogin) {
       this.enterAfterLogin = false;
       this.showError("인증 서버에 접속하지 못했습니다.");
@@ -346,6 +351,10 @@ class OnlineSession {
         return;
       case "checked":
         this.startView?.signUpAnswer(message.kind, message.rcode);
+        return;
+      case "ranking":
+      case "ranking-search":
+        this.ranking.receive(message);
         return;
       case "saved":
         this.account = takeSaved(this.account, message.account);

@@ -5,12 +5,12 @@
 // the login's session goes into that row's lobby (the game part). How the servers knew the player
 // is not in the client, so sessions, the throttle and the refusals' causes are the remake's (R).
 import type { AccountBook, AccountRecord } from "./accounts.ts";
-import { GREETING_MAX_BYTES, isNick, nameKey, NO_GUILD, REGISTERED } from "./accounts.ts";
+import { GREETING_MAX_BYTES, isNick, levelFor, nameKey, NO_GUILD, REGISTERED } from "./accounts.ts";
 import { cutBytes, typeable } from "./cp949.ts";
 import { hasItem, ITEM_NICK } from "./items.ts";
 import type { Lobby } from "./lobby.ts";
-import type { ChannelRow, ClientMessage, OwnAccount } from "./protocol.ts";
-import { GUILD_COUNT, PROTOCOL_VERSION } from "./protocol.ts";
+import type { ChannelRow, ClientMessage, OwnAccount, RankingRow } from "./protocol.ts";
+import { GUILD_COUNT, PROTOCOL_VERSION, RANKING_PAGE_ROWS } from "./protocol.ts";
 import type { Peer } from "./room.ts";
 
 /** A session nothing has used for this long is forgotten; the client logs in again. */
@@ -185,6 +185,12 @@ export class Gate {
       case "set-guild":
         this.setGuild(connection, message.guild);
         return;
+      case "ranking":
+        if (connection.account !== null) connection.peer.send({ type: "ranking", page: message.page, rows: this.rankingRows(message.page) });
+        return;
+      case "ranking-search":
+        if (connection.account !== null) this.searchRanking(connection, message.id);
+        return;
       case "set-character":
         if (!connection.joined) {
           this.setCharacter(connection, message.character, message.hue, message.useId);
@@ -271,6 +277,28 @@ export class Gate {
     this.online.set(session.account, connection.peer.id);
     session.lastUsed = this.config.now();
     channel.lobby.join(connection.peer, own);
+  }
+
+  /**
+   * A ranklist_2.asp page: 15 rows of the accounts that have finished a match, by cell point.
+   * The original's server was open to anyone on port 8080 and ranked once a day; the remake's
+   * answers logged-in connections, auth or lobby, and ranks as asked (R).
+   */
+  private rankingRows(page: number): RankingRow[] {
+    const { accounts } = this.config;
+    const ranking = accounts.ranking();
+    const first = (page - 1) * RANKING_PAGE_ROWS;
+    return ranking.slice(first, first + RANKING_PAGE_ROWS).map((account, i) => {
+      const rank = first + i + 1;
+      return { rank, id: account.id, cell: account.cell, wins: account.wins, level: levelFor(rank, ranking.length), guild: account.guild, gender: 0 };
+    });
+  }
+
+  /** ?search=ID: the page the ID is on and its rows, or "Not Found" for an ID not ranked. */
+  private searchRanking(connection: Connection, id: string): void {
+    const index = this.config.accounts.rankedIndex(id);
+    const page = index < 0 ? null : Math.floor(index / RANKING_PAGE_ROWS) + 1;
+    connection.peer.send({ type: "ranking-search", page, rows: page === null ? [] : this.rankingRows(page) });
   }
 
   /** Scene 5's Go (the old C->S 0x1a) over the auth connection: the character, hue and use-ID flag. */

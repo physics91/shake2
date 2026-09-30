@@ -125,6 +125,17 @@ describe("parseClientMessage", () => {
     expect(parseClientMessage('{"type":"set-guild"}')).toBeNull();
   });
 
+  it("takes a ranking page from 1 up and an ID the finder's editor could hold (ranklist_2.asp)", () => {
+    expect(parseClientMessage('{"type":"ranking","page":1}')).toEqual({ type: "ranking", page: 1 });
+    expect(parseClientMessage('{"type":"ranking","page":40000}')).toEqual({ type: "ranking", page: 40000 });
+    expect(parseClientMessage('{"type":"ranking","page":0}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking","page":1.5}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking-search","id":"Tester1"}')).toEqual({ type: "ranking-search", id: "Tester1" });
+    expect(parseClientMessage('{"type":"ranking-search","id":""}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking-search","id":"abcdefghijk"}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking-search"}')).toBeNull();
+  });
+
   it("takes the typing flag as a boolean (state packet +0x2c)", () => {
     expect(parseClientMessage('{"type":"typing","on":true}')).toEqual({ type: "typing", on: true });
     expect(parseClientMessage('{"type":"typing","on":false}')).toEqual({ type: "typing", on: false });

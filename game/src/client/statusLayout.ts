@@ -274,7 +274,29 @@ export const RANKING = {
   search: { hit: [483, 434, 511, 456], hover: [741, 22, 769, 49], at: { x: 483, y: 436 } } satisfies HoverButton,
   /** The ID to find: the editor is always on it while the page is open (0x41f1c0, limit 0xb). */
   field: { hit: [332, 438, 475, 459] as Rect, text: { x: 334, y: 441 }, limit: 0xb },
+  /**
+   * The list's rows (0x41db60), no cap on their count: rank "%9d", the level's badge, the ID, cell
+   * point "%18d" and wins "%13d", plain font 13. The row whose ID is the one typed (_stricmp) is
+   * font 14 #00FF00 throughout.
+   */
+  rows: {
+    firstY: 90,
+    step: 22,
+    rank: { x: 58, width: 9, colour: "#ffffff" },
+    badge: { x: 132 },
+    id: { x: 152, colour: "#88c17b" },
+    cell: { x: 249, width: 18 },
+    wins: { x: 382, width: 13 },
+    numbers: "#a592cc",
+    found: "#00ff00",
+  },
 };
+
+/** The row of the list whose ID is the one typed (_stricmp), or −1. */
+export function rankingMatch(rows: readonly { id: string }[], typed: string): number {
+  const key = typed.toLowerCase();
+  return typed ? rows.findIndex((row) => row.id.toLowerCase() === key) : -1;
+}
 
 /** The resource strings scene 5 shows in the message box. */
 export const STATUS_TEXT = {
