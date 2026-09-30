@@ -63,6 +63,8 @@ class SprSheet:
     width: int
     height: int
     rgba: np.ndarray
+    # The file's 8-bit colours, top-down RGB: what a tint turns before the 16-bit cut (0x414ed0).
+    rgb: np.ndarray
     animations: tuple[Animation, ...]
     trailing_bytes: int
 
@@ -81,7 +83,8 @@ def decode_spr(data: bytes) -> SprSheet:
         raise SprFormatError("truncated pixels")
 
     rows = np.frombuffer(data, np.uint8, count=data_size, offset=HEADER_SIZE).reshape(height, stride)[::-1]
-    rgba = bgr24_to_rgba(rows[:, : width * 3].reshape(height, width, 3))
+    bgr = rows[:, : width * 3].reshape(height, width, 3)
+    rgba = bgr24_to_rgba(bgr)
 
     reader = _Reader(data, pixel_end)
     (anim_count,) = reader.unpack(ANIM_COUNT)
@@ -92,6 +95,7 @@ def decode_spr(data: bytes) -> SprSheet:
         width=width,
         height=height,
         rgba=rgba,
+        rgb=np.ascontiguousarray(bgr[..., ::-1]),
         animations=animations,
         trailing_bytes=len(data) - reader.offset,
     )

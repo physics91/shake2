@@ -110,11 +110,17 @@ def _export_spr(src: Path, rel: Path, dst: Path) -> dict:
     metadata = rel.with_suffix(".json")
     _save_png(sheet.rgba, dst / output)
     _write_json(dst / metadata, _sheet_metadata(sheet, rel, output))
+    tinted = {}
+    if rel.parent.as_posix() in TINTED_SHEET_DIRS:
+        rgb = rel.with_suffix(".rgb.png")
+        _save_png(sheet.rgb, dst / rgb)
+        tinted = {"rgb": rgb.as_posix()}
     return {
         "source": rel.as_posix(),
         "kind": "spr",
         "output": output.as_posix(),
         "metadata": metadata.as_posix(),
+        **tinted,
         "width": sheet.width,
         "height": sheet.height,
         "animations": len(sheet.animations),
@@ -149,6 +155,10 @@ def _export_map(src: Path, rel: Path, dst: Path) -> dict:
         "warnings": _trailing_warning(level.trailing_bytes),
     }
 
+
+# Sheets a character's tint turns as they are read (0x462140 → 0x414d50): the players in play,
+# the _p portraits and the w_character panel faces. Their 8-bit colours go to `<name>.rgb.png`.
+TINTED_SHEET_DIRS = ("spr_data/character", "spr_data/w_character")
 
 EXPORTERS = {".shk": _export_shk, ".spr": _export_spr, ".map": _export_map}
 # shake.exe loads all three for every map; an object's unknown_a picks one (0x411530, 0x41176a).

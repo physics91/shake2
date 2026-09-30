@@ -29,6 +29,16 @@ def test_converts_bottom_up_bgr_rows_to_top_down_rgb_and_skips_row_padding():
     assert sheet.rgba[1, 1].tolist() == [57, 48, 41, 255]
 
 
+def test_keeps_the_8_bit_colours_the_tint_turns_before_the_cut():
+    # 0x414ed0 turns the file's 8-bit colours, so the sheet keeps them as read, top-down RGB.
+    rows = [[MAGENTA_BGR, (7, 3, 9)], [(10, 20, 30), (40, 50, 60)]]
+    sheet = decode_spr(build_spr(rows, ONE_FRAME))
+
+    assert sheet.rgb.shape == (2, 2, 3)
+    assert sheet.rgb[0].tolist() == [[255, 0, 255], [9, 3, 7]]
+    assert sheet.rgb[1].tolist() == [[30, 20, 10], [60, 50, 40]]
+
+
 def test_cuts_each_pixel_to_rgb565_as_the_loader_does():
     # 0x414ed0: r & 0xf8, g & 0xfc, b >> 3; nothing is rounded up.
     rows = [[MAGENTA_BGR, (7, 3, 7), (255, 255, 255), (0x9b, 0xff, 0xff)]]

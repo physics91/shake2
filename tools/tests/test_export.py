@@ -74,6 +74,25 @@ def test_exports_spr_sheet_and_animation_metadata(synthetic_tree, tmp_path):
     ]
 
 
+def test_exports_the_8_bit_colours_of_the_sheets_a_tint_turns(synthetic_tree, tmp_path):
+    # Characters (in play, _p portraits) and w_character panel faces are tinted as they are read.
+    for folder in ("character", "w_character"):
+        (synthetic_tree / "spr_data" / folder).mkdir()
+        (synthetic_tree / "spr_data" / folder / "boy.spr").write_bytes(
+            build_spr([[MAGENTA_BGR, (7, 3, 9)]], [build_anim("a", 5, [(0, 0, 1, 0, 2, 1)])])
+        )
+    dst = tmp_path / "out"
+    index = export_tree(synthetic_tree, dst)
+
+    for folder in ("character", "w_character"):
+        rgb = Image.open(dst / "spr_data" / folder / "boy.rgb.png")
+        assert rgb.mode == "RGB"
+        assert list(rgb.getdata()) == [(255, 0, 255), (9, 3, 7)]
+        assert entry_for(index, f"spr_data/{folder}/boy.spr")["rgb"] == f"spr_data/{folder}/boy.rgb.png"
+    assert not (dst / "spr_data" / "hero.rgb.png").exists()
+    assert "rgb" not in entry_for(index, "spr_data/hero.spr")
+
+
 def test_exports_map_json_and_preview(synthetic_tree, tmp_path):
     dst = tmp_path / "out"
     index = export_tree(synthetic_tree, dst)
