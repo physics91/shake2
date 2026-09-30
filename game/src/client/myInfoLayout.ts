@@ -45,12 +45,6 @@ export const CHARACTER_NAMES = [
   "슬    랙", "샤    크", "레    드", "오 렌 지", "밀    키", "쉐 이 키", "둠    시", "두    미", "한복두나", "한복루키",
 ] as const;
 
-/** 0x469ca0: the level titles; this remake shows level 1 like its badges elsewhere. */
-export const LEVEL_TITLES = [
-  "닉네임", "쉐이크 마스터", "쉐이크 히어로", "쉐이크 나이츠", "골드 나이츠", "실버 나이츠",
-  "나이츠 ", "골드 워리어", "실버 워리어", "파이터 ", "베테랑 ", "솔 져 ",
-] as const;
-
 /**
  * Ownership is by pairs (0x43eb60): a new 0311 account has pairs 0-4 and 8, so 0-9 and 16-17
  * (0x448c50); purchases (S->C 0x5a) add pairs. This remake has no shop: it owns all 20.

@@ -5,8 +5,8 @@ import { msvcRand, srandTime } from "../sim/rng.ts";
 import { isTeamMode } from "../sim/modes.ts";
 import type { Buttons, Dir, GameMode, InputFrame, LevelLayout, MatchState, Rules, SimEvent } from "../sim/types.ts";
 import { PeerButtons } from "./buttons.ts";
-import type { ChatKind, PanelBar, RoomInfo, RoomStatus, RoomSummary, ServerMessage } from "./protocol.ts";
-import { CHAT_INTERVAL_MS, RANDOM_MAP, SNAPSHOT_EVERY, START_BARS, toWireState, typingPacketDue } from "./protocol.ts";
+import type { Badge, ChatKind, PanelBar, RoomInfo, RoomStatus, RoomSummary, ServerMessage, UserCard } from "./protocol.ts";
+import { badgeOf, CHAT_INTERVAL_MS, RANDOM_MAP, shownName, SNAPSHOT_EVERY, START_BARS, toWireState, typingPacketDue } from "./protocol.ts";
 
 export interface Peer {
   readonly id: number;
@@ -19,6 +19,8 @@ export interface Peer {
 export interface Profile {
   name: string;
   nick: string;
+  /** What the others see of the account: the user list's card, the slot's and the panel's badges. */
+  card: UserCard;
   /** The room shows the ID rather than the nick (slot +0x68). */
   useId: boolean;
   character: string;
@@ -146,7 +148,13 @@ export class Room {
       players: this.bySlot().map((m) => ({
         id: m.peer.id,
         name: m.profile.name,
+        nick: m.profile.nick,
+        useId: m.profile.useId,
         character: m.profile.character,
+        hue: m.profile.hue,
+        wins: m.profile.card.wins,
+        cell: m.profile.card.cell,
+        badge: badgeOf(m.profile.card),
         ready: m.ready,
         team: m.team,
         slot: m.slot,
@@ -169,14 +177,14 @@ export class Room {
     };
   }
 
-  /** The room info popup's data (S->C 0x55). Guild, rank, gender and stars are account data and left out. */
-  detail(): { status: RoomStatus; round: number; players: { slot: number; name: string }[] } {
+  /** The room info popup's data (S->C 0x55): the players' slots, IDs and badges; its stars are not known (R). */
+  detail(): { status: RoomStatus; round: number; players: { slot: number; name: string; badge: Badge }[] } {
     const match = this.match;
     const status: RoomStatus = !match ? "waiting" : match.phase === "match-over" ? "over" : "round";
     return {
       status,
       round: match?.round ?? 0,
-      players: this.bySlot().map((m) => ({ slot: m.slot, name: m.profile.name })),
+      players: this.bySlot().map((m) => ({ slot: m.slot, name: m.profile.name, badge: badgeOf(m.profile.card) })),
     };
   }
 
@@ -186,7 +194,7 @@ export class Room {
     if (this.freeSlot() === null) return "정원 초과 입니다.";
     this.addMember(peer, profile, this.joinerTeam());
     this.broadcastRoom();
-    this.broadcastChat("enter", profile.name, "");
+    this.broadcastChat("enter", shownName(profile), "");
     return null;
   }
 
@@ -213,7 +221,7 @@ export class Room {
       }
     }
     this.broadcastRoom();
-    this.broadcastChat(kind, member.profile.name, "");
+    this.broadcastChat(kind, shownName(member.profile), "");
   }
 
   /**
@@ -274,14 +282,17 @@ export class Room {
     return null;
   }
 
-  /** A room chat line, dropped like the original client drops it: a repeat, or within 2 s (0x43f7a0). */
+  /**
+   * A room chat line, dropped like the original client drops it: a repeat, or within 2 s (0x43f7a0).
+   * Every room line names the player as the slot does (+0x68: 0x446c5d, 0x44a212, 0x427a3c).
+   */
   chat(peerId: number, text: string): void {
     const member = this.members.get(peerId);
     if (!member || this.playing) return;
     const now = this.deps.now();
     if (!chatAllowed(member.lastChat, text, now)) return;
     member.lastChat = { text, at: now };
-    this.broadcastChat("talk", member.profile.name, text);
+    this.broadcastChat("talk", shownName(member.profile), text);
   }
 
   setMode(peerId: number, mode: GameMode): string | null {
@@ -520,6 +531,11 @@ export class Room {
 
   private broadcastChat(kind: ChatKind, name: string, text: string): void {
     this.broadcast({ type: "chat", kind, name, text });
+  }
+
+  /** A member's account changed (its nick, its ID check): the room shows it, between matches. */
+  profileChanged(): void {
+    if (!this.playing) this.broadcastRoom();
   }
 
   private broadcastRoom(): void {

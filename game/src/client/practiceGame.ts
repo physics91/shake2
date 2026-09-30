@@ -1,3 +1,4 @@
+import type { Badge } from "../server/protocol.ts";
 import { layoutFromLevel, PRACTICE_MAP } from "../sim/level.ts";
 import { step } from "../sim/match.ts";
 import { createPractice } from "../sim/practice.ts";
@@ -33,6 +34,8 @@ export interface PracticeGameOptions {
   onExit: () => void;
   /** Time-over: straight to the my-info screen (scene 5), here the practice setup. */
   onTimeUp: () => void;
+  /** The account's guild and level on the player's panel row and result rows; none without an account. */
+  badge?: Badge;
 }
 
 /**
@@ -83,6 +86,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
       keepMusic: true,
       announce,
       fadeFrom,
+      people: options.badge ? new Map([[local.id, { name: local.name, badge: options.badge }]]) : undefined,
     });
     view = nextView;
     // Browser checks steer by the live state in development; production builds drop this.

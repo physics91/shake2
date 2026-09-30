@@ -2,7 +2,7 @@
 // a mouse screen like the original; the page's controls under it (online.ts) stay as the keyboard
 // and screen reader path. Geometry and rules: roomLayout.ts and original/FIDELITY.md §13.
 import type { Rect } from "../assets/types.ts";
-import { chatLine as sendableChat, RANDOM_MAP } from "../server/protocol.ts";
+import { chatLine as sendableChat, RANDOM_MAP, shownName } from "../server/protocol.ts";
 import type { ClientMessage, LobbyPlayer, RoomInfo } from "../server/protocol.ts";
 import { animDue } from "../sim/constants.ts";
 import { isTeamMode, MODE_NAMES } from "../sim/modes.ts";
@@ -12,7 +12,8 @@ import { loadImage, loadImageSheet, loadSheet } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
 import { CaretBlink, commandCycle } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
-import { guildRect, INSTALLED_VERSION, rankRect, VERSION_TEXT } from "./hudLayout.ts";
+import { drawBadge } from "./badge.ts";
+import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
 import { MESSAGE_BOX, MESSAGE_HELP, messageLines } from "./lobbyLayout.ts";
 import type { BoxImages, PracticeBox } from "./practiceBox.ts";
 import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
@@ -545,11 +546,11 @@ export class RoomScreen {
     if (isTeamMode(this.room.mode)) blit(ctx, assets.object1, teamPanelRect(player.team), x + SLOT_ART.teamPanel.x, y + SLOT_ART.teamPanel.y);
     const host = player.id === this.room.hostId;
     if (host || player.ready) blit(ctx, assets.object1, host ? SLOT_ART.host : SLOT_ART.ready, x + SLOT_ART.square.x, y + SLOT_ART.square.y);
-    outlinedText(ctx, player.name, x + SLOT_ART.name.x, y + SLOT_ART.name.y, "#ffffff", FONT_12, "left", OUTLINE.name);
+    // The ID or the nick, as the slot's +0x68 says (0x425560).
+    outlinedText(ctx, shownName(player), x + SLOT_ART.name.x, y + SLOT_ART.name.y, "#ffffff", FONT_12, "left", OUTLINE.name);
     this.drawPortrait(player, x + SLOT_ART.portrait.x, y + SLOT_ART.portrait.y, now);
-    // Account data (gender, guild, rank) is the server's; like the game's panel: guild 0, rank 1, no gender.
-    blit(ctx, assets.guild, guildRect(0), x + SLOT_ART.guild.x, y + SLOT_ART.guild.y);
-    blit(ctx, assets.mark, rankRect(1), x + SLOT_ART.rank.x, y + SLOT_ART.rank.y);
+    // No gender icon: every remake account's is 0.
+    drawBadge(ctx, assets, player.badge, { x: x + SLOT_ART.guild.x, y: y + SLOT_ART.guild.y }, { x: x + SLOT_ART.rank.x, y: y + SLOT_ART.rank.y });
     outlinedText(ctx, "100", x + SLOT_ART.points.x, y + SLOT_ART.points.y, "#ffffff", FONT_13);
   }
 
@@ -587,7 +588,7 @@ export class RoomScreen {
     const { ctx } = this;
     const first = this.scroll.first(this.log.length);
     const view = { first, count: CHAT_LOG.lines, x: CHAT_LOG.x, y: CHAT_LOG.y, step: CHAT_LOG.lineStep };
-    drawChatLines(ctx, this.log, view, this.me?.name ?? "");
+    drawChatLines(ctx, this.log, view, this.me ? shownName(this.me) : "");
     const thumb = this.scroll.drawnThumb(this.log.length);
     if (thumb !== null) drawThumb(ctx, this.options.assets.button, this.scroll.dragging ? THUMB.dragging : THUMB.normal, THUMB.x, thumb);
     // The line and its caret go under either box (0x427ba0).

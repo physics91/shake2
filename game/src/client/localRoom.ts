@@ -5,7 +5,7 @@
 import type { Manifest } from "../assets/types.ts";
 import { compareIgnoreCase } from "../server/cp949.ts";
 import type { ClientMessage, RoomInfo } from "../server/protocol.ts";
-import { RANDOM_MAP } from "../server/protocol.ts";
+import { NO_BADGE, RANDOM_MAP } from "../server/protocol.ts";
 import { MAX_PLAYERS, MEDALS_TO_WIN, ROUND_SECONDS } from "../sim/constants.ts";
 import { msvcRand, srandTime } from "../sim/rng.ts";
 import type { Rules } from "../sim/types.ts";
@@ -44,7 +44,10 @@ export function localRoom(lists: LocalLists, characters: readonly [string, strin
     music: 0,
     mode: 0,
     closed: Array.from({ length: MAX_PLAYERS }, (_, slot) => slot >= LOCAL_IDS.length),
-    players: LOCAL_IDS.map((id, slot) => ({ id, name: `${slot + 1}P`, character: characters[slot], ready: true, team: slot + 1, slot })),
+    players: LOCAL_IDS.map((id, slot) => {
+      const name = `${slot + 1}P`;
+      return { id, name, nick: name, useId: true, character: characters[slot], hue: 0, wins: 0, cell: 0, badge: NO_BADGE, ready: true, team: slot + 1, slot };
+    }),
     playing: false,
   };
 }

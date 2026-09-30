@@ -6,8 +6,9 @@ export type ChatLineClass = "system" | "own" | "police" | "normal";
 
 /**
  * The log line for a chat message. Entering and leaving use the room's strings (0x46edf0 and
- * 0x46edcc, 0x446ae0 kinds 2 and 3); a host's leave, S->C 0x40's (0x46ef34). A spoken line's format is not known: "[nick] text" (R), after
- * the own-line test, which looks for "[" and the own nickname.
+ * 0x46edcc, 0x446ae0 kinds 2 and 3); a host's leave, S->C 0x40's (0x46ef34). The name is the one the
+ * slot shows (+0x68: the ID or the nick). A spoken line's format is not known: "[name] text" (R), after
+ * the own-line test, which looks for "[" and the own shown name (0x427a3c).
  */
 export function chatEntry(message: { kind: ChatKind; name: string; text: string }): string {
   switch (message.kind) {

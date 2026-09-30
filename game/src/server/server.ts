@@ -197,6 +197,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       channel: spec.name,
       friends,
       saveCharacter: (name, choice) => accounts.update(name, choice),
+      badgeOf: (name) => {
+        const account = accounts.get(name);
+        return account ? { guild: account.guild, level: accounts.standing(account.id).level } : null;
+      },
       now: () => Date.now(),
       roomCode: randomRoomCode,
     }),

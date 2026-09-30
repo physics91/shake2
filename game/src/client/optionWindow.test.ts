@@ -61,7 +61,7 @@ describe("option window (scene 13)", () => {
     expect(window.macros[1]).toBe("a");
     const fresh = new OptionWindow(setup(settings).host);
     expect(fresh.busy).toBe(true);
-    fresh.friendsAnswered([{ name: "철수", location: "" }]);
+    fresh.friendsAnswered([{ name: "철수", location: "", badge: null }]);
     expect(fresh.busy).toBe(false);
   });
 
@@ -225,7 +225,7 @@ describe("option window (scene 13)", () => {
   describe("friend popup (0x422c40)", () => {
     it("asks to delete a row with an ID and to add on an empty row", () => {
       const { window, click, log } = setup();
-      window.friendsAnswered([{ name: "영희", location: "복원판 채널" }]);
+      window.friendsAnswered([{ name: "영희", location: "복원판 채널", badge: null }]);
       click(AT.friend(0));
       expect(window.popup).toEqual({ mode: "delete", name: "영희" });
       click(AT.popupOk);

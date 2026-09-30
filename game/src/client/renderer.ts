@@ -7,8 +7,9 @@ import { isTeamMode } from "../sim/modes.ts";
 import type { MatchState, PlayerState } from "../sim/types.ts";
 import { BombKind, CellKind } from "../sim/types.ts";
 import { suddenDeathOrder } from "../sim/world.ts";
-import type { PanelBar } from "../server/protocol.ts";
+import type { Badge, PanelBar } from "../server/protocol.ts";
 import { START_BARS } from "../server/protocol.ts";
+import { drawBadge } from "./badge.ts";
 import type { Sheet } from "./assets.ts";
 import {
   BAR_BLOCKS,
@@ -17,7 +18,6 @@ import {
   CANDY_POS,
   CLOCK_POS,
   countdownBlit,
-  guildRect,
   HELP_COLOR,
   HELP_TEXT,
   HURRY_MS,
@@ -28,7 +28,6 @@ import {
   itemIconRect,
   PANEL,
   panelTop,
-  rankRect,
   SCREEN_H,
   SCREEN_W,
   teamColor,
@@ -41,7 +40,7 @@ import { bubbleLines, CHAT_BUBBLE, CHAT_LINE, TYPING_MARK } from "./chat.ts";
 import { balloonAt, NET_TYPING_MARK } from "./matchChat.ts";
 import type { SceneAssets } from "./scene.ts";
 import { characterOf } from "./scene.ts";
-import { renderFinalResult, renderRoundResult, renderWait } from "./screens.ts";
+import { personName, renderFinalResult, renderRoundResult, renderWait } from "./screens.ts";
 import { blit, blitBlended, drawFrame, drawFrameOrHalf, timedFrame } from "./sprite.ts";
 import { practiceHelp } from "./practiceHelp.ts";
 import { fpsBlocks, pingBlocks } from "./panelBars.ts";
@@ -79,6 +78,11 @@ export interface RenderView {
   chat?: ChatDraw;
   /** Network: each player's panel bars by id; one without them shows A 30 and B 0. */
   bars?: ReadonlyMap<number, Omit<PanelBar, "id">>;
+  /**
+   * Each player's name as the match screens show it (the ID or the nick, as the room slot's +0x68 says) and
+   * its guild and level badges, by id. A player not in it shows its match name and no badges.
+   */
+  people?: ReadonlyMap<number, { name: string; badge: Badge }>;
 }
 
 export interface ChatDraw {
@@ -115,7 +119,7 @@ function renderNetworkScreen(ctx: CanvasRenderingContext2D, assets: SceneAssets,
       renderRoundResult(ctx, assets, state, view);
       return null;
     case "match-over":
-      renderFinalResult(ctx, assets, state);
+      renderFinalResult(ctx, assets, state, view);
       return null;
   }
   renderField(ctx, assets, state, view);
@@ -145,7 +149,7 @@ function renderPracticeScreen(ctx: CanvasRenderingContext2D, assets: SceneAssets
       renderRoundResult(ctx, assets, state, view);
       break;
     case "match-over":
-      renderFinalResult(ctx, assets, state);
+      renderFinalResult(ctx, assets, state, view);
       break;
     default:
       renderField(ctx, assets, state, view);
@@ -239,7 +243,7 @@ export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, 
   }
   drawCandy(ctx, assets, locals[0]?.candy ?? 0);
   drawEffects(ctx, assets, state);
-  drawPanel(ctx, assets, state, view.bars);
+  drawPanel(ctx, assets, state, view.bars, view.people);
   // The panel's last part (0x40fb81): the others' names while the own chat line is open.
   if (view.chat?.line) drawChatNameTags(ctx, assets, state, view);
   drawFaces(ctx, assets, state, view);
@@ -333,8 +337,9 @@ function drawChatNameTags(ctx: CanvasRenderingContext2D, assets: SceneAssets, st
   for (const player of state.players) {
     if (view.localPlayerIds.includes(player.id) || !player.alive || player.gone || player.status.invisible !== null) continue;
     const at = screenPos(assets, player);
-    plainText(ctx, player.name, at.x + 1, at.y + 6, "#000000", FONT_12, "center");
-    plainText(ctx, player.name, at.x, at.y + 5, teams ? teamColor(player.team) : "#ffffff", FONT_12, "center");
+    const name = personName(view.people, player);
+    plainText(ctx, name, at.x + 1, at.y + 6, "#000000", FONT_12, "center");
+    plainText(ctx, name, at.x, at.y + 5, teams ? teamColor(player.team) : "#ffffff", FONT_12, "center");
   }
 }
 
@@ -592,7 +597,7 @@ function drawCandy(ctx: CanvasRenderingContext2D, assets: SceneAssets, count: nu
 }
 
 /** Right panel (0x40f9a0) per room slot: SP label, two bars, medals, guild, rank and name. */
-function drawPanel(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, bars: RenderView["bars"]): void {
+function drawPanel(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, bars: RenderView["bars"], people: RenderView["people"]): void {
   const { mark, guild } = assets.hud;
   const teams = isTeamMode(state.rules.mode);
   for (const player of state.players) {
@@ -614,9 +619,9 @@ function drawPanel(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: Ma
     for (let k = 0; k < player.medals; k++) {
       blit(ctx, mark, PANEL.medal.src, PANEL.medal.x + PANEL.medal.step * k, y0 + PANEL.medal.dy);
     }
-    blit(ctx, guild, guildRect(0), PANEL.guild.x, y0 + PANEL.guild.dy);
-    blit(ctx, mark, rankRect(1), PANEL.rank.x, y0 + PANEL.rank.dy);
-    outlinedText(ctx, player.name, PANEL.name.x, y0 + PANEL.name.dy, nameColor, FONT_12);
+    const person = people?.get(player.id);
+    drawBadge(ctx, { guild, mark }, person?.badge, { x: PANEL.guild.x, y: y0 + PANEL.guild.dy }, { x: PANEL.rank.x, y: y0 + PANEL.rank.dy });
+    outlinedText(ctx, personName(people, player), PANEL.name.x, y0 + PANEL.name.dy, nameColor, FONT_12);
   }
 }
 

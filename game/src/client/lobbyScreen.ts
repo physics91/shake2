@@ -4,14 +4,16 @@
 import type { Rect } from "../assets/types.ts";
 import { animDue } from "../sim/constants.ts";
 import { cp949Bytes, trimChat } from "../server/cp949.ts";
-import type { ClientMessage, RoomStatus, RoomSummary } from "../server/protocol.ts";
-import { chatLine as sendableChat, RANDOM_MAP } from "../server/protocol.ts";
+import { hasItem, ITEM_MASK, ITEM_WHISPER } from "../server/items.ts";
+import type { Badge, ClientMessage, OwnAccount, RoomStatus, RoomSummary, UserCard } from "../server/protocol.ts";
+import { chatLine as sendableChat, RANDOM_MAP, shownName } from "../server/protocol.ts";
 import type { Sheet } from "./assets.ts";
-import { loadImage, loadImageSheet, loadSheet } from "./assets.ts";
+import { loadCp949, loadImage, loadImageSheet, loadSheet } from "./assets.ts";
+import { drawBadge, guildLines, guildName, levelTitle } from "./badge.ts";
 import type { SoundBank } from "./audio.ts";
 import { CaretBlink, commandCycle, lobbyKeyOpensChat } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
-import { guildRect, INSTALLED_VERSION, rankRect, VERSION_TEXT } from "./hudLayout.ts";
+import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
 import type { LobbyState } from "./lobbyView.ts";
 import {
   BANNER,
@@ -86,7 +88,6 @@ import {
   GREETING_POPUP,
   greetingCaret,
   greetingLines,
-  LEVEL_TITLES,
   MY_INFO_BUTTONS,
   MY_INFO_WINDOW,
   myInfoButtonAt,
@@ -96,6 +97,7 @@ import {
   stepCharacter,
   USE_ID_MARK,
 } from "./myInfoLayout.ts";
+import { recordText, USER_INFO, USER_INFO_CLOSE, USER_INFO_FIELDS, USER_INFO_ITEMS } from "./userInfoLayout.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
 import type { Button } from "./roomLayout.ts";
 import { CHAT_INPUT, ChatScroll, inside, roomNumberText, shownMapName, wrapChat } from "./roomLayout.ts";
@@ -132,12 +134,16 @@ export interface LobbyScreenAssets {
   /** The option window (scene 13) and its friend popup. */
   option: HTMLImageElement;
   basicWindow: HTMLImageElement;
+  /** new_userinfo: the user information window. */
+  userInfo: HTMLImageElement;
+  /** guild.dat's lines: the guilds' names. */
+  guilds: string[];
   cursor: Sheet;
 }
 
 export async function loadLobbyAssets(): Promise<LobbyScreenAssets> {
   const image = (name: string) => loadImage(`image/${name}.png`);
-  const [background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, option, basicWindow, cursor] = await Promise.all([
+  const [background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, option, basicWindow, userInfo, guilds, cursor] = await Promise.all([
     image("new_status"),
     image("new_banner"),
     image("new_button"),
@@ -154,9 +160,11 @@ export async function loadLobbyAssets(): Promise<LobbyScreenAssets> {
     image("new_winobject"),
     image("new_option"),
     image("new_basicwindow"),
+    image("new_userinfo"),
+    loadCp949("guild.dat").then(guildLines),
     loadImageSheet("cursor"),
   ]);
-  return { background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, option, basicWindow, cursor };
+  return { background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, option, basicWindow, userInfo, guilds, cursor };
 }
 
 export interface LobbyScreenOptions {
@@ -179,6 +187,8 @@ export interface LobbyScreenOptions {
   filterChanged(waitingOnly: boolean): void;
   /** What the my-info window shows and edits; the session keeps it. */
   profile: MyProfile;
+  /** The account's login record as last sent: the my-info window's other fields, the items the user info window tests. */
+  account(): OwnAccount | null;
   /** The my-info window's O with a change (C->S 0x1a); the answer comes to profileSaved. */
   saveCharacter(character: string, useId: boolean): void;
   /** The greeting popup's O (C->S 0x58); the answer comes to greetingSaved. */
@@ -219,12 +229,12 @@ interface MyInfo {
 }
 
 /** The popup open over the lobby; the message box is apart and may sit on the create popup. My-info is scene 10, option 13. */
-type Popup = "create" | "password" | "remote" | "roomInfo" | "myInfo" | "option" | null;
+type Popup = "create" | "password" | "remote" | "roomInfo" | "userInfo" | "myInfo" | "option" | null;
 
 interface RoomInfoView {
   status: RoomStatus;
   round: number;
-  players: readonly { slot: number; name: string }[];
+  players: readonly { slot: number; name: string; badge: Badge }[];
 }
 
 /** The popup's record before the reply: zeroed, so "ROUND 1" and no rows (0x430880). */
@@ -265,6 +275,8 @@ export class LobbyScreen {
   /** The room the password popup is for ([0x46e7d4]). */
   private passwordRoom: string | null = null;
   private roomInfo: RoomInfoView = ZEROED_INFO;
+  /** The user information window's copy of a row's record (0x42f160): a later list does not change it. */
+  private userInfo: { name: string; card: UserCard } | null = null;
   /** MSGBOX ([0x48c248]): its text and when it opened; it closes itself after 2 s. */
   private message: { text: string; since: number } | null = null;
   private roomPageNo = 1;
@@ -374,6 +386,17 @@ export class LobbyScreen {
     else this.options.send({ type: "join-room", code: room.code });
   }
 
+  /**
+   * The roster's mirror of turning to the user's page and clicking the row; the lobby must be clear,
+   * as for the click. True when the window opened.
+   */
+  showUser(id: number): boolean {
+    if (this.helpScreen || this.busy || !this.clear) return false;
+    const user = this.state.users.find((u) => u.id === id);
+    if (user) this.openUserInfo(user.name, user.card);
+    return Boolean(user);
+  }
+
   /** S->C 0x55: the room info popup's record, whichever room it answers (the original does not check). */
   showRoomInfo(info: RoomInfoView): void {
     if (this.popup === "roomInfo") this.roomInfo = info;
@@ -394,8 +417,14 @@ export class LobbyScreen {
 
   // State
 
-  private get ownName(): string {
+  private get ownId(): string {
     return this.state.users.find((u) => u.id === this.options.playerId)?.name ?? "";
+  }
+
+  /** The own name as the chat's own-line test reads it: the ID or the nick, by 아이디 체크 (0x42d393). */
+  private get ownName(): string {
+    const { nick, useId } = this.options.profile;
+    return shownName({ name: this.ownId, nick, useId });
   }
 
   private get rows(): (RoomSummary | null)[] {
@@ -476,6 +505,11 @@ export class LobbyScreen {
       if (inside(ROOM_INFO.close.hit, x, y)) this.closePopup(true);
       return;
     }
+    if (this.popup === "userInfo") {
+      // Only X acts (0x4597e8); the whisper and mask icons do nothing.
+      if (inside(USER_INFO_CLOSE.hit, x, y)) this.closePopup(true);
+      return;
+    }
     if (this.popup === "create") {
       this.createRelease(x, y);
       return;
@@ -547,6 +581,12 @@ export class LobbyScreen {
       this.joinRoom(room);
       return;
     }
+    const userRow = userRowAt(x, y);
+    const user = userRow >= 0 ? userPage(this.state.users, this.userPageNo)[userRow] : null;
+    if (user?.name) {
+      this.openUserInfo(user.name, user.card);
+      return;
+    }
     const count = this.log.length;
     if (inside(LOBBY_SCROLL.up.hit, x, y)) this.scroll.up(count);
     else if (inside(LOBBY_SCROLL.down.hit, x, y)) this.scroll.down(count);
@@ -569,6 +609,25 @@ export class LobbyScreen {
     this.roomInfo = ZEROED_INFO;
     this.openPopup("roomInfo", `${roomNumberText(room.number)}번 방 정보 창이 열렸습니다. Esc로 닫습니다.`);
     this.options.send({ type: "room-info", code: room.code });
+  }
+
+  /** A user row (0x4307b0 → 0x42f160): the row's record in the window; nothing is sent, no sound. */
+  private openUserInfo(name: string, card: UserCard): void {
+    this.chat.close();
+    this.userInfo = { name, card };
+    const { guilds } = this.options.assets;
+    const parts = [
+      `${name} 정보 창`,
+      `닉네임 ${card.nick}`,
+      card.greeting && `인사말 ${card.greeting}`,
+      guildName(guilds, card.guild) && `길드 ${guildName(guilds, card.guild)}`,
+      `레벨 ${levelTitle(card.level).trim()}`,
+      `순위 ${card.rank}`,
+      `셀포인트 ${card.cell}`,
+      `전적 ${recordText(card.wins, card.losses)}`,
+      "Esc로 닫습니다.",
+    ];
+    this.openPopup("userInfo", parts.filter(Boolean).join(". "));
   }
 
   private openPopup(popup: Exclude<Popup, null>, announce: string): void {
@@ -832,6 +891,7 @@ export class LobbyScreen {
     }
     this.popup = null;
     this.roomInfo = ZEROED_INFO;
+    this.userInfo = null;
     this.status.textContent = "";
     if (reopenChat) this.chat.open();
   }
@@ -1070,9 +1130,7 @@ export class LobbyScreen {
           ctx.restore();
         }
       }
-      // Account data is the server's: guild 0 and rank 1 like the game's panel, and no gender.
-      blit(ctx, assets.guild, guildRect(0), USER_PARTS.guild, y);
-      blit(ctx, assets.mark, rankRect(1), USER_PARTS.rank, y);
+      drawBadge(ctx, assets, user.card, { x: USER_PARTS.guild, y }, { x: USER_PARTS.rank, y });
       outlinedText(ctx, user.name, USER_PARTS.name, y, USER_PARTS.colour, FONT_12);
     });
   }
@@ -1164,7 +1222,42 @@ export class LobbyScreen {
       this.drawRemoteArt();
     } else if (this.popup === "roomInfo") {
       this.drawRoomInfo();
+    } else if (this.popup === "userInfo") {
+      this.drawUserInfo();
     }
+  }
+
+  /** 0x42da60: the snapshot's fields in #F5FF00; name, e-mail and gender stay empty (R). */
+  private drawUserInfo(): void {
+    const info = this.userInfo;
+    if (!info) return;
+    const { ctx } = this;
+    const { assets } = this.options;
+    const { card } = info;
+    const f = USER_INFO_FIELDS;
+    const text = (value: string, at: { x: number; y: number }, font = FONT_12) => outlinedText(ctx, value, at.x, at.y, USER_INFO.colour, font);
+    blit(ctx, assets.userInfo, USER_INFO.src, USER_INFO.at.x, USER_INFO.at.y);
+    text(info.name, f.id);
+    text(card.nick, f.nick);
+    greetingLines(card.greeting).forEach((line, i) => text(line, { x: f.greeting.x, y: f.greeting.y + f.greeting.lineStep * i }, FONT_13));
+    drawBadge(ctx, assets, card, f.guild.icon, f.level.icon);
+    text(guildName(assets.guilds, card.guild), f.guild.name);
+    text(String(card.manner), f.manner);
+    text(String(card.rank), f.rank);
+    text(levelTitle(card.level), f.level.title);
+    text(String(card.cell), f.cell);
+    text(recordText(card.wins, card.losses), f.record);
+    text(String(card.exp), f.exp);
+    const items = this.options.account()?.items ?? [];
+    const { whisper, mask } = USER_INFO_ITEMS;
+    if (hasItem(items, ITEM_WHISPER)) this.button(whisper.lit, whisper.litAt);
+    if (hasItem(items, ITEM_MASK)) this.button(mask.lit, mask.litAt);
+    // Pressed art, the first held over (no message box gate): X, then the icons the items light.
+    const held = this.pointer.held;
+    if (!held) return;
+    if (inside(USER_INFO_CLOSE.hit, held.x, held.y)) this.button(USER_INFO_CLOSE.pressed, USER_INFO_CLOSE.at);
+    else if (hasItem(items, ITEM_WHISPER) && inside(whisper.hit, held.x, held.y)) this.button(whisper.pressed, whisper.at);
+    else if (hasItem(items, ITEM_MASK) && inside(mask.hit, held.x, held.y)) this.button(mask.pressed, mask.at);
   }
 
   /** 0x42ea30: new_basicwindow, the lock and its label, OK or 취소 held, and one '*' a byte. */
@@ -1206,9 +1299,8 @@ export class LobbyScreen {
     for (const player of this.roomInfo.players) {
       if (!player.name) continue;
       const row = roomInfoRow(player.slot);
-      // Account data is the server's: guild 0 and rank 1 as in the user list, no gender or stars.
-      blit(ctx, assets.guild, guildRect(0), row.guild.x, row.guild.y);
-      blit(ctx, assets.mark, rankRect(1), row.rank.x, row.rank.y);
+      // No gender (every remake account's is 0) and no stars (their source is not known).
+      drawBadge(ctx, assets, player.badge, row.guild, row.rank);
       outlinedText(ctx, player.name, row.name.x, row.name.y, colour, FONT_13, "left", outline);
     }
     const close = ROOM_INFO.close;
@@ -1236,6 +1328,7 @@ export class LobbyScreen {
     const balloon = lobbyHelpAt(this.pointer.mouse.x, this.pointer.mouse.y, {
       // My-info and the option window draw their own balloons.
       popup: this.popup === "myInfo" || this.popup === "option" ? null : this.popup,
+      // The user information window's only balloon is its X's (0x42be43).
       message: this.message !== null,
       waitingOnly: this.waitingOnly,
       rows: this.rows,
@@ -1289,24 +1382,26 @@ export class LobbyScreen {
   }
 
   /**
-   * The fields in #F5FF00. The account's name, gender, e-mail, guild name and standing are the
-   * server's and blank here; the numbers are 0 and the level is 1, like the badges elsewhere.
+   * The fields in #F5FF00 from the login record (0x43c790): its numbers as of the login, as the
+   * original never refreshed them. Name, gender and e-mail are the sign-up's and stay empty (R).
    */
   private drawMyInfoFields(): void {
     const { ctx } = this;
     const { assets, profile } = this.options;
+    const account = this.options.account();
     const text = (value: string, at: { x: number; y: number }, font = FONT_12) => outlinedText(ctx, value, at.x, at.y, FIELD_COLOUR, font);
-    const name = this.ownName;
-    text(name, FIELDS.id);
-    text(name, FIELDS.nick);
+    text(account?.id ?? this.ownId, FIELDS.id);
+    text(profile.nick, FIELDS.nick);
     greetingLines(profile.greeting).forEach((line, i) => text(line, { x: FIELDS.greeting.x, y: FIELDS.greeting.y + FIELDS.greeting.lineStep * i }, FONT_13));
-    blit(ctx, assets.guild, guildRect(0), FIELDS.guild.icon.x, FIELDS.guild.icon.y);
-    text("0", FIELDS.manner);
-    blit(ctx, assets.mark, rankRect(1), FIELDS.level.icon.x, FIELDS.level.icon.y);
-    text(LEVEL_TITLES[1], FIELDS.level.title);
-    text("0", FIELDS.cellPoint);
-    text("0 / 0", FIELDS.record);
-    text("0", FIELDS.exp);
+    if (!account) return;
+    drawBadge(ctx, assets, account, FIELDS.guild.icon, FIELDS.level.icon);
+    text(guildName(assets.guilds, account.guild), FIELDS.guild.name);
+    text(String(account.manner), FIELDS.manner);
+    text(String(account.rank), FIELDS.standing);
+    text(levelTitle(account.level), FIELDS.level.title);
+    text(String(account.cell), FIELDS.cellPoint);
+    text(recordText(account.wins, account.losses), FIELDS.record);
+    text(String(account.exp), FIELDS.exp);
   }
 
   /** `_p.spr` from its top-left, its one animation at its own rate (0x462b90, 0x4620e0). */

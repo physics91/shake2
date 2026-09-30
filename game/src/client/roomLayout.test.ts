@@ -179,7 +179,20 @@ describe("room help balloons (0x426570)", () => {
 });
 
 describe("endsBusy", () => {
-  const player = (id: number, team: number, ready = false) => ({ id, name: `P${id}`, character: "bobo", ready, team, slot: id - 1 });
+  const player = (id: number, team: number, ready = false) => ({
+    id,
+    name: `P${id}`,
+    nick: `P${id}`,
+    useId: true,
+    character: "bobo",
+    hue: 0,
+    wins: 0,
+    cell: 0,
+    badge: { guild: -1, level: 12 },
+    ready,
+    team,
+    slot: id - 1,
+  });
   const room = {
     code: "ABCD",
     number: 0,

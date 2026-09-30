@@ -1,7 +1,7 @@
 import type { Manifest } from "../assets/types.ts";
 import { cutBytes, typeable } from "../server/cp949.ts";
 import type { ChannelRow, ClientMessage, OwnAccount, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
-import { START_BARS, typingPacketDue } from "../server/protocol.ts";
+import { badgeOf, shownName, START_BARS, typingPacketDue } from "../server/protocol.ts";
 import {
   chatLine,
   fromWireState,
@@ -478,6 +478,7 @@ class OnlineSession {
         this.lobbyWaitingOnly = waitingOnly;
       },
       profile: this.profile,
+      account: () => this.account,
       saveCharacter: (character, useId) => this.send({ type: "set-character", character, hue: this.profile.hue, useId }),
       saveGreeting: (greeting) => this.send({ type: "set-greeting", greeting }),
       settings,
@@ -567,7 +568,7 @@ class OnlineSession {
       this.kicked = true;
       this.roomView?.showKicked();
     } else {
-      this.addLine(kickLine(out.name));
+      this.addLine(kickLine(shownName(out)));
     }
   }
 
@@ -884,6 +885,7 @@ class OnlineSession {
         announce: screen.announce,
         onExit: () => finish(() => this.backToList()),
         onTimeUp: () => finish(() => this.backToStatus()),
+        badge: this.account ? badgeOf(this.account) : undefined,
       }),
     );
   }
@@ -1285,7 +1287,8 @@ class RoomView {
     const me = this.welcome.playerId;
     const isHost = room.hostId === me;
     const own = room.players.find((p) => p.id === me);
-    this.ownName = own?.name ?? this.ownName;
+    // The own-line test reads the name the room shows (0x427a3c).
+    this.ownName = own ? shownName(own) : this.ownName;
     this.ready = own?.ready ?? false;
     this.heading.textContent = `방 ${String(room.number + 1).padStart(3, "0")} ${room.title}`;
     this.readyButton.hidden = isHost;
@@ -1517,9 +1520,11 @@ class OnlineGame {
     try {
       // The room may say RANDOM; the layout is the map the server rolled.
       const [assets, panel, messageBox, buttons] = await Promise.all([
+        // Each slot's hue turns its sheets, panel face and head (0x44de67, 0x4406ca).
         loadSceneAssets(
           this.layout.id,
           room.players.map((p) => p.character),
+          room.players.map((p) => ({ id: p.id, character: p.character, hue: p.hue, face: true, head: true })),
         ),
         loadImage("image/images.png"),
         loadImage("image/new_messagebox.png"),
@@ -1535,6 +1540,7 @@ class OnlineGame {
         hostId: this.hostId,
         music: this.music,
         announce: this.screen.announce,
+        people: new Map(room.players.map((p) => [p.id, { name: shownName(p), badge: p.badge }])),
       });
       this.screen.loaded();
       if (this.state) {

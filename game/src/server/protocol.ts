@@ -5,8 +5,11 @@ import { isGameMode, TEAM_COUNT } from "../sim/modes.ts";
 import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEvent } from "../sim/types.ts";
 import { cp949Bytes, cutBytes, trimChat, typeable } from "./cp949.ts";
 
-/** 11: accounts (login, sign-up, the version check, hello with a session and a channel). */
-export const PROTOCOL_VERSION = 11;
+/**
+ * 12: account cards (the user list's card, the room's nick, hue and badges, the room info's and the
+ * friend list's badges). 11: accounts (login, sign-up, the version check, hello with a session and a channel).
+ */
+export const PROTOCOL_VERSION = 12;
 export const MAX_MESSAGE_BYTES = 4096;
 export const MAX_NAME_LENGTH = 12;
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -68,6 +71,47 @@ export interface OwnAccount {
   items: number[];
   /** Character pairs owned (0x484718). */
   pairs: number[];
+}
+
+/**
+ * The icons drawn by a player's name in the lists, the room and the game: the guild mark (0x441940,
+ * guild.dat line, −1 none) and the level badge (0x442900, 1..12). The gender icon before them is
+ * drawn for 1 and 2 only, and every remake account's gender is 0, so it is not sent (R).
+ */
+export interface Badge {
+  guild: number;
+  level: number;
+}
+
+/** Another player's account as the user info window shows it (S->C 0x16's record), without its name and e-mail (R). */
+export interface UserCard extends Badge {
+  nick: string;
+  greeting: string;
+  /** 전적 "%d / %d". */
+  wins: number;
+  losses: number;
+  cell: number;
+  /** 순위, 0 for none yet. */
+  rank: number;
+  manner: number;
+  exp: number;
+}
+
+export function userCard(account: OwnAccount): UserCard {
+  const { nick, greeting, wins, losses, cell, rank, manner, exp, guild, level } = account;
+  return { nick, greeting, wins, losses, cell, rank, manner, exp, guild, level };
+}
+
+/** The name a room slot and the game's panel show: the ID with the ID check on (+0x68), else the nick. */
+export function shownName(player: { name: string; nick: string; useId: boolean }): string {
+  return player.useId || !player.nick ? player.name : player.nick;
+}
+
+/** A player with no account (two on one keyboard): no guild mark, no level badge (0x442900 draws 1..12). */
+export const NO_BADGE: Badge = { guild: -1, level: 0 };
+
+export function badgeOf(card: Badge): Badge {
+  return { guild: card.guild, level: card.level };
 }
 
 export type ClientMessage =
@@ -170,8 +214,18 @@ export interface PanelBar {
 
 export interface LobbyPlayer {
   id: number;
+  /** The login ID (+0). */
   name: string;
+  /** +0x14; the slot and the game's panel show it unless `useId` (+0x68). */
+  nick: string;
+  useId: boolean;
   character: string;
+  /** −180..180 (+0x90). */
+  hue: number;
+  /** 전적's first number at the join (+0x28). */
+  wins: number;
+  cell: number;
+  badge: Badge;
   ready: boolean;
   /** Room slot team (+0x74), 1..6; kept in every mode. */
   team: number;
@@ -214,10 +268,11 @@ export interface RoomSummary {
   secret: boolean;
 }
 
-/** A player in the lobby's user list (0x470bf0 + 0xe0 i). */
+/** A player in the lobby's user list (0x470bf0 + 0xe0 i): the row shows the ID, a click the card. */
 export interface LobbyUser {
   id: number;
   name: string;
+  card: UserCard;
 }
 
 /** The room info's status (+0xc): a round in play, the match over, or waiting. */
@@ -243,7 +298,7 @@ export type ServerMessage =
   /** What the lobby shows; sent to the players in the lobby when it changes. `channel` is the banner's name. */
   | { type: "lobby"; channel: string; rooms: RoomSummary[]; users: LobbyUser[] }
   /** The room info popup's data (S->C 0x55): a match's round, or waiting, and the players by slot. */
-  | { type: "room-info"; code: string; status: RoomStatus; round: number; players: { slot: number; name: string }[] }
+  | { type: "room-info"; code: string; status: RoomStatus; round: number; players: { slot: number; name: string; badge: Badge }[] }
   /** One lobby chat line. */
   | { type: "lobby-chat"; name: string; text: string }
   | { type: "room"; room: RoomInfo | null }
@@ -283,9 +338,9 @@ export type ServerMessage =
   | { type: "match-end" }
   /**
    * The friend list (S->C 0x63), in the order asked: the channel's name for one in the lobby,
-   * "%03d번 방" for one in a room, "" for one not connected.
+   * "%03d번 방" for one in a room, "" for one not connected; the badge null for an ID no account has.
    */
-  | { type: "friends"; friends: { name: string; location: string }[] }
+  | { type: "friends"; friends: { name: string; location: string; badge: Badge | null }[] }
   /** The add's result (S->C 0x64): 1, or -1..-5 for the refusals of the table at 0x44c19c. */
   | { type: "friend-added"; result: number; name: string }
   /** The delete's result (S->C 0x65): 1, or anything else for "삭제 실패". */

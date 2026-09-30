@@ -1,8 +1,8 @@
 import type { LevelLayout, Rules } from "../sim/types.ts";
 import { compareIgnoreCase } from "./cp949.ts";
 import type { FriendBook } from "./friends.ts";
-import type { ClientMessage, OwnAccount, ServerMessage } from "./protocol.ts";
-import { CHAT_INTERVAL_MS, roomTitle } from "./protocol.ts";
+import type { Badge, ClientMessage, OwnAccount, ServerMessage } from "./protocol.ts";
+import { CHAT_INTERVAL_MS, roomTitle, shownName, userCard } from "./protocol.ts";
 import type { ChatSent, Peer, Profile, RoomDeps } from "./room.ts";
 import { chatAllowed, Room } from "./room.ts";
 
@@ -47,6 +47,8 @@ export interface LobbyConfig {
   channel: string;
   /** The my-info window's O was taken: the account keeps the character, hue and use-ID flag. */
   saveCharacter?(name: string, choice: { character: string; hue: number; useId: boolean }): void;
+  /** A login ID's guild and level for the friend list, connected or not; null for none. */
+  badgeOf?(name: string): Badge | null;
   /** The option window's friend lists, by the name each player said hello with. */
   friends: FriendBook;
   /** Milliseconds: the chat interval, and the host clock the match's rand() reseeds read. */
@@ -109,11 +111,12 @@ export class Lobby {
    * The game server's login (C->S 0x0a after the version): the player comes into the lobby with its
    * account's profile. A character the server no longer has falls back to the first (R).
    */
-  join(peer: Peer, profile: Profile, account: OwnAccount): void {
+  join(peer: Peer, account: OwnAccount): void {
     if (this.peers.has(peer.id)) return;
-    const character = this.config.characters.includes(profile.character) ? profile.character : this.config.characters[0];
+    const character = this.config.characters.includes(account.character) ? account.character : this.config.characters[0];
+    const profile: Profile = { name: account.id, nick: account.nick, card: userCard(account), useId: account.useId, character, hue: account.hue };
     this.peers.set(peer.id, peer);
-    this.profiles.set(peer.id, { ...profile, character });
+    this.profiles.set(peer.id, profile);
     this.config.friends.meet(profile.name);
     this.arrived.add(peer.id);
     this.dirty = true;
@@ -126,6 +129,18 @@ export class Lobby {
       characters: [...this.config.characters],
     });
     this.flushLobby();
+  }
+
+  /**
+   * The account changed by a save over the auth connection (the greeting popup's, scene 5's): the
+   * lists show the new card from their next send, as the original's did from its next page (0x16).
+   */
+  accountChanged(peerId: number, account: OwnAccount): void {
+    const profile = this.profiles.get(peerId);
+    if (!profile) return;
+    Object.assign(profile, { nick: account.nick, useId: account.useId, card: userCard(account) });
+    this.dirty = true;
+    this.roomOf.get(peerId)?.profileChanged();
   }
 
   disconnect(peerId: number): void {
@@ -211,7 +226,7 @@ export class Lobby {
       }
       case "chat":
         if (room) room.chat(peerId, message.text);
-        else this.chatInLobby(peerId, profile.name, message.text);
+        else this.chatInLobby(peerId, shownName(profile), message.text);
         break;
       case "start":
         fail(room ? room.start(peerId) : "방에 들어가 있지 않습니다.");
@@ -236,7 +251,8 @@ export class Lobby {
         break;
       case "friends": {
         const names = this.config.friends.list(profile.name);
-        peer.send({ type: "friends", friends: names.map((name) => ({ name, location: this.locationOf(name) })) });
+        const friends = names.map((name) => ({ name, location: this.locationOf(name), badge: this.config.badgeOf?.(name) ?? null }));
+        peer.send({ type: "friends", friends });
         break;
       }
       case "add-friend":
@@ -408,7 +424,10 @@ export class Lobby {
     this.dirty = true;
   }
 
-  /** A lobby chat line, dropped like the room's: a repeat, or within 2 s of the last (0x43f7a0). */
+  /**
+   * A lobby chat line, dropped like the room's: a repeat, or within 2 s of the last (0x43f7a0). It
+   * names the speaker as the room does: the lobby's own-line test reads the shown name too (0x42d393).
+   */
   private chatInLobby(peerId: number, name: string, text: string): void {
     const now = this.config.now();
     if (!chatAllowed(this.lobbyChat.get(peerId), text, now)) return;
@@ -448,7 +467,10 @@ export class Lobby {
       type: "lobby",
       channel: this.config.channel,
       rooms: [...this.rooms.values()].sort((a, b) => a.number - b.number).map((room) => room.summary()),
-      users: [...this.lobbyPeers()].map((peer) => ({ id: peer.id, name: this.profiles.get(peer.id)?.name ?? "" })),
+      users: [...this.lobbyPeers()].flatMap((peer) => {
+        const profile = this.profiles.get(peer.id);
+        return profile ? [{ id: peer.id, name: profile.name, card: profile.card }] : [];
+      }),
     };
   }
 

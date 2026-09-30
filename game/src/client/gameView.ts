@@ -24,6 +24,8 @@ export interface GameViewOptions {
   announce?: (text: string) => void;
   /** The last frame before this view, to fade out first: practice starting over (0x458a32, 0x458b5e). */
   fadeFrom?: HTMLCanvasElement;
+  /** The players' panel names and badges by id, from the room; none for players with no account. */
+  people?: RenderView["people"];
 }
 
 /** Draws a match and plays its sounds and music. Used by local and online play. */
@@ -136,6 +138,7 @@ export class GameView {
     const blind = renderScreen(this.surface, this.assets, state, {
       localPlayerIds: this.options.localPlayerIds,
       hostId: this.hostId,
+      people: this.options.people,
       hurryTick: this.presentation.hurryTick,
       lastRoundDraw: this.lastRoundDraw,
       faces: this.faces,

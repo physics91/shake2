@@ -1,6 +1,7 @@
 // The option window's state and rules (scene 13, shake.exe 0311): opened by the lobby remote's
 // 옵션 (0x420dd0), closed by O, X, Enter or Esc (0x420e90). No drawing and no DOM: the lobby
 // screen draws it (optionScreen.ts) and gives it the mouse, the keys and the editor's text.
+import type { Badge } from "../server/protocol.ts";
 import { DEFAULT_KEYS, firstHeld, GESTURE_DIK, GESTURE_REFUSED } from "./dik.ts";
 import type { CheckId } from "./optionLayout.ts";
 import { FRIEND_ID_LIMIT, optionTargetAt, popupTargetAt } from "./optionLayout.ts";
@@ -12,6 +13,8 @@ import { cp949Bytes } from "../server/cp949.ts";
 export interface FriendRecord {
   name: string;
   location: string;
+  /** The friend's guild and level; null for an ID no account has. */
+  badge: Badge | null;
 }
 
 /** The device switch's failures (res#2, res#3). */

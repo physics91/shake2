@@ -6,8 +6,8 @@ import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
 import { FriendBook } from "./friends.ts";
 import type { LobbyConfig } from "./lobby.ts";
 import { Lobby, PASSWORD_FAILURES_KEPT_MS, PASSWORD_RETRY_MAX_MS, PASSWORD_RETRY_MS } from "./lobby.ts";
-import type { OwnAccount, RoomInfo, ServerMessage } from "./protocol.ts";
-import { START_BARS, TYPING_PACKET_MS, typingPacketDue } from "./protocol.ts";
+import type { OwnAccount, RoomInfo, ServerMessage, UserCard } from "./protocol.ts";
+import { START_BARS, TYPING_PACKET_MS, typingPacketDue, userCard } from "./protocol.ts";
 import { PING_ECHO_MS } from "./room.ts";
 
 const LAYOUT = layoutFromAscii(["1....", ".....", "....2"]);
@@ -38,6 +38,10 @@ function testAccount(id: string, character = "bobo"): OwnAccount {
   };
 }
 
+function cardOf(id: string): UserCard {
+  return userCard(testAccount(id));
+}
+
 function makeLobby(overrides: Partial<LobbyConfig> = {}) {
   let codes = 0;
   const clock = { now: 0 };
@@ -59,8 +63,7 @@ function makeLobby(overrides: Partial<LobbyConfig> = {}) {
   const inbox = new Map<number, ServerMessage[]>();
   const connect = (id: number, name = `P${id}`, character = "bobo", address?: string) => {
     inbox.set(id, []);
-    const profile = { name, nick: name, useId: true, character, hue: 0 };
-    lobby.join({ id, send: (m) => inbox.get(id)?.push(m), address }, profile, testAccount(name, character));
+    lobby.join({ id, send: (m) => inbox.get(id)?.push(m), address }, testAccount(name, character));
   };
   const last = <T extends ServerMessage["type"]>(id: number, type: T) =>
     (inbox.get(id) ?? []).filter((m): m is Extract<ServerMessage, { type: T }> => m.type === type).at(-1);
@@ -710,11 +713,11 @@ describe("Lobby (scene 4)", () => {
   it("puts a greeted player in the lobby with the channel, the rooms and the users there", () => {
     const t = makeLobby();
     t.connect(1, "하나");
-    expect(t.lobbyOf(1)).toEqual({ type: "lobby", channel: "시험 채널", rooms: [], users: [{ id: 1, name: "하나" }] });
+    expect(t.lobbyOf(1)).toEqual({ type: "lobby", channel: "시험 채널", rooms: [], users: [{ id: 1, name: "하나", card: cardOf("하나") }] });
     t.connect(2, "둘");
     expect(t.lobbyOf(1)?.users).toEqual([
-      { id: 1, name: "하나" },
-      { id: 2, name: "둘" },
+      { id: 1, name: "하나", card: cardOf("하나") },
+      { id: 2, name: "둘", card: cardOf("둘") },
     ]);
     expect(t.lobbyOf(2)?.users.map((u) => u.id)).toEqual([1, 2]);
   });
@@ -843,8 +846,8 @@ describe("Lobby (scene 4)", () => {
       status: "waiting",
       round: 0,
       players: [
-        { slot: 0, name: "하나" },
-        { slot: 1, name: "둘" },
+        { slot: 0, name: "하나", badge: { guild: -1, level: 12 } },
+        { slot: 1, name: "둘", badge: { guild: -1, level: 12 } },
       ],
     });
     t.lobby.handle(2, { type: "set-ready", ready: true });
@@ -855,8 +858,46 @@ describe("Lobby (scene 4)", () => {
     expect(t.count(3, "room-info")).toBe(2);
   });
 
-  it("answers the option window's friend list (S->C 0x63): the channel in the lobby, the room's number in a room, blank when not on", () => {
+  it("shows each player's account: the user list's card, the slot's nick, hue, record and badge", () => {
     const t = makeLobby();
+    t.connect(1, "하나");
+    t.connect(2, "둘");
+    t.lobby.handle(1, { type: "create-room", title: "" });
+    expect(t.room(1)?.players[0]).toMatchObject({ name: "하나", nick: "하나", useId: true, hue: 0, wins: 0, cell: 0, badge: { guild: -1, level: 12 } });
+    // A save over the auth connection: the others see it from the next list and room message.
+    t.lobby.accountChanged(1, { ...testAccount("하나"), nick: "첫째", useId: false, greeting: "안녕", guild: 7, wins: 3 });
+    t.lobby.accountChanged(2, { ...testAccount("둘"), greeting: "반가워" });
+    t.lobby.tick();
+    expect(t.room(1)?.players[0]).toMatchObject({ nick: "첫째", useId: false, wins: 3, badge: { guild: 7, level: 12 } });
+    expect(t.lobbyOf(2)?.users).toEqual([{ id: 2, name: "둘", card: { ...cardOf("둘"), greeting: "반가워" } }]);
+    t.lobby.accountChanged(9, testAccount("없음"));
+  });
+
+  it("names a player in the lobby's and the room's lines as the slot does: the nick, or the ID when the account says so (+0x68)", () => {
+    const t = makeLobby();
+    t.connect(1, "하나");
+    t.connect(2, "둘");
+    t.lobby.accountChanged(2, { ...testAccount("둘"), nick: "둘째", useId: false });
+    t.lobby.handle(2, { type: "chat", text: "로비" });
+    t.lobby.handle(1, { type: "chat", text: "로비" });
+    expect(t.lobbyChats(1).map((m) => m.name)).toEqual(["둘째", "하나"]);
+    t.lobby.handle(1, { type: "create-room", title: "" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD" });
+    t.clock.now += 5000;
+    t.lobby.handle(1, { type: "chat", text: "안녕" });
+    t.lobby.handle(2, { type: "chat", text: "반가워" });
+    t.lobby.handle(2, { type: "leave-room" });
+    expect(t.chats(1).map((m) => [m.kind, m.name])).toEqual([
+      ["enter", "둘째"],
+      ["talk", "하나"],
+      ["talk", "둘째"],
+      ["leave", "둘째"],
+    ]);
+  });
+
+  it("answers the option window's friend list (S->C 0x63): the channel in the lobby, the room's number in a room, blank when not on", () => {
+    const badges: Record<string, { guild: number; level: number }> = { 셋: { guild: 4, level: 3 }, 넷: { guild: 0, level: 12 } };
+    const t = makeLobby({ badgeOf: (name) => badges[name] ?? null });
     t.connect(1, "하나");
     t.connect(2, "둘");
     t.connect(3, "셋");
@@ -868,9 +909,9 @@ describe("Lobby (scene 4)", () => {
     expect(t.last(1, "friends")).toEqual({
       type: "friends",
       friends: [
-        { name: "셋", location: "시험 채널" },
-        { name: "둘", location: "001번 방" },
-        { name: "넷", location: "" },
+        { name: "셋", location: "시험 채널", badge: { guild: 4, level: 3 } },
+        { name: "둘", location: "001번 방", badge: null },
+        { name: "넷", location: "", badge: { guild: 0, level: 12 } },
       ],
     });
     // Each name has its own list.
@@ -894,7 +935,7 @@ describe("Lobby (scene 4)", () => {
     t.lobby.disconnect(1);
     t.connect(5, "하나");
     t.lobby.handle(5, { type: "friends" });
-    expect(t.last(5, "friends")?.friends).toEqual([{ name: "둘", location: "시험 채널" }]);
+    expect(t.last(5, "friends")?.friends).toEqual([{ name: "둘", location: "시험 채널", badge: null }]);
     t.lobby.handle(5, { type: "delete-friend", name: "둘" });
     expect(t.last(5, "friend-deleted")).toEqual({ type: "friend-deleted", result: 1, name: "둘" });
     t.lobby.handle(5, { type: "delete-friend", name: "둘" });

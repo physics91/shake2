@@ -251,7 +251,7 @@ export function roomInfoStatus(info: { status: "round" | "over" | "waiting"; rou
 // Help balloons (0x42b450), shown while the 풍선 도움말 option is on (on by default)
 
 export interface LobbyHelpContext {
-  popup: "create" | "password" | "remote" | "roomInfo" | null;
+  popup: "create" | "password" | "remote" | "roomInfo" | "userInfo" | null;
   /** The message box is up: the lobby's own balloons stop, a popup's go on. */
   message: boolean;
   waitingOnly: boolean;
@@ -300,6 +300,9 @@ const REMOTE_HELP: HelpEntry[] = [
 
 const ROOM_INFO_HELP: HelpEntry[] = [{ rect: ROOM_INFO.close.hit, text: "창닫기(esc)" }];
 
+/** The user information window's X (0x42be43), new_userinfo's (515,503)-(546,533). */
+const USER_INFO_HELP: HelpEntry[] = [{ rect: [515, 503, 546, 533], text: "창닫기(esc)" }];
+
 const PASSWORD_HELP: HelpEntry[] = [
   { rect: [249, 241, 369, 257], text: "비밀번호 입력창" },
   { rect: [198, 292, 229, 323], text: "입력 확인(enter)" },
@@ -319,6 +322,7 @@ export function lobbyHelpAt(x: number, y: number, context: LobbyHelpContext): { 
   if (context.popup === "create") return firstHelp(CREATE_HELP, x, y);
   if (context.popup === "password") return firstHelp(PASSWORD_HELP, x, y);
   if (context.popup === "roomInfo") return firstHelp(ROOM_INFO_HELP, x, y);
+  if (context.popup === "userInfo") return firstHelp(USER_INFO_HELP, x, y);
   if (context.popup === "remote") return firstHelp(REMOTE_HELP, x, y);
   if (context.message) return null;
   const main = firstHelp(MAIN_HELP, x, y);

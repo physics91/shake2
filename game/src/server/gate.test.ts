@@ -165,7 +165,7 @@ describe("the gate's game servers (C->S 0x47 and 0x0a)", () => {
     await t.enter(1, "tester");
     expect(t.last(1, "version")).toEqual({ type: "version", version: PROTOCOL_VERSION });
     expect(t.last(1, "welcome")?.account).toMatchObject({ id: "tester", character: "bobo" });
-    expect(t.last(1, "lobby")?.users).toEqual([{ id: 1, name: "tester" }]);
+    expect(t.last(1, "lobby")?.users).toMatchObject([{ id: 1, name: "tester", card: { nick: "tester닉", level: 12, guild: -1 } }]);
     expect(t.gate.onlineCount).toBe(1);
     t.gate.handle(1, { type: "create-room", title: "" });
     expect(t.channels[0].lobby.roomCount).toBe(1);
@@ -291,5 +291,16 @@ describe("the gate's saves over the auth connection (scene 5)", () => {
     expect(t.last(1, "welcome")?.account.character).toBe("doona");
     t.gate.handle(1, { type: "set-character", character: "bobo", hue: 5, useId: true });
     expect(t.last(1, "profile")).toEqual({ type: "profile", character: "bobo", hue: 5, useId: true });
+  });
+
+  it("shows a save over the auth connection in the lobby the account is in", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    t.connect(2, "203.0.113.2");
+    await t.enter(2, "tester");
+    await t.login(1, "tester");
+    t.gate.handle(1, { type: "set-greeting", greeting: "로비에서 인사" });
+    t.channels[0].lobby.tick();
+    expect(t.last(2, "lobby")?.users[0]?.card.greeting).toBe("로비에서 인사");
   });
 });

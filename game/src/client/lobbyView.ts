@@ -1,8 +1,9 @@
 // The lobby (scene 4, "LOBBY") as a page: the original's screen on a canvas (lobbyScreen.ts) and,
 // under it, page controls for the keyboard and screen readers. The room code join is the remake's.
 import { cutBytes, typeable } from "../server/cp949.ts";
-import type { ClientMessage, LobbyUser, RoomStatus, RoomSummary } from "../server/protocol.ts";
-import { RANDOM_MAP, ROOM_CHAT_LIMIT, ROOM_CODE_LENGTH } from "../server/protocol.ts";
+import type { Badge, ClientMessage, LobbyUser, OwnAccount, RoomStatus, RoomSummary } from "../server/protocol.ts";
+import { RANDOM_MAP, ROOM_CHAT_LIMIT, ROOM_CODE_LENGTH, shownName } from "../server/protocol.ts";
+import type { FriendRecord } from "./optionWindow.ts";
 import { MODE_NAMES } from "../sim/modes.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
 import type { FriendReply } from "./friends.ts";
@@ -34,6 +35,8 @@ export interface LobbyActions {
   filterChanged(waitingOnly: boolean): void;
   /** The my-info window's data; the session keeps it. */
   profile: MyProfile;
+  /** The login record as last sent. */
+  account(): OwnAccount | null;
   /** Save the character and the ID check (set-character); the server answers with profile or an error. */
   saveCharacter(character: string, useId: boolean): void;
   /** Save the greeting (set-greeting); the server answers with the account. */
@@ -47,7 +50,7 @@ export interface RoomInfoReply {
   code: string;
   status: RoomStatus;
   round: number;
-  players: { slot: number; name: string }[];
+  players: { slot: number; name: string; badge: Badge }[];
 }
 
 interface LobbyWelcome {
@@ -108,7 +111,7 @@ export class LobbyView {
     this.welcome = welcome;
     this.actions = actions;
     this.state = state;
-    const { send, say, exit, filterChanged, profile, saveCharacter, saveGreeting, settings } = actions;
+    const { send, say, exit, filterChanged, profile, account, saveCharacter, saveGreeting, settings } = actions;
 
     const title = h("input", { id: "lobby-title", autocomplete: "off" });
     title.addEventListener("input", () => fitBytes(title, CREATE_TITLE_LIMIT));
@@ -244,6 +247,7 @@ export class LobbyView {
             exit,
             filterChanged,
             profile,
+            account,
             saveCharacter,
             saveGreeting,
             fadeIn,
@@ -305,12 +309,34 @@ export class LobbyView {
           )),
     );
     this.userList.replaceChildren(
-      ...state.users.map((user) => h("li", {}, user.name, user.id === this.welcome.playerId ? " (나)" : "")),
+      ...state.users.map((user) =>
+        h(
+          "li",
+          {},
+          user.name,
+          user.id === this.welcome.playerId ? " (나)" : "",
+          h(
+            "button",
+            {
+              class: "btn small",
+              type: "button",
+              "aria-label": `${user.name} 정보`,
+              // What a click on the user's line does: the user info window, which Esc closes once the
+              // focus leaves the button for the page.
+              onclick: (event: Event) => {
+                if (this.screen?.showUser(user.id)) (event.currentTarget as HTMLElement).blur();
+              },
+            },
+            "정보",
+          ),
+        ),
+      ),
     );
   }
 
   addChat(line: string): void {
-    const own = this.state.users.find((u) => u.id === this.welcome.playerId)?.name ?? "";
+    const { nick, useId } = this.actions.profile;
+    const own = shownName({ name: this.state.users.find((u) => u.id === this.welcome.playerId)?.name ?? "", nick, useId });
     this.chatList.append(h("li", { class: `chat-${chatLineClass(line, own)}` }, shownChat(line)));
     this.chatList.scrollTop = this.chatList.scrollHeight;
     this.screen?.addLine(line);
@@ -360,7 +386,7 @@ export class LobbyView {
   }
 
   /** S->C 0x63: the option window's friend list. */
-  friendsAnswered(friends: readonly { name: string; location: string }[]): void {
+  friendsAnswered(friends: readonly FriendRecord[]): void {
     this.screen?.friendsAnswered(friends);
     this.optionPanel.friendsAnswered(friends);
   }

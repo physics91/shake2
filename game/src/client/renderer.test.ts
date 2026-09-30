@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PlayerState } from "../sim/types.ts";
 import type { Sheet } from "./assets.ts";
 import { PanelFaces } from "./renderer.ts";
+import { personName } from "./screens.ts";
 
 /** A face sheet of four 2-frame animations at 10 fps (a frame each 100 ms). */
 const SHEET = {
@@ -56,5 +57,14 @@ describe("panel faces", () => {
     faces.update(player(false), SHEET, 0);
     faces.reset();
     expect(faces.update(player(true), SHEET, 1000)).toEqual({ anim: 1, frame: 0 });
+  });
+});
+
+describe("match names", () => {
+  it("show the slot's ID or nick from the view, the match name for a player it does not know", () => {
+    const people = new Map([[1, { name: "시험하나", badge: { guild: 3, level: 1 } }]]);
+    expect(personName(people, { id: 1, name: "tester1" } as PlayerState)).toBe("시험하나");
+    expect(personName(people, { id: 2, name: "tester2" } as PlayerState)).toBe("tester2");
+    expect(personName(undefined, { id: 1, name: "tester1" } as PlayerState)).toBe("tester1");
   });
 });

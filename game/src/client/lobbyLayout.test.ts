@@ -91,7 +91,8 @@ describe("lobby room list (0x42c6b0)", () => {
 
 describe("lobby user list (0x42d1d0)", () => {
   it("pages ten users and finds the row under the mouse", () => {
-    const users = Array.from({ length: 12 }, (_, i) => ({ id: i, name: `u${i}` }));
+    const card = { nick: "", greeting: "", wins: 0, losses: 0, cell: 0, rank: 0, manner: 0, exp: 0, guild: -1, level: 12 };
+    const users = Array.from({ length: 12 }, (_, i) => ({ id: i, name: `u${i}`, card }));
     expect(userPages(users)).toBe(2);
     expect(userPage(users, 2).map((u) => u?.id ?? null)).toEqual([10, 11, null, null, null, null, null, null, null, null]);
     expect(userRowAt(619, 158)).toBe(0);

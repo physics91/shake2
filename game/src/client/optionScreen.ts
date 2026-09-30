@@ -7,7 +7,7 @@ import { ChatLine } from "./chatLine.ts";
 import { keyName } from "./dik.ts";
 import type { FriendReply } from "./friends.ts";
 import { connectedPad } from "./gamepad.ts";
-import { guildRect, rankRect } from "./hudLayout.ts";
+import { drawBadge } from "./badge.ts";
 import {
   CHECKS,
   FRIEND_ID_LIMIT,
@@ -268,9 +268,7 @@ export class OptionScreen {
       if (!friend) continue;
       const y = friendRowY(i);
       if (friend.name) {
-        // Account data is the server's: guild 0 and rank 1 as in the lobby's list, no gender.
-        blit(ctx, assets.guild, guildRect(0), FRIEND_PARTS.guild, y);
-        blit(ctx, assets.mark, rankRect(1), FRIEND_PARTS.rank, y);
+        drawBadge(ctx, assets, friend.badge, { x: FRIEND_PARTS.guild, y }, { x: FRIEND_PARTS.rank, y });
         plainText(ctx, friend.name, FRIEND_PARTS.name, y, FRIEND_PARTS.colour, FONT_13);
         if (!friend.location) plainText(ctx, OFFLINE, FRIEND_PARTS.location, y, FRIEND_PARTS.colour, FONT_13);
       }

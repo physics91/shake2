@@ -264,8 +264,7 @@ export class Gate {
     connection.joined = true;
     this.online.set(session.account, connection.peer.id);
     session.lastUsed = this.config.now();
-    const profile = { name: account.id, nick: account.nick, useId: account.useId, character: account.character, hue: account.hue };
-    channel.lobby.join(connection.peer, profile, own);
+    channel.lobby.join(connection.peer, own);
   }
 
   /** Scene 5's Go (the old C->S 0x1a) over the auth connection: the character, hue and use-ID flag. */
@@ -319,7 +318,13 @@ export class Gate {
     }
     this.touch(key);
     const account = this.config.accounts.get(key);
-    if (account) connection.peer.send({ type: "saved", account: ownAccount(account, this.config.accounts) });
+    if (!account) return;
+    const own = ownAccount(account, this.config.accounts);
+    connection.peer.send({ type: "saved", account: own });
+    // The account's lobby connection, if any, shows the change to the others.
+    const joinedId = this.online.get(key);
+    const joined = joinedId === undefined ? undefined : this.connections.get(joinedId);
+    if (joinedId !== undefined && joined?.channel != null) this.config.channels[joined.channel]?.lobby.accountChanged(joinedId, own);
   }
 
   private session(token: string): Session | undefined {
