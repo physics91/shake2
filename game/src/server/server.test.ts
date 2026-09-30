@@ -341,6 +341,45 @@ describe.skipIf(!HAS_ASSETS)("a full channel", () => {
   });
 });
 
+describe.skipIf(!HAS_ASSETS)("friends across channels", () => {
+  it("shows a friend in another channel by that channel's name, in its lobby or a room", async () => {
+    const accountsFile = await accountsFileWith(["first", "second"]);
+    const server = await startServer({
+      host: "127.0.0.1",
+      port: 0,
+      assetsDir: ASSETS,
+      allowedOrigins: [],
+      maxRooms: 5,
+      channels: [
+        { name: "하나", colour: "#ff0000" },
+        { name: "둘", colour: "#00ff00" },
+      ],
+      accountsFile,
+    });
+    const url = `ws://127.0.0.1:${server.port}/ws`;
+    try {
+      const first = new Client(url);
+      const second = new Client(url);
+      await Promise.all([first.opened(), second.opened()]);
+      await enter(first, "first", 0);
+      await enter(second, "second", 1);
+      first.send({ type: "add-friend", name: "second" });
+      expect((await first.waitFor(isType("friend-added"))).result).toBe(1);
+      first.send({ type: "friends" });
+      expect((await first.waitFor(isType("friends"))).friends).toEqual([{ name: "second", location: "둘", badge: { guild: -1, level: 12 } }]);
+      second.send({ type: "create-room", title: "" });
+      await second.waitFor(isType("room"));
+      first.messages.length = 0;
+      first.send({ type: "friends" });
+      expect((await first.waitFor(isType("friends"))).friends[0].location).toBe("둘");
+      first.socket.close();
+      second.socket.close();
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
   const logged: string[] = [];
   let server: RunningServer;

@@ -49,6 +49,8 @@ export interface LobbyConfig {
   saveCharacter?(name: string, choice: { character: string; hue: number; useId: boolean }): void;
   /** A login ID's guild and level for the friend list, connected or not; null for none. */
   badgeOf?(name: string): Badge | null;
+  /** Where a player not in this channel is, in another channel's words; blank when nowhere. */
+  locate?(name: string): string;
   /** The option window's friend lists, by the name each player said hello with. */
   friends: FriendBook;
   /** Milliseconds: the chat interval, and the host clock the match's rand() reseeds read. */
@@ -282,17 +284,24 @@ export class Lobby {
     this.flushLobby();
   }
 
-  /**
-   * Where a friend is, as the option window's LOCATION column shows it. The original's words are
-   * its server's and unknown (R): the channel in the lobby, the room's number in a room, else blank.
-   */
-  private locationOf(name: string): string {
+  /** Whether the player is connected in this channel, and in which room's list place if in one. */
+  presence(name: string): { room: number | null } | null {
     for (const [id, profile] of this.profiles) {
       if (profile.name !== name || !this.peers.has(id)) continue;
-      const room = this.roomOf.get(id);
-      return room ? `${String(room.number + 1).padStart(3, "0")}번 방` : this.config.channel;
+      return { room: this.roomOf.get(id)?.number ?? null };
     }
-    return "";
+    return null;
+  }
+
+  /**
+   * Where a friend is, as the option window's LOCATION column shows it. The original's words are
+   * its server's and unknown (R): the channel in the lobby, the room's number in a room, another
+   * channel's words for a friend there, else blank.
+   */
+  private locationOf(name: string): string {
+    const here = this.presence(name);
+    if (!here) return this.config.locate?.(name) ?? "";
+    return here.room === null ? this.config.channel : `${String(here.room + 1).padStart(3, "0")}번 방`;
   }
 
   /** The my-info window's save (0x44af80): a known character, from the lobby only (0x459cbe). */

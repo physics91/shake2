@@ -26,6 +26,7 @@ import {
   macroBox,
   macroCaret,
   macroLines,
+  LOCATION_BYTES,
   OFFLINE,
   OPTION_AT,
   OPTION_BUTTONS,
@@ -39,7 +40,7 @@ import { drawBalloon, drawCaret } from "./screenKit.ts";
 import type { SettingsStore } from "./settings.ts";
 import { MACRO_LIMIT } from "./settings.ts";
 import { blit } from "./sprite.ts";
-import { cp949Bytes } from "../server/cp949.ts";
+import { cp949Bytes, cutBytes } from "../server/cp949.ts";
 import { FONT_12, FONT_13, outlinedText, plainText } from "./text.ts";
 
 export interface OptionAssets {
@@ -272,7 +273,7 @@ export class OptionScreen {
         plainText(ctx, friend.name, FRIEND_PARTS.name, y, FRIEND_PARTS.colour, FONT_13);
         if (!friend.location) plainText(ctx, OFFLINE, FRIEND_PARTS.location, y, FRIEND_PARTS.colour, FONT_13);
       }
-      if (friend.location) plainText(ctx, friend.location, FRIEND_PARTS.location, y, FRIEND_PARTS.colour, FONT_13);
+      if (friend.location) plainText(ctx, cutBytes(friend.location, LOCATION_BYTES), FRIEND_PARTS.location, y, FRIEND_PARTS.colour, FONT_13);
     }
   }
 

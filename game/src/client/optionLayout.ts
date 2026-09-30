@@ -95,6 +95,8 @@ const LOCATION_COLUMN: Rect = [539, 202, 639, 449];
 /** A row's parts: gender (410, not drawn here), guild, rank, then the ID and the location in 굴림체 13 white, no outline. */
 export const FRIEND_PARTS = { guild: 426, rank: 442, name: 461, location: 544, colour: "#ffffff" };
 export const OFFLINE = "접속하지 않음";
+/** The LOCATION box (540..639) holds 13 bytes of 굴림체 13 from x 544, OFFLINE's length; a longer word is cut there (R). */
+export const LOCATION_BYTES = 13;
 
 export function friendRowY(i: number): number {
   return 203 + 21 * i;
