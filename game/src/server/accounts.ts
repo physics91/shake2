@@ -103,6 +103,15 @@ export interface AccountDefaults {
   pairs: readonly number[];
 }
 
+/** What one match adds to an account. */
+export interface MatchRecord {
+  cell: number;
+  won: boolean;
+  /** R: 0311's server counted wins only (a 2002-10 page: "이후로는 승, 패가 같이 기록된다"). */
+  lost: boolean;
+  candy: number;
+}
+
 /** Where an account stands among those that have finished a match. */
 export interface Standing {
   /** 순위, 1 the first; 0 for an account not ranked yet. */
@@ -230,6 +239,21 @@ export class AccountBook {
     if (change.cell !== undefined || change.wins !== undefined || change.losses !== undefined) this.ranked = null;
     this.changed();
     return true;
+  }
+
+  /**
+   * A match's result (the server's side of C->S 0x4e and 0x66): the cell point share, a win or
+   * a loss, and the candy picked up. Cell points stay within the login record's i32.
+   */
+  recordMatch(id: string, result: MatchRecord): void {
+    const account = this.byId.get(nameKey(id));
+    if (!account) return;
+    account.cell = Math.min(0x7fffffff, Math.max(-0x80000000, account.cell + result.cell));
+    if (result.won) account.wins += 1;
+    if (result.lost) account.losses += 1;
+    account.candy += result.candy;
+    this.ranked = null;
+    this.changed();
   }
 
   /** The accounts that have finished a match, in the ranking's order. */

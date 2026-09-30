@@ -103,6 +103,34 @@ describe("the account book", () => {
     expect(book.standing("aaaa")).toEqual({ rank: 3, level: 2 });
     expect(book.standing("dddd")).toEqual({ rank: 0, level: 12 });
   });
+
+  it("adds a match's result to the account and ranks it again", async () => {
+    let changes = 0;
+    const book = new AccountBook(undefined, defaults, () => changes++);
+    for (const id of ["aaaa", "bbbb"]) await book.register(id, id, "pass1", 0);
+    book.update("aaaa", { cell: 100, wins: 1 });
+    expect(book.ranking().map((a) => a.id)).toEqual(["aaaa"]);
+    changes = 0;
+    book.recordMatch("BBBB", { cell: 240, won: true, lost: false, candy: 2 });
+    book.recordMatch("aaaa", { cell: -200, won: false, lost: true, candy: 0 });
+    expect(changes).toBe(2);
+    expect(book.get("bbbb")).toMatchObject({ cell: 240, wins: 1, losses: 0, candy: 2 });
+    expect(book.get("aaaa")).toMatchObject({ cell: -100, wins: 1, losses: 1 });
+    expect(book.ranking().map((a) => a.id)).toEqual(["bbbb", "aaaa"]);
+    book.recordMatch("nobody", { cell: 1, won: true, lost: false, candy: 1 });
+    expect(changes).toBe(2);
+  });
+
+  it("keeps cell points within the login record's 32 bits", async () => {
+    const book = new AccountBook(undefined, defaults);
+    await book.register("aaaa", "aaaa", "pass1", 0);
+    book.update("aaaa", { cell: 0x7fffff00 });
+    book.recordMatch("aaaa", { cell: 0x1000, won: true, lost: false, candy: 0 });
+    expect(book.get("aaaa")?.cell).toBe(0x7fffffff);
+    book.update("aaaa", { cell: -0x7fffff00 });
+    book.recordMatch("aaaa", { cell: -0x1000, won: false, lost: true, candy: 0 });
+    expect(book.get("aaaa")?.cell).toBe(-0x80000000);
+  });
 });
 
 describe("the level table (ranking.html)", () => {

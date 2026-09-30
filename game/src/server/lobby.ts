@@ -1,4 +1,5 @@
 import type { LevelLayout, Rules } from "../sim/types.ts";
+import type { MatchRecord } from "./accounts.ts";
 import { compareIgnoreCase } from "./cp949.ts";
 import type { FriendBook } from "./friends.ts";
 import type { Badge, ClientMessage, OwnAccount, ServerMessage } from "./protocol.ts";
@@ -47,6 +48,8 @@ export interface LobbyConfig {
   channel: string;
   /** The my-info window's O was taken: the account keeps the character, hue and use-ID flag. */
   saveCharacter?(name: string, choice: { character: string; hue: number; useId: boolean }): void;
+  /** A match's result for a player's account, by login ID: at the match's end, or on leaving it. */
+  recordMatch?(name: string, record: MatchRecord): void;
   /** A login ID's guild and level for the friend list, connected or not; null for none. */
   badgeOf?(name: string): Badge | null;
   /** Where a player not in this channel is, in another channel's words; blank when nowhere. */
@@ -97,6 +100,7 @@ export class Lobby {
       changed: () => {
         this.dirty = true;
       },
+      recorded: (name, record) => config.recordMatch?.(name, record),
     };
   }
 

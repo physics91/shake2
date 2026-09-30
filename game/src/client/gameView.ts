@@ -26,6 +26,7 @@ export interface GameViewOptions {
   fadeFrom?: HTMLCanvasElement;
   /** The players' panel names and badges by id, from the room; none for players with no account. */
   people?: RenderView["people"];
+  candyBase?: number;
 }
 
 /** Draws a match and plays its sounds and music. Used by local and online play. */
@@ -139,6 +140,7 @@ export class GameView {
       localPlayerIds: this.options.localPlayerIds,
       hostId: this.hostId,
       people: this.options.people,
+      candyBase: this.options.candyBase,
       hurryTick: this.presentation.hurryTick,
       lastRoundDraw: this.lastRoundDraw,
       faces: this.faces,

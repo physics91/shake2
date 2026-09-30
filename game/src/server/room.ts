@@ -4,9 +4,11 @@ import { createMatch, matchResultDone, removePlayer, step } from "../sim/match.t
 import { msvcRand, srandTime } from "../sim/rng.ts";
 import { isTeamMode } from "../sim/modes.ts";
 import type { Buttons, Dir, GameMode, InputFrame, LevelLayout, MatchState, Rules, SimEvent } from "../sim/types.ts";
+import type { MatchRecord } from "./accounts.ts";
 import { PeerButtons } from "./buttons.ts";
 import type { Badge, ChatKind, PanelBar, RoomInfo, RoomStatus, RoomSummary, ServerMessage, UserCard } from "./protocol.ts";
 import { badgeOf, CHAT_INTERVAL_MS, RANDOM_MAP, shownName, SNAPSHOT_EVERY, START_BARS, toWireState, typingPacketDue } from "./protocol.ts";
+import { cellShares, LEAVE_PENALTY } from "./results.ts";
 
 export interface Peer {
   readonly id: number;
@@ -38,6 +40,8 @@ export interface RoomDeps {
   now(): number;
   /** The room's state changed; the lobby may show it differently. */
   changed(): void;
+  /** A player's account gets a match's result, by login ID. */
+  recorded?(name: string, record: MatchRecord): void;
 }
 
 export interface RoomIdentity {
@@ -102,6 +106,11 @@ export class Room {
   private readonly members = new Map<number, Member>();
   private match: MatchState | null = null;
   private pendingEvents: SimEvent[] = [];
+  /** Players as the first round's countdown ended (0x4413e0), which the individual pool is 100 a head of. */
+  private startCount = 0;
+  private startCounted = false;
+  /** The match's results went to the accounts: a leave from here on is no longer fined. */
+  private settled = false;
 
   constructor(identity: RoomIdentity, host: Peer, profile: Profile, deps: RoomDeps) {
     this.code = identity.code;
@@ -204,9 +213,15 @@ export class Room {
     this.members.delete(peerId);
     member.peer.send({ type: "room", room: null });
     if (this.match) {
+      const leaver = this.match.players.find((p) => p.id === peerId);
+      // ranking.html's fine, and the candy its client would have reported as it went (C->S 0x66).
+      if (leaver && !this.settled) {
+        this.deps.recorded?.(member.profile.name, { cell: -LEAVE_PENALTY, won: false, lost: true, candy: leaver.candy });
+      }
       const seen = this.match.events.length;
       removePlayer(this.match, peerId);
       this.pendingEvents.push(...this.match.events.slice(seen));
+      this.settle();
     }
     // In the room only S->C 0x40 moves the host (0x440590's other callers are entering and creating
     // a room), and it logs the leave with its own line (0x44ab30), not kind 3's.
@@ -354,6 +369,9 @@ export class Room {
     }));
     this.match = createMatch(layout, setups, { ...this.deps.rules, mode: this.mode }, Math.floor(clockMs / 1000), clockMs);
     this.pendingEvents = [...this.match.events];
+    this.startCount = setups.length;
+    this.startCounted = false;
+    this.settled = false;
     // The start (S->C 0x25) closes every chat line (0x44a3db).
     for (const member of this.members.values()) {
       member.dir = null;
@@ -414,6 +432,11 @@ export class Room {
     this.pendingEvents.push(...match.events);
     if (match.events.some((event) => event.type === "round-start")) this.resetBars();
     this.sendTypingFlags(match);
+    if (!this.startCounted && match.phase === "playing") {
+      this.startCount = match.players.length;
+      this.startCounted = true;
+    }
+    this.settle();
 
     if (matchResultDone(match)) {
       this.broadcastSnapshot();
@@ -460,6 +483,30 @@ export class Room {
     for (const member of this.members.values()) {
       member.stats = { ...member.stats, ping: START_BARS.ping };
       member.shownBars = { ...START_BARS };
+    }
+  }
+
+  /**
+   * The match is over: each player still in the room gets the share the host's client worked out
+   * (0x440a90) and reported (0x4e), a win or (R) a loss, and the candy picked up.
+   */
+  private settle(): void {
+    const match = this.match;
+    if (!match || this.settled || match.phase !== "match-over") return;
+    this.settled = true;
+    const shares = cellShares({
+      mode: match.rules.mode,
+      round: match.round,
+      startCount: this.startCount,
+      finishers: match.players,
+      winnerId: match.matchWinnerId,
+      winnerTeam: match.matchWinnerTeam,
+    });
+    for (const player of match.players) {
+      const member = this.members.get(player.id);
+      const share = shares.get(player.id);
+      if (!member || !share) continue;
+      this.deps.recorded?.(member.profile.name, { cell: share.cell, won: share.won, lost: !share.won, candy: player.candy });
     }
   }
 

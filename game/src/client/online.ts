@@ -348,8 +348,8 @@ class OnlineSession {
         this.startView?.signUpAnswer(message.kind, message.rcode);
         return;
       case "saved":
-        this.account = message.account;
-        if (this.statusSaving === "status") this.startView?.statusSaved(message.account);
+        this.account = takeSaved(this.account, message.account);
+        if (this.statusSaving === "status") this.startView?.statusSaved(this.account);
         else if (this.statusSaving === "guild") this.startView?.guildSaved();
         this.statusSaving = null;
         return;
@@ -761,7 +761,7 @@ class OnlineSession {
       }
       case "saved":
         // S->C 0x58: the greeting is the server's copy.
-        this.account = message.account;
+        this.account = takeSaved(this.account, message.account);
         this.profile.greeting = message.account.greeting;
         this.lobbyView?.greetingSaved();
         break;
@@ -863,10 +863,13 @@ class OnlineSession {
     // 0x44a424: the room's last frame stays while the world loads, then fades to the wait screen.
     this.fadeTo(screen.root, from);
     const track = listedTrack(this.manifest, this.welcome?.music ?? [], music);
-    this.game = new OnlineGame(screen, layout, room, playerId, track, (message) => this.send(message), () => this.networkProblem());
+    const candy = this.account?.candy ?? 0;
+    this.game = new OnlineGame(screen, layout, room, playerId, track, candy, (message) => this.send(message), () => this.networkProblem());
   }
 
   private stopGame(keepMusic = false): void {
+    // The candy picked up counted on the client as it went (0x410827): the login's count grows by it.
+    if (this.game && this.account) this.account.candy += this.game.candy;
     this.game?.stop(keepMusic);
     this.game = null;
     this.localGame?.stop();
@@ -1435,6 +1438,17 @@ function syncChoice(section: HTMLElement, value: string): void {
   for (const input of section.querySelectorAll<HTMLInputElement>('input[type="radio"]')) input.checked = input.value === value;
 }
 
+/**
+ * A save's answer changes only what was saved: S->C 0x58 the greeting, 0x57 the nick, 0x1a the
+ * character, 0x4a the guild. The record's cell point, record, level and rank stay the login's
+ * (0x448c50 is their only writer), so a match's result shows from the next login (V).
+ */
+function takeSaved(account: OwnAccount | null, saved: OwnAccount): OwnAccount {
+  if (!account) return saved;
+  const { nick, greeting, character, hue, useId, guild } = saved;
+  return { ...account, nick, greeting, character, hue, useId, guild };
+}
+
 class OnlineGame {
   private readonly screen: GameScreen;
   private readonly layout: LevelLayout;
@@ -1482,6 +1496,8 @@ class OnlineGame {
   private lastHeard = performance.now();
   private readonly hostLost: () => void;
   private hostGone = false;
+  /** The account's candy as the match began. */
+  private readonly candyBase: number;
 
   constructor(
     screen: GameScreen,
@@ -1489,10 +1505,12 @@ class OnlineGame {
     room: RoomInfo,
     playerId: number,
     music: MusicTrack | null,
+    candyBase: number,
     send: (message: ClientMessage) => void,
     hostLost: () => void,
   ) {
     this.hostLost = hostLost;
+    this.candyBase = candyBase;
     this.screen = screen;
     this.layout = layout;
     this.playerId = playerId;
@@ -1545,6 +1563,7 @@ class OnlineGame {
         music: this.music,
         announce: this.screen.announce,
         people: new Map(room.players.map((p) => [p.id, { name: shownName(p), badge: p.badge }])),
+        candyBase: this.candyBase,
       });
       this.screen.loaded();
       if (this.state) {
@@ -1586,6 +1605,11 @@ class OnlineGame {
     stage.medals = state.players.map((p) => `${p.id}:${p.medals}`).join(",");
     stage.alive = state.players.map((p) => `${p.id}:${p.alive ? 1 : 0}`).join(",");
     stage.me = String(this.playerId);
+  }
+
+  /** The candy the own player has picked up in this match. */
+  get candy(): number {
+    return this.state?.players.find((p) => p.id === this.playerId)?.candy ?? 0;
   }
 
   /** A line said in the match, the own one back from the server too: it goes in the speaker's balloon (0x45ec00). */

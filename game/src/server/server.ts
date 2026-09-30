@@ -197,6 +197,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       channel: spec.name,
       friends,
       saveCharacter: (name, choice) => accounts.update(name, choice),
+      recordMatch: (name, record) => accounts.recordMatch(name, record),
       badgeOf: (name) => {
         const account = accounts.get(name);
         return account ? { guild: account.guild, level: accounts.standing(account.id).level } : null;

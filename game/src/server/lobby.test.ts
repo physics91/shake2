@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import { TICK_RATE } from "../sim/constants.ts";
 import { msvcRand } from "../sim/rng.ts";
 import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
+import type { MatchRecord } from "./accounts.ts";
 import { FriendBook } from "./friends.ts";
 import type { LobbyConfig } from "./lobby.ts";
 import { Lobby, PASSWORD_FAILURES_KEPT_MS, PASSWORD_RETRY_MAX_MS, PASSWORD_RETRY_MS } from "./lobby.ts";
 import type { OwnAccount, RoomInfo, ServerMessage, UserCard } from "./protocol.ts";
 import { START_BARS, TYPING_PACKET_MS, typingPacketDue, userCard } from "./protocol.ts";
+import { LEAVE_PENALTY } from "./results.ts";
 import { PING_ECHO_MS } from "./room.ts";
 
 const LAYOUT = layoutFromAscii(["1....", ".....", "....2"]);
@@ -334,6 +336,46 @@ describe("Lobby", () => {
     expect(t.last(2, "match-end")).toBeDefined();
     expect(t.room(2)).toMatchObject({ hostId: 2, playing: false });
     expect(t.room(2)?.players.every((p) => !p.ready)).toBe(true);
+  });
+
+  it("records each finisher's share, win or loss and candy when the match is over (0x440c37)", () => {
+    const records: [string, MatchRecord][] = [];
+    const t = makeLobby({ recordMatch: (name, record) => records.push([name, record]) });
+    t.connect(1);
+    t.connect(2, "둘", "doona");
+    t.lobby.handle(1, { type: "create-room", title: "" });
+    t.lobby.handle(2, { type: "join-room", code: "ABCD" });
+    t.lobby.handle(2, { type: "set-ready", ready: true });
+    t.lobby.handle(1, { type: "start" });
+    for (let i = 0; i < TO_PLAY; i++) t.lobby.tick();
+    t.lobby.handle(1, { type: "input", dir: null, bomb: true, attack: false, evade: false });
+    for (let i = 0; i < 7 * TICK_RATE && t.last(2, "snapshot")?.state.phase !== "match-over"; i++) t.lobby.tick();
+    expect(t.last(2, "snapshot")?.state.phase).toBe("match-over");
+
+    // Two players, no loser medal: the pool of 200 and 20 each of the two.
+    expect(records).toEqual([
+      ["P1", { cell: 0, won: false, lost: true, candy: 0 }],
+      ["둘", { cell: 240, won: true, lost: false, candy: 0 }],
+    ]);
+    // Leaving on the result screen neither fines nor records again.
+    t.lobby.handle(1, { type: "leave-room" });
+    for (let i = 0; i < 5 * TICK_RATE; i++) t.lobby.tick();
+    expect(records).toHaveLength(2);
+  });
+
+  it("fines a player who leaves mid-match, and the one left alone wins 50 a medal", () => {
+    const records: [string, MatchRecord][] = [];
+    const t = makeLobby({ recordMatch: (name, record) => records.push([name, record]) });
+    hostAndGuestOf(t);
+    t.lobby.handle(2, { type: "set-ready", ready: true });
+    t.lobby.handle(1, { type: "start" });
+    for (let i = 0; i < TO_PLAY; i++) t.lobby.tick();
+    t.lobby.handle(1, { type: "leave-room" });
+
+    expect(records).toEqual([
+      ["P1", { cell: -LEAVE_PENALTY, won: false, lost: true, candy: 0 }],
+      ["둘", { cell: 50, won: true, lost: false, candy: 0 }],
+    ]);
   });
 
   it("dissolves a room when its last player disconnects", () => {

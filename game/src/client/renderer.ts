@@ -83,6 +83,8 @@ export interface RenderView {
    * its guild and level badges, by id. A player not in it shows its match name and no badges.
    */
   people?: ReadonlyMap<number, { name: string; badge: Badge }>;
+  /** Network: the account's candy before this match; the box counts it and the own pickups ([0x49285e]). */
+  candyBase?: number;
 }
 
 export interface ChatDraw {
@@ -241,7 +243,8 @@ export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, 
     renderPracticeHud(ctx, assets, state, view);
     return;
   }
-  drawCandy(ctx, assets, locals[0]?.candy ?? 0);
+  // [0x49285e] is a word: the login's count, then one more a pickup (0x410827).
+  drawCandy(ctx, assets, ((view.candyBase ?? 0) + (locals[0]?.candy ?? 0)) & 0xffff);
   drawEffects(ctx, assets, state);
   drawPanel(ctx, assets, state, view.bars, view.people);
   // The panel's last part (0x40fb81): the others' names while the own chat line is open.
