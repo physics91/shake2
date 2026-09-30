@@ -18,6 +18,8 @@ export interface RankingAccess {
   page(page: number): Promise<boolean>;
   /** 0x447700: true when the ID was found, its page then the list and the window's page. */
   search(id: string): Promise<boolean>;
+  /** [0x46e740]: the lobby window's page. */
+  windowPage: number;
 }
 
 export class RankingBoard {
@@ -54,6 +56,12 @@ export class RankingBoard {
     return {
       get rows() {
         return board.rows;
+      },
+      get windowPage() {
+        return board.windowPage;
+      },
+      set windowPage(page) {
+        board.windowPage = page;
       },
       page: (page) => board.page(send, page),
       search: (id) => board.search(send, id),

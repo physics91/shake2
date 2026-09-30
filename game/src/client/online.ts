@@ -495,6 +495,11 @@ class OnlineSession {
       saveCharacter: (character, hue, useId) => this.send({ type: "set-character", character, hue, useId }),
       saveGreeting: (greeting) => this.send({ type: "set-greeting", greeting }),
       settings,
+      ranking: this.ranking.access((message) => {
+        if (this.socket?.readyState !== WebSocket.OPEN) return false;
+        this.send(message);
+        return true;
+      }),
     }, fadeIn);
     if (this.firstLobby) this.lobbyView.showNotice(NOTICE.joinText);
     this.firstLobby = false;
@@ -511,6 +516,7 @@ class OnlineSession {
   private exit(askServers: boolean): void {
     const socket = this.socket;
     this.socket = null;
+    this.ranking.drop();
     this.welcome = null;
     this.lobby = null;
     this.room = null;
@@ -661,6 +667,7 @@ class OnlineSession {
     });
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
+      this.ranking.drop();
       const full = this.awaitingVersion;
       this.awaitingVersion = false;
       this.socket = null;
@@ -732,6 +739,10 @@ class OnlineSession {
         break;
       case "room-info":
         this.lobbyView?.showRoomInfo(message);
+        break;
+      case "ranking":
+      case "ranking-search":
+        this.ranking.receive(message);
         break;
       case "friends":
         this.lobbyView?.friendsAnswered(message.friends);
@@ -844,6 +855,7 @@ class OnlineSession {
   private dropSocket(): void {
     const socket = this.socket;
     this.socket = null;
+    this.ranking.drop();
     this.awaitingVersion = false;
     socket?.close();
   }

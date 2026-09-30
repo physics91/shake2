@@ -40,6 +40,10 @@ describe("the ranking list (0x447290, 0x447700)", () => {
     board.receive({ type: "ranking-search", page: 2, rows: [row(16), row(17)] });
     expect(await found).toBe(true);
     expect(board.windowPage).toBe(2);
+    expect(access.windowPage).toBe(2);
+    access.windowPage = 1;
+    expect(board.windowPage).toBe(1);
+    access.windowPage = 2;
     expect(access.rows.map((r) => r.id)).toEqual(["id16", "id17"]);
 
     const missing = access.search("nobody");

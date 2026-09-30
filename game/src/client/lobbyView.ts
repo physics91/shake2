@@ -9,11 +9,12 @@ import { MODE_NAMES } from "../sim/modes.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
 import type { FriendReply } from "./friends.ts";
 import { CREATE_PASSWORD_LIMIT, CREATE_TITLE_LIMIT, createTitle, roomCountText, roomInfoStatus } from "./lobbyLayout.ts";
-import type { MyProfile } from "./lobbyScreen.ts";
+import type { MyProfile, RankingCommand } from "./lobbyScreen.ts";
 import { loadLobbyAssets, LobbyScreen } from "./lobbyScreen.ts";
 import { mapTitle } from "./menu.ts";
 import { CHARACTER_IDS, CHARACTER_NAMES } from "./myInfoLayout.ts";
 import { OptionPanel } from "./optionPanel.ts";
+import type { RankingAccess } from "./ranking.ts";
 import { chatLineClass, shownChat } from "./roomChat.ts";
 import { roomNumberText } from "./roomLayout.ts";
 import type { SettingsStore } from "./settings.ts";
@@ -44,7 +45,20 @@ export interface LobbyActions {
   saveGreeting(text: string): void;
   /** The option object, for the option window and the page's option controls. */
   settings: SettingsStore;
+  /** The ranking's list and its fetches on the lobby's connection, for the ranking window. */
+  ranking: RankingAccess;
 }
+
+/** The ranking window's mouse-only controls for the keyboard: each clicks the same place. */
+const RANKING_MIRRORS: readonly [RankingCommand, string][] = [
+  ["open", "랭킹 창 열기 (리모컨의 랭킹)"],
+  ["prev", "◀: 이전 리스트 보기 (랭킹 창)"],
+  ["next", "▶: 다음 리스트 보기 (랭킹 창)"],
+  ["find", "FIND: 아이디 찾기 창 열기 (랭킹 창)"],
+  ["ok", "확인: 넣은 아이디 찾기 (아이디 찾기 창 O)"],
+  ["cancel", "취소: 아이디 찾기 창 닫기 (아이디 찾기 창 X)"],
+  ["close", "창 닫기 (랭킹 창 X)"],
+];
 
 /** S->C 0x55: a room's status and its players by slot. */
 export interface RoomInfoReply {
@@ -114,7 +128,7 @@ export class LobbyView {
     this.welcome = welcome;
     this.actions = actions;
     this.state = state;
-    const { send, say, exit, filterChanged, profile, account, saveCharacter, saveGreeting, settings } = actions;
+    const { send, say, exit, filterChanged, profile, account, saveCharacter, saveGreeting, settings, ranking } = actions;
 
     const title = h("input", { id: "lobby-title", autocomplete: "off" });
     title.addEventListener("input", () => fitBytes(title, CREATE_TITLE_LIMIT));
@@ -191,7 +205,7 @@ export class LobbyView {
       h(
         "p",
         { class: "keys" },
-        "방 줄을 누르면 들어가고 오른쪽 버튼은 방 정보입니다. CREATE GAME은 방 만들기, WAIT GAME은 기다리는 방만 보기, 내정보는 캐릭터 고르기(◀▶ 또는 이름 칸을 누른 채 끌기, Enter 저장), 리모컨의 OPTION은 옵션 창(같은 설정이 아래 옵션 부분에도 있음), F2~F10은 채팅 줄에 단축 메시지 넣기, F1은 도움말 화면(다시 F1이나 Esc로 닫기), Esc는 메시지·열린 창 닫기(없으면 나가기)입니다.",
+        "방 줄을 누르면 들어가고 오른쪽 버튼은 방 정보입니다. CREATE GAME은 방 만들기, WAIT GAME은 기다리는 방만 보기, 내정보는 캐릭터 고르기(◀▶ 또는 이름 칸을 누른 채 끌기, Enter 저장), 리모컨의 OPTION은 옵션 창(같은 설정이 아래 옵션 부분에도 있음), 리모컨의 랭킹은 랭킹 창(아래 랭킹 창 버튼으로도 열고 넘기며, FIND 창에서 아이디를 넣고 Enter), F2~F10은 채팅 줄에 단축 메시지 넣기, F1은 도움말 화면(다시 F1이나 Esc로 닫기), Esc는 메시지·열린 창 닫기(없으면 나가기)입니다.",
       ),
       h(
         "form",
@@ -213,6 +227,13 @@ export class LobbyView {
         { class: "row", onsubmit: join },
         h("div", { class: "field" }, h("label", { for: "lobby-code" }, "방 코드"), code),
         h("button", { class: "btn", type: "submit" }, "코드로 참가"),
+      ),
+      h(
+        "div",
+        { class: "actions", role: "group", "aria-label": "랭킹 창 버튼" },
+        ...RANKING_MIRRORS.map(([command, label]) =>
+          h("button", { class: "btn", type: "button", onclick: () => this.screen?.rankingCommand(command) }, label),
+        ),
       ),
       this.optionPanel.root,
       this.errorLine,
@@ -258,6 +279,7 @@ export class LobbyView {
             saveGreeting,
             fadeIn,
             settings,
+            ranking,
           },
           this.state,
         );

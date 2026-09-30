@@ -112,6 +112,9 @@ import { isMacroKey, macroOpens, macroSlot } from "./macro.ts";
 import type { FriendReply } from "./friends.ts";
 import type { FriendRecord } from "./optionWindow.ts";
 import { OptionScreen } from "./optionScreen.ts";
+import type { RankingAccess } from "./ranking.ts";
+import { RankingWindow } from "./rankingWindow.ts";
+import { RANKING_BUTTONS, RANKING_POPUP } from "./rankingWindowLayout.ts";
 import type { SettingsStore } from "./settings.ts";
 import { FRAME_MS } from "./startLayout.ts";
 import { portraitSheetName } from "./scene.ts";
@@ -145,6 +148,8 @@ export interface LobbyScreenAssets {
   basicWindow: HTMLImageElement;
   /** new_userinfo: the user information window. */
   userInfo: HTMLImageElement;
+  /** new_ranking: the ranking window (scene 12). */
+  ranking: HTMLImageElement;
   /** guild.dat's lines: the guilds' names. */
   guilds: string[];
   cursor: Sheet;
@@ -152,7 +157,7 @@ export interface LobbyScreenAssets {
 
 export async function loadLobbyAssets(): Promise<LobbyScreenAssets> {
   const image = (name: string) => loadImage(`image/${name}.png`);
-  const [background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, faces, option, basicWindow, userInfo, guilds, cursor] = await Promise.all([
+  const [background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, faces, option, basicWindow, userInfo, ranking, guilds, cursor] = await Promise.all([
     image("new_status"),
     image("new_banner"),
     image("new_button"),
@@ -171,10 +176,11 @@ export async function loadLobbyAssets(): Promise<LobbyScreenAssets> {
     image("new_option"),
     image("new_basicwindow"),
     image("new_userinfo"),
+    image("new_ranking"),
     loadCp949("guild.dat").then(guildLines),
     loadImageSheet("cursor"),
   ]);
-  return { background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, faces, option, basicWindow, userInfo, guilds, cursor };
+  return { background, banner, button, button2, roomButton, gameInfo, remote, messageBox, guild, mark, help, statusWindow, charChange, winObject, faces, option, basicWindow, userInfo, ranking, guilds, cursor };
 }
 
 export interface LobbyScreenOptions {
@@ -207,6 +213,8 @@ export interface LobbyScreenOptions {
   fadeIn?: boolean;
   /** The option object (0x48acd0): the option window edits it, the balloons and F2..F10 read it. */
   settings: SettingsStore;
+  /** The ranking's list, scene 5's too, and its fetches on this connection. */
+  ranking: RankingAccess;
 }
 
 /** The player's data the my-info window shows, as the account server last sent it. */
@@ -242,8 +250,11 @@ interface MyInfo {
   face: { frame: number; lastMs: number };
 }
 
-/** The popup open over the lobby; the message box is apart and may sit on the create popup. My-info is scene 10, option 13. */
-type Popup = "create" | "password" | "remote" | "roomInfo" | "userInfo" | "myInfo" | "option" | null;
+/** The popup open over the lobby; the message box is apart and may sit on the create popup. My-info is scene 10, ranking 12, option 13. */
+type Popup = "create" | "password" | "remote" | "roomInfo" | "userInfo" | "myInfo" | "ranking" | "option" | null;
+
+/** The ranking window's controls the page's hidden buttons stand for; "open" is the remote's 랭킹. */
+export type RankingCommand = "open" | "prev" | "find" | "next" | "close" | "ok" | "cancel";
 
 interface RoomInfoView {
   status: RoomStatus;
@@ -271,6 +282,8 @@ export class LobbyScreen {
   private slideAt: number | null = null;
   /** The option window (scene 13). */
   private option: OptionScreen | null = null;
+  /** The ranking window (scene 12). */
+  private rankingWindow: RankingWindow | null = null;
   private readonly portraits = new Map<string, Sheet | null>();
   private readonly scroll = new ChatScroll(LOBBY_SCROLL.geometry);
   private readonly caret = new CaretBlink();
@@ -427,6 +440,7 @@ export class LobbyScreen {
     this.passwordLine.dispose();
     this.greetingLine.dispose();
     this.option?.dispose();
+    this.rankingWindow?.dispose();
     this.status.remove();
     this.detach();
   }
@@ -454,7 +468,7 @@ export class LobbyScreen {
 
   /** Waiting for a reply ([0x496ca0]): the mouse and Esc are dropped, the busy cursor shows. */
   private get busy(): boolean {
-    return this.roomAsked || (this.myInfo?.busy ?? false) || (this.option?.window.busy ?? false);
+    return this.roomAsked || (this.myInfo?.busy ?? false) || (this.option?.window.busy ?? false) || (this.rankingWindow?.busy ?? false);
   }
 
   /** Nothing over the lobby: its own hover, held and balloon art show (the "no popup" gate). */
@@ -486,7 +500,7 @@ export class LobbyScreen {
     // While the help screen shows, the mouse is dropped every frame (0x458750).
     if (this.helpScreen) this.pointer.held = null;
     const held = this.pointer.held;
-    if (this.option) return;
+    if (this.option || this.rankingWindow) return;
     const info = this.myInfo;
     const slider = held && info?.colour && !info.busy && !this.message ? info.colour : null;
     if (!slider) this.slideAt = null;
@@ -526,6 +540,10 @@ export class LobbyScreen {
       this.option.release(x, y);
       return;
     }
+    if (this.rankingWindow) {
+      this.rankingWindow.release(x, y);
+      return;
+    }
     if (this.popup === "myInfo") {
       this.myInfoRelease(x, y);
       return;
@@ -561,8 +579,7 @@ export class LobbyScreen {
         this.closePopup(true);
         break;
       case "ranking":
-        // It opens the ranking window, which the remake has not (the chat stays closed).
-        this.closePopup(false);
+        this.openRanking();
         break;
       case "option":
         this.openOption();
@@ -706,6 +723,60 @@ export class LobbyScreen {
       announce: (text) => (this.status.textContent = text),
     });
     this.openPopup("option", "옵션 창이 열렸습니다. 마우스로 고치고 Enter로 저장, Esc로 취소합니다. 같은 설정이 아래 옵션 부분에도 있습니다.");
+  }
+
+  /**
+   * 랭킹 (0x459a58 → 0x423170): the remote closes, the chat line stays closed, no sound, and the
+   * window waits with the busy cursor for page 1 on the lobby's connection.
+   */
+  private openRanking(): void {
+    this.closePopup(false);
+    this.chat.close();
+    const { stage, assets, ranking, sounds } = this.options;
+    this.rankingWindow = new RankingWindow({
+      stage,
+      assets,
+      ranking,
+      sound: () => sounds.play(MENU_SOUNDS.primary),
+      message: (text) => this.showMessage(text),
+      close: () => this.closeRanking(),
+      announce: (text) => (this.status.textContent = text),
+      balloons: () => this.balloons,
+    });
+    this.openPopup("ranking", "랭킹 창이 열렸습니다. ◀▶로 쪽을 넘기고 FIND로 아이디를 찾습니다. Esc로 닫습니다.");
+  }
+
+  /** 0x4231c0 (X or Esc): back to the lobby with the chat line open again, the window's page 1. */
+  private closeRanking(): void {
+    this.rankingWindow?.dispose();
+    this.rankingWindow = null;
+    this.options.ranking.windowPage = 1;
+    this.closePopup(true);
+  }
+
+  /**
+   * A hidden control for the ranking window: the release a click on that button makes. "open" stands
+   * for REMOTE then its 랭킹, from the lobby with nothing open.
+   */
+  rankingCommand(command: RankingCommand): void {
+    if (this.helpScreen || this.busy) return;
+    const click = (hit: Rect) => this.release(Math.trunc((hit[0] + hit[2]) / 2), Math.trunc((hit[1] + hit[3]) / 2));
+    if (command === "open") {
+      if (this.rankingWindow) return;
+      if (!this.clear) {
+        this.status.textContent = "다른 창이 열려 있어 랭킹 창을 열 수 없습니다.";
+        return;
+      }
+      click(REMOTE.hit);
+      click(REMOTE_POPUP.buttons[0].hit);
+      return;
+    }
+    if (!this.rankingWindow) {
+      this.status.textContent = "랭킹 창이 열려 있지 않습니다.";
+      return;
+    }
+    if (command === "ok" || command === "cancel") click(RANKING_POPUP[command].hit);
+    else click(RANKING_BUTTONS[command].hit);
   }
 
   /** 0x420e90: back to the lobby (scene 4) with the chat line open again. */
@@ -913,6 +984,7 @@ export class LobbyScreen {
   private askPassword(code: string): void {
     if (this.myInfo) this.closeMyInfo();
     if (this.option) this.closeOption();
+    if (this.rankingWindow) this.closeRanking();
     if (this.popup) this.closePopup(false);
     this.chat.close();
     this.passwordRoom = code;
@@ -989,6 +1061,7 @@ export class LobbyScreen {
     const ours =
       [...editors, this.options.canvas, document.body].includes(active as HTMLElement) ||
       (this.option?.owns(active) ?? false) ||
+      (this.rankingWindow?.owns(active) ?? false) ||
       active === null;
     if (!ours) return;
     // Tab moves on to the page's controls, which do everything the canvas does; a key change takes
@@ -1014,6 +1087,10 @@ export class LobbyScreen {
     }
     if (this.option) {
       this.optionKey(event);
+      return;
+    }
+    if (this.rankingWindow) {
+      this.rankingKey(event, this.rankingWindow);
       return;
     }
     if (event.code === "Escape") {
@@ -1068,6 +1145,25 @@ export class LobbyScreen {
       if (this.helpScreen) this.helpScreen = false;
       else if (this.message) this.hideMessage();
       else option.window.escape();
+    }
+  }
+
+  /**
+   * Enter and Esc in the ranking window (0x45fcbe, 0x46187e); Esc waits on the wait, the help and the
+   * message box first. A character typed with the popup open goes back to its editor.
+   */
+  private rankingKey(event: KeyboardEvent, win: RankingWindow): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      win.enter();
+    } else if (event.code === "Escape") {
+      event.preventDefault();
+      if (this.busy) return;
+      if (this.helpScreen) this.helpScreen = false;
+      else if (this.message) this.hideMessage();
+      else win.escape();
+    } else if (win.popupOpen && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      win.focusEditor();
     }
   }
 
@@ -1127,6 +1223,8 @@ export class LobbyScreen {
       this.drawMyInfoScene(this.myInfo, now);
     } else if (this.option) {
       this.drawOptionScene(this.option, now);
+    } else if (this.rankingWindow) {
+      this.drawRankingScene(this.rankingWindow, now);
     } else {
       this.drawLobby(now);
     }
@@ -1395,8 +1493,8 @@ export class LobbyScreen {
   private drawBalloons(): void {
     if (!this.balloons || !this.pointer.inside) return;
     const balloon = lobbyHelpAt(this.pointer.mouse.x, this.pointer.mouse.y, {
-      // My-info and the option window draw their own balloons.
-      popup: this.popup === "myInfo" || this.popup === "option" ? null : this.popup,
+      // My-info, the ranking and the option window draw their own balloons.
+      popup: this.popup === "myInfo" || this.popup === "ranking" || this.popup === "option" ? null : this.popup,
       // The user information window's only balloon is its X's (0x42be43).
       message: this.message !== null,
       waitingOnly: this.waitingOnly,
@@ -1425,6 +1523,12 @@ export class LobbyScreen {
     option.update(frame);
     this.drawPartialLobby();
     option.draw(this.ctx, now, frame);
+  }
+
+  /** Scene 12 (0x4231e0): the partial lobby, then the window; no "ver.". */
+  private drawRankingScene(win: RankingWindow, now: number): void {
+    this.drawPartialLobby();
+    win.draw(this.ctx, now, { mouse: this.pointer.mouse, inside: this.pointer.inside, held: this.pointer.held, message: this.message !== null });
   }
 
   // My-info (scene 10: 0x43c510, main draw 0x43c790)

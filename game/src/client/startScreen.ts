@@ -342,6 +342,12 @@ export class StartScreen {
         get rows() {
           return options.ranking.rows;
         },
+        get windowPage() {
+          return options.ranking.windowPage;
+        },
+        set windowPage(page) {
+          options.ranking.windowPage = page;
+        },
         page: (page) => this.waitFor(options.ranking.page(page)),
         search: (id) => this.waitFor(options.ranking.search(id)),
       },
