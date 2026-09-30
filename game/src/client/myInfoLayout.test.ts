@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { RANKING_POPUP } from "./rankingWindowLayout.ts";
 import {
   CHARACTER_IDS,
   CHARACTER_NAMES,
@@ -12,6 +13,8 @@ import {
   myInfoButtonAt,
   myInfoHelpAt,
   newColourSlider,
+  NICK_POPUP,
+  nickCaret,
   slideColour,
   stepCharacter,
 } from "./myInfoLayout.ts";
@@ -144,5 +147,26 @@ describe("my-info colour popup (0x43cd8a, 0x43e580)", () => {
     expect(myInfoHelpAt(500, 274, { useId: false, popup: "colour" })?.text).toBe("화살표로 색 조절");
     expect(myInfoHelpAt(100, 510, { useId: false, popup: "colour" })).toBeNull();
     expect(myInfoHelpAt(290, 350, { useId: false, popup: "greeting" })?.text).toBe("입력 및 수정 확인(enter)");
+  });
+});
+
+describe("my-info nickname popup (0x43d248, 0x43eac0)", () => {
+  it("draws new_basicwindow as the other ID popups do, with its own O and X a pixel wider", () => {
+    expect(NICK_POPUP.src).toEqual(RANKING_POPUP.src);
+    expect(NICK_POPUP.ok.pressed).toEqual(RANKING_POPUP.ok.pressed);
+    expect(NICK_POPUP.cancel.pressed).toEqual(RANKING_POPUP.cancel.pressed);
+    expect(NICK_POPUP.ok.hit).toEqual([281, 341, 312, 372]);
+    expect(NICK_POPUP.cancel.hit).toEqual([468, 341, 499, 372]);
+  });
+
+  it("puts the caret 7 px a byte from x 331 on y 291", () => {
+    expect(nickCaret(0)).toEqual({ x: 331, y: 291 });
+    expect(nickCaret(10)).toEqual({ x: 401, y: 291 });
+  });
+
+  it("has its own balloons over O and X", () => {
+    expect(myInfoHelpAt(312, 372, { useId: false, popup: "nickname" })?.text).toBe("입력 및 수정 확인(enter)");
+    expect(myInfoHelpAt(499, 341, { useId: false, popup: "nickname" })?.text).toBe("취소 버튼(esc)");
+    expect(myInfoHelpAt(331, 291, { useId: false, popup: "nickname" })).toBeNull();
   });
 });

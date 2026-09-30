@@ -186,6 +186,8 @@ class OnlineSession {
   private localGame: { stop(): void } | null = null;
   /** The ranking's list, scene 5's and the lobby window's. */
   private readonly ranking = new RankingBoard();
+  /** The lobby's nickname popup waits for its save's answer, which comes as the greeting's does. */
+  private lobbySaving: "nick" | null = null;
 
   constructor(manifest: Manifest) {
     this.manifest = manifest;
@@ -494,6 +496,11 @@ class OnlineSession {
       account: () => this.account,
       saveCharacter: (character, hue, useId) => this.send({ type: "set-character", character, hue, useId }),
       saveGreeting: (greeting) => this.send({ type: "set-greeting", greeting }),
+      // C->S 0x57's place: scene 5's save with the greeting and the ID check as saved, so only the nick changes (R).
+      saveNick: (nick) => {
+        this.lobbySaving = "nick";
+        this.send({ type: "set-status", nick, greeting: this.profile.greeting, useId: this.profile.useId });
+      },
       settings,
       ranking: this.ranking.access((message) => {
         if (this.socket?.readyState !== WebSocket.OPEN) return false;
@@ -780,12 +787,17 @@ class OnlineSession {
         break;
       }
       case "saved":
-        // S->C 0x58: the greeting is the server's copy.
+        // S->C 0x58 or 0x57: the greeting or the nick is the server's copy.
         this.account = takeSaved(this.account, message.account);
         this.profile.greeting = message.account.greeting;
-        this.lobbyView?.greetingSaved();
+        this.profile.nick = message.account.nick;
+        if (this.lobbySaving === "nick") this.lobbyView?.nickSaved();
+        else this.lobbyView?.greetingSaved();
+        this.lobbySaving = null;
         break;
       case "nick-refused":
+        // 0x44b080: the message box, and the popup stays.
+        this.lobbySaving = null;
         this.lobbyView?.showMessage(nickRefusal(message.code));
         break;
       case "room":

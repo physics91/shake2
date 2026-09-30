@@ -370,4 +370,16 @@ describe("the gate's saves over the auth connection (scene 5)", () => {
     t.channels[0].lobby.tick();
     expect(t.last(2, "lobby")?.users[0]?.card.greeting).toBe("로비에서 인사");
   });
+
+  it("takes the lobby's nickname popup (C->S 0x57) as set-status on the lobby connection, and shows the nick", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    await t.enter(1, "tester");
+    t.gate.handle(1, { type: "set-status", nick: "로비닉", greeting: "", useId: true });
+    expect(t.last(1, "saved")?.account.nick).toBe("로비닉");
+    t.channels[0].lobby.tick();
+    expect(t.last(1, "lobby")?.users[0]?.card.nick).toBe("로비닉");
+    t.gate.handle(1, { type: "set-status", nick: "또로비닉", greeting: "", useId: true });
+    expect(t.last(1, "nick-refused")?.code).toBe(NICK_ONCE);
+  });
 });

@@ -170,6 +170,32 @@ export const COLOUR_POPUP = {
 /** The colour icon's new_button art while the account has item 20: lit, and pressed while held (0x43c790). */
 export const COLOUR_ICON = { lit: [175, 191, 203, 219] as Rect, pressed: [204, 191, 232, 219] as Rect, at: { x: 479, y: 229 } };
 
+/** The nickname icon's new_button art while the account has item 9: lit, and pressed while held (0x43cd45, 0x43d82c). */
+export const NICK_ICON = { lit: [186, 160, 215, 190] as Rect, pressed: [216, 160, 245, 190] as Rect, at: { x: 324, y: 235 } };
+
+/**
+ * The nickname popup (draw 0x43d248, open 0x43eac0): new_basicwindow, the lit icon, the "닉네임"
+ * label (new_button2), the nick in font 13 #F5FF00 outlined black and its caret, O and X pressed
+ * (new_button2) while held over.
+ */
+export const NICK_POPUP = {
+  src: [2, 2, 240, 181] as Rect,
+  at: { x: 274, y: 200 },
+  icon: { src: [186, 160, 215, 190] as Rect, at: { x: 325, y: 255 } },
+  label: { src: [249, 220, 317, 240] as Rect, at: { x: 365, y: 259 } },
+  text: { x: 331, y: 291 },
+  ok: { hit: [281, 341, 312, 372] as Rect, pressed: [1, 147, 33, 179] as Rect, at: { x: 281, y: 341 } },
+  cancel: { hit: [468, 341, 499, 372] as Rect, pressed: [34, 146, 66, 178] as Rect, at: { x: 468, y: 341 } },
+};
+
+/** The nickname editor's limit (0x43eac0: 0xb): 10 bytes. */
+export const NICK_LIMIT = 11;
+
+/** The nickname popup's caret after `caretBytes` bytes (0x43e040 from x 331). */
+export function nickCaret(caretBytes: number): Point {
+  return { x: NICK_POPUP.text.x + 7 * Math.max(0, caretBytes), y: NICK_POPUP.text.y };
+}
+
 /** [0x496334] the slider's hue and [0x46ea44] the knob's x, a float. */
 export interface ColourSlider {
   hue: number;
@@ -269,6 +295,11 @@ const GREETING_HELP: HelpEntry[] = [
   { rect: GREETING_POPUP.cancel.hit, text: "취소 버튼(esc)" },
 ];
 
+const NICK_HELP: HelpEntry[] = [
+  { rect: NICK_POPUP.ok.hit, text: "입력 및 수정 확인(enter)" },
+  { rect: NICK_POPUP.cancel.hit, text: "취소 버튼(esc)" },
+];
+
 const COLOUR_HELP: HelpEntry[] = [
   { rect: COLOUR_POPUP.ok.hit, text: "입력 및 수정 확인(enter)" },
   { rect: COLOUR_POPUP.cancel.hit, text: "취소 버튼(esc)" },
@@ -279,9 +310,9 @@ const COLOUR_HELP: HelpEntry[] = [
 export function myInfoHelpAt(
   x: number,
   y: number,
-  at: { useId: boolean; popup?: "greeting" | "colour" },
+  at: { useId: boolean; popup?: "greeting" | "colour" | "nickname" },
 ): { text: string; x: number; y: number } | null {
-  const entries = at.popup === "greeting" ? GREETING_HELP : at.popup === "colour" ? COLOUR_HELP : MAIN_HELP;
+  const entries = at.popup === "greeting" ? GREETING_HELP : at.popup === "colour" ? COLOUR_HELP : at.popup === "nickname" ? NICK_HELP : MAIN_HELP;
   const entry = entries.find((e) => inside(e.rect, x, y));
   if (!entry) return null;
   const text = typeof entry.text === "string" ? entry.text : entry.text(at.useId);

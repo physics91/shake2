@@ -1,7 +1,7 @@
 // The lobby (scene 4, "LOBBY") as a page: the original's screen on a canvas (lobbyScreen.ts) and,
 // under it, page controls for the keyboard and screen readers. The room code join is the remake's.
-import { cutBytes, typeable } from "../server/cp949.ts";
-import { hasItem, ITEM_COLOUR } from "../server/items.ts";
+import { cutBytes, trimChat, typeable } from "../server/cp949.ts";
+import { hasItem, ITEM_COLOUR, ITEM_NICK } from "../server/items.ts";
 import type { Badge, ClientMessage, LobbyUser, OwnAccount, RoomStatus, RoomSummary } from "../server/protocol.ts";
 import { RANDOM_MAP, ROOM_CHAT_LIMIT, ROOM_CODE_LENGTH, shownName } from "../server/protocol.ts";
 import type { FriendRecord } from "./optionWindow.ts";
@@ -12,7 +12,7 @@ import { CREATE_PASSWORD_LIMIT, CREATE_TITLE_LIMIT, createTitle, roomCountText, 
 import type { MyProfile, RankingCommand } from "./lobbyScreen.ts";
 import { loadLobbyAssets, LobbyScreen } from "./lobbyScreen.ts";
 import { mapTitle } from "./menu.ts";
-import { CHARACTER_IDS, CHARACTER_NAMES } from "./myInfoLayout.ts";
+import { CHARACTER_IDS, CHARACTER_NAMES, NICK_LIMIT } from "./myInfoLayout.ts";
 import { OptionPanel } from "./optionPanel.ts";
 import type { RankingAccess } from "./ranking.ts";
 import { chatLineClass, shownChat } from "./roomChat.ts";
@@ -43,6 +43,8 @@ export interface LobbyActions {
   saveCharacter(character: string, hue: number, useId: boolean): void;
   /** Save the greeting (set-greeting); the server answers with the account. */
   saveGreeting(text: string): void;
+  /** Change the nickname (item 9, once a day); the server answers with the account or a refusal. */
+  saveNick(nick: string): void;
   /** The option object, for the option window and the page's option controls. */
   settings: SettingsStore;
   /** The ranking's list and its fetches on the lobby's connection, for the ranking window. */
@@ -108,6 +110,9 @@ export class LobbyView {
   );
   /** The colour popup's hue (item 20), for the keyboard: −180..180. */
   private readonly hueInput = h("input", { id: "lobby-hue", type: "number", min: "-180", max: "180", step: "1" });
+  /** The nickname popup's nick (item 9), for the keyboard. */
+  private readonly nickInput = h("input", { id: "lobby-nick", autocomplete: "off" });
+  private readonly nickButton = h("button", { class: "btn", type: "submit" }, "닉네임 바꾸기");
   private readonly optionPanel: OptionPanel;
   private screen: LobbyScreen | null = null;
   private state: LobbyState;
@@ -128,7 +133,7 @@ export class LobbyView {
     this.welcome = welcome;
     this.actions = actions;
     this.state = state;
-    const { send, say, exit, filterChanged, profile, account, saveCharacter, saveGreeting, settings, ranking } = actions;
+    const { send, say, exit, filterChanged, profile, account, saveCharacter, saveGreeting, saveNick, settings, ranking } = actions;
 
     const title = h("input", { id: "lobby-title", autocomplete: "off" });
     title.addEventListener("input", () => fitBytes(title, CREATE_TITLE_LIMIT));
@@ -174,12 +179,21 @@ export class LobbyView {
     this.chatInput.addEventListener("input", () => fitBytes(this.chatInput, ROOM_CHAT_LIMIT));
     this.characterSelect.value = profile.character;
     this.showHue();
+    this.nickInput.addEventListener("input", () => fitBytes(this.nickInput, NICK_LIMIT));
+    this.showNick();
     const saveMyInfo = (event: Event) => {
       event.preventDefault();
       // The window's O: nothing changed closes without asking the server (0x43e110).
       const hue = this.hueInput.disabled ? profile.hue : Math.max(-180, Math.min(180, Math.trunc(Number(this.hueInput.value) || 0)));
       if (this.characterSelect.value === profile.character && hue === profile.hue) return;
       saveCharacter(this.characterSelect.value, hue, profile.useId);
+    };
+    const saveNickname = (event: Event) => {
+      event.preventDefault();
+      // The nickname popup's O (0x44aff0): trailing blanks cut, empty or all blank sends nothing.
+      const nick = trimChat(this.nickInput.value);
+      if (!nick.trim() || nick === profile.nick) return;
+      saveNick(nick);
     };
     this.optionPanel = new OptionPanel({
       settings,
@@ -221,6 +235,12 @@ export class LobbyView {
         h("div", { class: "field" }, h("label", { for: "lobby-character" }, "내 캐릭터 (내정보)"), this.characterSelect),
         h("div", { class: "field" }, h("label", { for: "lobby-hue" }, "캐릭터 색조 −180~180 (내정보 색조 창, 아이템 20)"), this.hueInput),
         h("button", { class: "btn", type: "submit" }, "저장"),
+      ),
+      h(
+        "form",
+        { class: "row", onsubmit: saveNickname },
+        h("div", { class: "field" }, h("label", { for: "lobby-nick" }, `닉네임 (내정보 닉네임 창, 아이템 9, 하루 한 번, 최대 ${NICK_LIMIT - 1}바이트)`), this.nickInput),
+        this.nickButton,
       ),
       h(
         "form",
@@ -277,6 +297,7 @@ export class LobbyView {
             account,
             saveCharacter,
             saveGreeting,
+            saveNick,
             fadeIn,
             settings,
             ranking,
@@ -418,6 +439,20 @@ export class LobbyView {
   /** S->C 0x58: the greeting popup closes. */
   greetingSaved(): void {
     this.screen?.greetingSaved();
+  }
+
+  /** S->C 0x57 accepted: the nickname popup closes. */
+  nickSaved(): void {
+    this.showNick();
+    this.screen?.nickSaved();
+  }
+
+  /** The nick field holds the account's nick, and takes a new one only with the nickname item, as the icon does. */
+  private showNick(): void {
+    const locked = !hasItem(this.actions.account()?.items ?? [], ITEM_NICK);
+    this.nickInput.value = this.actions.profile.nick;
+    this.nickInput.disabled = locked;
+    this.nickButton.disabled = locked;
   }
 
   /** S->C 0x63: the option window's friend list. */

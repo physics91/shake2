@@ -4,7 +4,7 @@
 import type { Rect } from "../assets/types.ts";
 import { animDue } from "../sim/constants.ts";
 import { cp949Bytes, trimChat } from "../server/cp949.ts";
-import { hasItem, ITEM_COLOUR, ITEM_MASK, ITEM_WHISPER } from "../server/items.ts";
+import { hasItem, ITEM_COLOUR, ITEM_MASK, ITEM_NICK, ITEM_WHISPER } from "../server/items.ts";
 import type { Badge, ClientMessage, OwnAccount, RoomStatus, RoomSummary, UserCard } from "../server/protocol.ts";
 import { chatLine as sendableChat, RANDOM_MAP, shownName } from "../server/protocol.ts";
 import type { Sheet } from "./assets.ts";
@@ -96,6 +96,10 @@ import {
   myInfoButtonAt,
   myInfoHelpAt,
   newColourSlider,
+  NICK_ICON,
+  NICK_LIMIT,
+  NICK_POPUP,
+  nickCaret,
   OWNED,
   PORTRAIT_AT,
   slideColour,
@@ -209,6 +213,8 @@ export interface LobbyScreenOptions {
   saveCharacter(character: string, hue: number, useId: boolean): void;
   /** The greeting popup's O (C->S 0x58); the answer comes to greetingSaved. */
   saveGreeting(text: string): void;
+  /** The nickname popup's O (C->S 0x57); the answer comes to nickSaved or as a refusal's message box. */
+  saveNick(nick: string): void;
   /** The first frames fade in, as after the server list (0x449172). */
   fadeIn?: boolean;
   /** The option object (0x48acd0): the option window edits it, the balloons and F2..F10 read it. */
@@ -243,6 +249,8 @@ interface MyInfo {
   useId: boolean;
   dropdown: boolean;
   greeting: boolean;
+  /** The nickname popup ([0x496339]), open only with item 9. */
+  nickname: boolean;
   /** The colour popup ([0x496330]) and its slider, open only with item 20. */
   colour: ColourSlider | null;
   busy: boolean;
@@ -277,6 +285,8 @@ export class LobbyScreen {
   private readonly passwordLine: ChatLine;
   /** The greeting popup's editor (0x43ea00: 36 bytes). */
   private readonly greetingLine: ChatLine;
+  /** The nickname popup's editor (0x43eac0: 10 bytes). */
+  private readonly nickLine: ChatLine;
   private myInfo: MyInfo | null = null;
   /** The 30 fps frame clock the colour popup's held slider steps on (0x458dbf); null while not held. */
   private slideAt: number | null = null;
@@ -339,6 +349,8 @@ export class LobbyScreen {
     this.passwordLine.element.setAttribute("aria-label", "방 비밀번호 (Enter 확인, Esc 취소)");
     this.greetingLine = new ChatLine(options.stage, { limit: GREETING_LIMIT, at: GREETING_POPUP.text, trapFocus: false });
     this.greetingLine.element.setAttribute("aria-label", "인사말");
+    this.nickLine = new ChatLine(options.stage, { limit: NICK_LIMIT, at: NICK_POPUP.text, trapFocus: false });
+    this.nickLine.element.setAttribute("aria-label", "닉네임 (Enter 저장, Esc 취소)");
     this.chat.open();
     if (options.fadeIn) this.fade = new Fade("in", performance.now(), FRAME_MS);
     this.detach = this.attach();
@@ -439,6 +451,7 @@ export class LobbyScreen {
     this.secretLine.dispose();
     this.passwordLine.dispose();
     this.greetingLine.dispose();
+    this.nickLine.dispose();
     this.option?.dispose();
     this.rankingWindow?.dispose();
     this.status.remove();
@@ -507,7 +520,7 @@ export class LobbyScreen {
     if (info) {
       // Held on the name box, the character list opens (0x458dbf → 0x43ece0).
       if (!held || info.busy || this.message) return;
-      if (!info.dropdown && !info.greeting && !info.colour && myInfoButtonAt(held.x, held.y) === "names") info.dropdown = true;
+      if (!info.dropdown && !info.greeting && !info.nickname && !info.colour && myInfoButtonAt(held.x, held.y) === "names") info.dropdown = true;
       else if (slider) this.slideHeld(slider, held, now);
       return;
     }
@@ -697,6 +710,7 @@ export class LobbyScreen {
       useId: this.options.profile.useId,
       dropdown: false,
       greeting: false,
+      nickname: false,
       colour: null,
       busy: false,
       face: { frame: 0, lastMs: performance.now() },
@@ -789,6 +803,7 @@ export class LobbyScreen {
   /** 0x43c4c0: back to the lobby with the chat line open again. */
   private closeMyInfo(): void {
     if (this.myInfo?.greeting) this.greetingLine.close();
+    if (this.myInfo?.nickname) this.nickLine.close();
     this.myInfo = null;
     this.closePopup(true);
   }
@@ -836,6 +851,11 @@ export class LobbyScreen {
       else if (inside(GREETING_POPUP.cancel.hit, x, y)) this.closeGreeting();
       return;
     }
+    if (info.nickname) {
+      if (inside(NICK_POPUP.cancel.hit, x, y)) this.closeNick();
+      else if (inside(NICK_POPUP.ok.hit, x, y)) this.submitNick();
+      return;
+    }
     switch (myInfoButtonAt(x, y)) {
       case "close":
         this.closeMyInfo();
@@ -861,7 +881,10 @@ export class LobbyScreen {
       case "colour":
         if (hasItem(this.options.account()?.items ?? [], ITEM_COLOUR)) this.openColour(info);
         break;
-      // 머니 충전, SHOP and the item arrows do nothing; the nickname icon needs item 9 and its window.
+      case "nickname":
+        if (hasItem(this.options.account()?.items ?? [], ITEM_NICK)) this.openNick(info);
+        break;
+      // 머니 충전, SHOP and the item arrows do nothing.
       default:
         break;
     }
@@ -926,6 +949,43 @@ export class LobbyScreen {
     if (!this.myInfo) return;
     this.myInfo.greeting = false;
     this.greetingLine.close();
+    this.status.textContent = "";
+  }
+
+  /** The nickname icon (0x43eac0): the popup's editor holds the nick; no sound. */
+  private openNick(info: MyInfo): void {
+    info.nickname = true;
+    this.nickLine.open();
+    this.nickLine.text = this.options.profile.nick;
+    this.status.textContent = "닉네임 창: 새 닉네임을 입력하고 Enter, 닫으려면 Esc. 하루 한 번 바꿀 수 있습니다.";
+  }
+
+  /**
+   * The nickname popup's O or Enter (0x44aff0), as the greeting's: trailing blanks cut, empty closes,
+   * all blank does nothing; else C->S 0x57, and the popup stays until the answer.
+   */
+  private submitNick(): void {
+    const raw = this.nickLine.view().text;
+    if (raw === "") {
+      this.closeNick();
+      return;
+    }
+    const nick = trimChat(raw);
+    if (!nick.trim()) return;
+    this.options.saveNick(nick);
+  }
+
+  /** S->C 0x57 accepted (0x44b080): the nick is the server's copy, and the popup closes with no message. */
+  nickSaved(): void {
+    this.closeNick();
+    this.status.textContent = `닉네임을 ${this.options.profile.nick}(으)로 바꾸었습니다.`;
+  }
+
+  /** 0x43eab0. */
+  private closeNick(): void {
+    if (!this.myInfo?.nickname) return;
+    this.myInfo.nickname = false;
+    this.nickLine.close();
     this.status.textContent = "";
   }
 
@@ -1057,7 +1117,7 @@ export class LobbyScreen {
   /** Keys (0x45fa70): Enter sends or submits, Esc closes the top thing or leaves, F1 shows the help screen. */
   private key(event: KeyboardEvent): void {
     const active = document.activeElement;
-    const editors = [this.chat, this.title, this.secretLine, this.passwordLine, this.greetingLine].map((line) => line.element);
+    const editors = [this.chat, this.title, this.secretLine, this.passwordLine, this.greetingLine, this.nickLine].map((line) => line.element);
     const ours =
       [...editors, this.options.canvas, document.body].includes(active as HTMLElement) ||
       (this.option?.owns(active) ?? false) ||
@@ -1175,6 +1235,7 @@ export class LobbyScreen {
     else if (this.message) this.hideMessage();
     else if (this.myInfo?.greeting) this.closeGreeting();
     else if (this.myInfo?.colour) this.closeColour(false);
+    else if (this.myInfo?.nickname) this.closeNick();
     // X and Esc drop the edits: the character shown goes back (0x43ecc0).
     else if (this.myInfo) this.closeMyInfo();
     // Esc on the remote leaves the chat line closed; only its X opens it again.
@@ -1203,6 +1264,8 @@ export class LobbyScreen {
       this.submitGreeting();
     } else if (this.myInfo?.colour) {
       this.closeColour(true);
+    } else if (this.myInfo?.nickname) {
+      this.submitNick();
     } else if (this.myInfo) {
       this.saveMyInfo();
     }
@@ -1543,14 +1606,17 @@ export class LobbyScreen {
     this.drawMyInfoFields();
     this.drawPortrait(info, now);
     outlinedText(ctx, CHARACTER_NAMES[info.character], CHARACTER_NAME_AT.x, CHARACTER_NAME_AT.y, FIELD_COLOUR, FONT_14);
-    // The item icons over their dimmed art in the window: the colour one with item 20. The
-    // nickname one (item 9) waits for its window.
-    if (hasItem(this.options.account()?.items ?? [], ITEM_COLOUR)) this.button(COLOUR_ICON.lit, COLOUR_ICON.at);
+    // The item icons over their dimmed art in the window: the colour one with item 20, the nickname one with item 9.
+    const items = this.options.account()?.items ?? [];
+    if (hasItem(items, ITEM_COLOUR)) this.button(COLOUR_ICON.lit, COLOUR_ICON.at);
+    if (hasItem(items, ITEM_NICK)) this.button(NICK_ICON.lit, NICK_ICON.at);
     // A popup is not drawn while the message box is up (0x443980); the button art only with the list closed.
     if (info.colour) {
       if (!this.message) this.drawColourPopup(info, info.colour);
     } else if (info.greeting) {
       if (!this.message) this.drawGreetingPopup(now);
+    } else if (info.nickname) {
+      if (!this.message) this.drawNickPopup(now);
     } else if (!info.dropdown) {
       this.drawMyInfoButtons();
     }
@@ -1608,7 +1674,11 @@ export class LobbyScreen {
       }
       if (b.hover) blit(this.ctx, sheet, b.hover, b.at.x, b.at.y);
     }
-    if (held && myInfoButtonAt(x, y) === "colour" && hasItem(this.options.account()?.items ?? [], ITEM_COLOUR)) this.button(COLOUR_ICON.pressed, COLOUR_ICON.at);
+    if (!held) return;
+    const items = this.options.account()?.items ?? [];
+    const under = myInfoButtonAt(x, y);
+    if (under === "colour" && hasItem(items, ITEM_COLOUR)) this.button(COLOUR_ICON.pressed, COLOUR_ICON.at);
+    else if (under === "nickname" && hasItem(items, ITEM_NICK)) this.button(NICK_ICON.pressed, NICK_ICON.at);
   }
 
   /**
@@ -1645,10 +1715,29 @@ export class LobbyScreen {
     }
   }
 
+  /** The nickname popup (0x43d248): new_basicwindow, the icon, the label, the nick and its caret, O and X held. */
+  private drawNickPopup(now: number): void {
+    const { ctx } = this;
+    const { assets } = this.options;
+    const popup = NICK_POPUP;
+    blit(ctx, assets.basicWindow, popup.src, popup.at.x, popup.at.y);
+    this.button(popup.icon.src, popup.icon.at);
+    blit(ctx, assets.button2, popup.label.src, popup.label.at.x, popup.label.at.y);
+    const line = this.nickLine.view();
+    if (line.text) outlinedText(ctx, line.text, popup.text.x, popup.text.y, FIELD_COLOUR, FONT_13);
+    for (const button of [popup.ok, popup.cancel]) {
+      if (this.pressedOver(button.hit)) blit(ctx, assets.button2, button.pressed, button.at.x, button.at.y);
+    }
+    if (this.caret.shown(now)) {
+      const at = nickCaret(line.caret);
+      drawCaret(ctx, at.x, at.y);
+    }
+  }
+
   /** 0x43d9a0: none while the list is open; under the message box only the popup's. */
   private drawMyInfoBalloon(info: MyInfo): void {
     if (!this.balloons || !this.pointer.inside || info.dropdown) return;
-    const popup = info.colour ? "colour" : info.greeting ? "greeting" : undefined;
+    const popup = info.colour ? "colour" : info.greeting ? "greeting" : info.nickname ? "nickname" : undefined;
     if (this.message && !popup) return;
     const { x, y } = this.pointer.mouse;
     const balloon = myInfoHelpAt(x, y, { useId: info.useId, popup });
