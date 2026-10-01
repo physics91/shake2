@@ -40,6 +40,7 @@ SHK_KEYS: dict[str, int | str | None] = {
     "new_icon": TOP_LEFT,
     "new_teambar": TOP_LEFT,
     "sd": TOP_LEFT,
+    "guild": TOP_LEFT,
     "new_round_e": None,
     "new_game_e": None,
     "new_load": None,

@@ -132,6 +132,15 @@ def test_map_objects_draw_from_the_sheet_their_unknown_a_names(synthetic_tree, t
     assert preview.getpixel((31, 11)) == (0, 0, 255, 255)
 
 
+def test_guild_is_keyed_on_its_top_left_pixel(synthetic_tree, tmp_path):
+    # 0x441782 loads [0x496c88] with 0x414410 (key = first pixel) and nothing rekeys it (no 0x414b20).
+    (synthetic_tree / "image" / "guild.shk").write_bytes(build_shk(2, 1, [0x0000, 0xF81F]))
+    export_tree(synthetic_tree, tmp_path / "out")
+
+    png = Image.open(tmp_path / "out" / "image" / "guild.png")
+    assert list(png.getdata()) == [(0, 0, 0, 0), (255, 0, 255, 255)]
+
+
 def test_lists_other_files_without_converting(synthetic_tree, tmp_path):
     dst = tmp_path / "out"
     index = export_tree(synthetic_tree, dst)
