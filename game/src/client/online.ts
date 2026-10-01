@@ -1976,7 +1976,11 @@ class OnlineGame {
     }
     this.measure(state);
     if (this.box && closesExitBox(state.phase, state.round)) this.closeBox();
-    if (this.help && !helpAllowed(state.phase)) this.help = false;
+    if (this.help && !helpAllowed(state.phase)) {
+      // The keys are read again (0x45aec8): one let go under the help no longer walks into the next round.
+      this.help = false;
+      this.syncInput();
+    }
     const box = this.box;
     const images = this.boxImages;
     this.chat.locked = box !== null;
