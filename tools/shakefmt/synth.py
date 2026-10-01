@@ -25,6 +25,10 @@ voice.cpp, control.cpp, csynth.cpp, instr.cpp, midi.cpp):
 - A note-on quick-stops the same key on its channel unless the region allows
   overlap, and every voice of the same key group, channel and program.
 - Note-off releases only the first matching voice in the queue.
+- Controllers as control.cpp takes them: any CC64 value but 0 holds; CC121 resets
+  expression and bend (volume and pan too when it has a value) and lets the pedal go;
+  RPN 0's data entry MSB sets the bend range in semitones (LSB ignored, NRPN deselects),
+  and a bend already held takes a new range at once (midi.cpp keeps no time-stamped range).
 - Bank select is ignored: shake.exe sets GUID_StandardMIDIFile (the same GUID as
   GUID_IgnoreBankSelectForGM) on every segment, and a variation bank that gm.dls
   has still plays bank 0 on the real synthesizer. A drum kit gm.dls lacks plays the
@@ -394,6 +398,13 @@ class Scheduler:
                     self.stop(v, t)
                 return
 
+    def sustain(self, t: float, channel: int, on: bool):
+        self.channels[channel].sustain = on
+        if not on:
+            for v in self.in_use:
+                if v.sustain_on and v.channel == channel:
+                    self.stop(v, t)
+
     def control(self, t: float, channel: int, number: int, value: int):
         ch = self.channels[channel]
         if number == 7:
@@ -403,26 +414,30 @@ class Scheduler:
         elif number == 11:
             _set(ch.expression, t, value)
         elif number == 64:
-            ch.sustain = value >= 64
-            if not ch.sustain:
-                for v in self.in_use:
-                    if v.sustain_on and v.channel == channel:
-                        self.stop(v, t)
+            # NOTE_SUSTAIN keeps the value as a BOOL: any value but 0 holds.
+            self.sustain(t, channel, value != 0)
         elif number in (101, 100):
             ch.rpn = (value, ch.rpn[1]) if number == 101 else (ch.rpn[0], value)
+        elif number in (99, 98):
+            ch.rpn = (127, 127)  # NOTE_CC_NRPN: no RPN selected (0x3FFF)
         elif number == 6 and ch.rpn == (0, 0):
+            # Whole semitones: data entry LSB leaves the range alone ("Roland ignores lsb"). The range
+            # is not time-stamped (CPitchBendIn::GetPitch), so the bend already held takes it.
             ch.bend_range = value * 100.0
-        elif number == 38 and ch.rpn == (0, 0):
-            ch.bend_range = math.floor(ch.bend_range / 100) * 100 + value
+            _set(ch.bend_cents, t, ch.bend * int(ch.bend_range) >> 13)
         elif number == 120:
             for v in self.in_use:
                 if v.channel == channel:
                     self.stop(v, t)
         elif number == 121:
+            # CC_RESETALL, then on into the sustain pedal's release.
+            if value:
+                _set(ch.volume, t, 100)
+                _set(ch.pan, t, 64)
             _set(ch.expression, t, 127)
             ch.bend = 0
             _set(ch.bend_cents, t, 0.0)
-            ch.sustain = False
+            self.sustain(t, channel, False)
         elif number == 123:
             for v in self.in_use:
                 if v.channel == channel and v.note_on and not v.sustain_on:

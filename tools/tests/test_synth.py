@@ -73,6 +73,38 @@ def test_pitch_bend_uses_the_default_two_semitone_range():
     assert peak_hz(window(out, 0.05, 0.45)) == pytest.approx(441 * 2 ** (2 / 12), rel=0.01)
 
 
+@pytest.mark.parametrize(
+    "controls, semitones",
+    [
+        pytest.param([(6, 12)], 12, id="data-entry-msb"),
+        pytest.param([(6, 2), (38, 50)], 2, id="lsb-ignored"),  # "Roland ignores lsb" (control.cpp)
+        pytest.param([(99, 1), (98, 8), (6, 12)], 2, id="nrpn-deselects-the-rpn"),  # NOTE_CC_NRPN: 0x3FFF
+    ],
+)
+def test_rpn_0_sets_the_bend_range_in_whole_semitones(controls, semitones):
+    rpn = [(0.0, "cc", 0, (101, 0)), (0.0, "cc", 0, (100, 0))] + [(0.0, "cc", 0, c) for c in controls]
+    out = render(
+        song(*rpn, (0.0, "bend", 0, (8191,)), (0.0, "on", 0, (69, 127)), (0.5, "off", 0, (69, 0))),
+        collection(),
+        RATE,
+    )
+
+    assert peak_hz(window(out, 0.05, 0.45)) == pytest.approx(441 * 2 ** (semitones / 12), rel=0.01)
+
+
+def test_a_new_bend_range_bends_the_note_already_bent():
+    # CPitchBendIn::GetPitch keeps no time-stamped range: the held bend times the range now.
+    rpn = [(0.3, "cc", 0, (101, 0)), (0.3, "cc", 0, (100, 0)), (0.3, "cc", 0, (6, 12))]
+    out = render(
+        song((0.0, "bend", 0, (8191,)), (0.0, "on", 0, (69, 127)), *rpn, (0.9, "off", 0, (69, 0))),
+        collection(),
+        RATE,
+    )
+
+    assert peak_hz(window(out, 0.05, 0.25)) == pytest.approx(441 * 2 ** (2 / 12), rel=0.01)
+    assert peak_hz(window(out, 0.45, 0.85)) == pytest.approx(882, rel=0.01)
+
+
 def test_looped_sample_sustains_while_unlooped_sample_stops_at_its_end():
     held = song((0.0, "on", 0, (69, 127)), (1.0, "off", 0, (69, 0)))
 
@@ -147,6 +179,46 @@ def test_sustain_pedal_defers_note_off():
 
     assert rms_db(window(out, 0.3, 0.5)) > -20
     assert np.abs(window(out, 0.7, 1.0)).max() == 0
+
+
+def test_any_sustain_value_but_0_holds():
+    # control.cpp NOTE_SUSTAIN keeps the value as a BOOL (m_fSustain = (BOOL) bData).
+    out = render(
+        song((0.0, "cc", 0, (64, 1)), (0.0, "on", 0, (69, 127)), (0.2, "off", 0, (69, 0)), length=1.0),
+        collection(),
+        RATE,
+    )
+
+    assert rms_db(window(out, 0.3, 0.5)) > -20
+
+
+def test_reset_all_controllers_lets_go_of_what_the_pedal_holds():
+    # control.cpp CC_RESETALL falls through into the pedal's release.
+    out = render(
+        song(
+            (0.0, "cc", 0, (64, 127)),
+            (0.0, "on", 0, (69, 127)),
+            (0.2, "off", 0, (69, 0)),
+            (0.6, "cc", 0, (121, 0)),
+            length=1.0,
+        ),
+        collection(),
+        RATE,
+    )
+
+    assert rms_db(window(out, 0.3, 0.5)) > -20
+    assert np.abs(window(out, 0.7, 1.0)).max() == 0
+
+
+def test_reset_all_controllers_with_a_value_also_resets_the_volume():
+    out = render(
+        song((0.0, "cc", 0, (7, 20)), (0.0, "on", 0, (69, 127)), (0.4, "cc", 0, (121, 1)), (0.8, "off", 0, (69, 0))),
+        collection(),
+        RATE,
+    )
+
+    louder = rms_db(window(out, 0.5, 0.7)) - rms_db(window(out, 0.1, 0.3))
+    assert louder == pytest.approx(40 * np.log10(100 / 20), abs=0.5)
 
 
 def test_channel_10_uses_the_drum_kit_and_key_groups_choke_each_other():
