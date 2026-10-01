@@ -91,7 +91,8 @@ export function chatSubmit(raw: string, inRoom: boolean): ChatSubmit {
   if (is("go")) {
     if (inRoom) return { kind: "none" };
     const number = tokens.next(" ");
-    return number === null ? { kind: "none" } : { kind: "go", index: atoi(number) - 1 };
+    // The C int's n − 1, which wraps as atoi's n does.
+    return number === null ? { kind: "none" } : { kind: "go", index: (atoi(number) - 1) | 0 };
   }
   if (is("ban")) {
     const id = inRoom ? tokens.next(" ") : null;

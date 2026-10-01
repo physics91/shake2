@@ -39,6 +39,9 @@ describe("chat commands (0x446200)", () => {
   it("joins room n - 1 with /go in the lobby, and does nothing with it in the room", () => {
     expect(chatSubmit("/go 3", false)).toEqual({ kind: "go", index: 2 });
     expect(chatSubmit("/go abc", false)).toEqual({ kind: "go", index: -1 });
+    // Past an int, as the C subtraction wraps: still a join-number the server reads.
+    expect(chatSubmit("/go 2147483648", false)).toEqual({ kind: "go", index: 0x7fffffff });
+    expect(chatSubmit("/go -2147483648", false)).toEqual({ kind: "go", index: 0x7fffffff });
     expect(chatSubmit("/go", false)).toEqual({ kind: "none" });
     expect(chatSubmit("/go 3", true)).toEqual({ kind: "none" });
   });
