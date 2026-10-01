@@ -150,6 +150,7 @@ export class StartView {
     this.serverInput = h("input", { id: "online-server", value: readPreference("online.server") ?? defaultServerUrl() });
     const enter = (event: Event) => {
       event.preventDefault();
+      if (!this.screen?.takesForm) return;
       const id = this.nameInput.value.trim();
       const password = this.passwordInput.value;
       if (!id || !password) return;
