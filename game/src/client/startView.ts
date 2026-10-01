@@ -189,7 +189,7 @@ export class StartView {
         h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "로그인하고 첫 서버 로비 입장")),
       ),
       // The row's double click, dropped where the canvas drops it.
-      h("button", { class: "btn", type: "button", onclick: () => !this.screen?.dropsClicks && actions.local() }, "2인 대전 (한 키보드, 서버 목록의 둘째 줄)"),
+      h("button", { class: "btn", type: "button", onclick: () => this.screen?.takesRowClicks && actions.local() }, "2인 대전 (한 키보드, 서버 목록의 둘째 줄)"),
       h(
         "details",
         {},
