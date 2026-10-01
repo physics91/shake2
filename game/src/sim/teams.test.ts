@@ -132,4 +132,41 @@ describe("individual round end with one player left in the room (0x441130)", () 
     expect(state.matchWinnerId).toBe(1);
     expect(state.players[0].medals).toBe(1);
   });
+
+  it("ends the match when the only other player leaves on the round's result screen, with no second medal", () => {
+    const state = teamMatch([0, 0], 0);
+    burn(state, [1]);
+    playOut(state);
+    expect(state.phase).toBe("round-over");
+    expect(state.roundWinnerId).toBe(2);
+
+    removePlayer(state, 2);
+
+    expect(state.phase).toBe("match-over");
+    expect(state.matchWinnerId).toBe(1);
+    expect(state.players[0].medals).toBe(0);
+  });
+
+  it("ends a team match when everyone left on the round's result screen is on one team", () => {
+    const state = teamMatch([1, 1, 2]);
+    burn(state, [3]);
+    playOut(state);
+    expect(state.phase).toBe("round-over");
+    expect(state.roundWinnerTeam).toBe(1);
+
+    removePlayer(state, 3);
+    expect(state.phase).toBe("match-over");
+    expect(state.matchWinnerTeam).toBe(1);
+    expect(state.players.map((p) => p.medals)).toEqual([1, 1]);
+  });
+
+  it("goes on to the next round when players of two teams are left", () => {
+    const state = teamMatch([1, 1, 2, 2]);
+    burn(state, [3, 4]);
+    playOut(state);
+    expect(state.phase).toBe("round-over");
+
+    removePlayer(state, 1);
+    expect(state.phase).toBe("round-over");
+  });
 });

@@ -378,6 +378,26 @@ describe("Lobby", () => {
     ]);
   });
 
+  it("ends the match for the one left when the other leaves on a round's result screen", () => {
+    const records: [string, MatchRecord][] = [];
+    const t = makeLobby({ rules: { ...VERSUS, medalsToWin: 3 }, recordMatch: (name, record) => records.push([name, record]) });
+    hostAndGuestOf(t);
+    t.lobby.handle(2, { type: "set-ready", ready: true });
+    t.lobby.handle(1, { type: "start" });
+    for (let i = 0; i < TO_PLAY; i++) t.lobby.tick();
+    t.lobby.handle(1, { type: "input", dir: null, bomb: true, attack: false, evade: false });
+    for (let i = 0; i < 7 * TICK_RATE && t.last(2, "snapshot")?.state.phase !== "round-over"; i++) t.lobby.tick();
+    expect(t.last(2, "snapshot")?.state.phase).toBe("round-over");
+
+    t.lobby.handle(1, { type: "leave-room" });
+    expect(records).toEqual([
+      ["P1", { cell: -LEAVE_PENALTY, won: false, lost: true, candy: 0 }],
+      ["둘", { cell: 50, won: true, lost: false, candy: 0 }],
+    ]);
+    for (let i = 0; i < 10 * TICK_RATE && !t.last(2, "match-end"); i++) t.lobby.tick();
+    expect(t.room(2)).toMatchObject({ hostId: 2, playing: false });
+  });
+
   it("dissolves a room when its last player disconnects", () => {
     const t = startTwoPlayerMatch();
     t.lobby.disconnect(1);
