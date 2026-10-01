@@ -76,6 +76,13 @@ describe("the account book", () => {
     expect(account.password).not.toContain("pass1");
   });
 
+  it("takes a nick ending in a capital sigma as its lower case: Σ lowers to ς there, which no nick holds", async () => {
+    const book = new AccountBook(undefined, defaults);
+    expect(await book.register("alpha1", "ΑΣ", "pass1", 1000)).toBe(REGISTERED);
+    expect(book.checkNick("ασ")).toBe(1);
+    expect(await book.register("bravo2", "ασ", "pass1", 1000)).toBe(NICK_TAKEN);
+  });
+
   it("authenticates only the right password", async () => {
     const book = new AccountBook(undefined, defaults);
     await book.register("tester", "테스터", "pass1", 0);

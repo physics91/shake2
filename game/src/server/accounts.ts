@@ -59,9 +59,12 @@ export function isPassword(password: string): boolean {
   return password === typeable(password) && !/\s/.test(password) && bytes >= PASSWORD_MIN_BYTES && bytes <= PASSWORD_MAX_BYTES;
 }
 
-/** IDs and nicks are one whichever their case, as the ranking's search compares them (_stricmp). */
+/**
+ * IDs and nicks are one whichever their case, as the ranking's search compares them (_stricmp).
+ * A capital sigma at a word's end lowers to ς, which no cp949 nick holds: it keys as σ.
+ */
 export function nameKey(name: string): string {
-  return name.toLowerCase();
+  return name.toLowerCase().replaceAll("ς", "σ");
 }
 
 export interface AccountRecord {
