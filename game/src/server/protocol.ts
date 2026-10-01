@@ -457,16 +457,16 @@ function password(raw: unknown, limit: number): string | null {
   return typeof raw === "string" && raw.length <= 64 ? cutBytes(typeable(raw), limit) : null;
 }
 
-/** A chat line the room's editor could have held, trailing blanks cut; null if there is nothing to send. */
+/** A chat line the room's editor could have held, trailing spaces and tabs cut (0x446200); null if there is nothing to send. */
 export function chatLine(raw: string): string | null {
   const text = trimChat(typeable(raw));
-  return text.trim() && cp949Bytes(text) < ROOM_CHAT_LIMIT ? text : null;
+  return text !== "" && cp949Bytes(text) < ROOM_CHAT_LIMIT ? text : null;
 }
 
-/** A chat line the match's editor could have held, trailing blanks cut; null if there is nothing to send. */
+/** A chat line the match's editor could have held, trailing spaces and tabs cut (0x446200); null if there is nothing to send. */
 export function gameChatLine(raw: string): string | null {
   const text = trimChat(typeable(raw));
-  return text.trim() && cp949Bytes(text) < GAME_CHAT_LIMIT ? text : null;
+  return text !== "" && cp949Bytes(text) < GAME_CHAT_LIMIT ? text : null;
 }
 
 /** An ID the friend popup or the ranking's FIND could have typed (editors of 0xb): cp949, 1 to 10 bytes. */

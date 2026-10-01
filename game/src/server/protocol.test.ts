@@ -67,12 +67,15 @@ describe("parseClientMessage", () => {
     expect(parseClientMessage(JSON.stringify({ type: "chat", text: "a".repeat(44) }))).toEqual({ type: "chat", text: "a".repeat(44) });
     expect(parseClientMessage(JSON.stringify({ type: "chat", text: "가".repeat(22) }))).toEqual({ type: "chat", text: "가".repeat(22) });
     expect(parseClientMessage(JSON.stringify({ type: "chat", text: "hi😀" }))).toEqual({ type: "chat", text: "hi" });
+    // Only 0x20 and 0x09 are cut: the double-byte space (A1 A1) is a character (0x446222-0x44624b).
+    expect(parseClientMessage(JSON.stringify({ type: "chat", text: "\u3000\u3000 " }))).toEqual({ type: "chat", text: "\u3000\u3000" });
   });
 
   it("takes a game chat line the match's editor could hold: cp949 text under 37 bytes, trailing blanks cut (0x418d46, 0x446200)", () => {
     expect(parseClientMessage('{"type":"game-chat","text":" /w 안녕 \\t "}')).toEqual({ type: "game-chat", text: " /w 안녕" });
     expect(parseClientMessage(JSON.stringify({ type: "game-chat", text: "a".repeat(36) }))).toEqual({ type: "game-chat", text: "a".repeat(36) });
     expect(parseClientMessage(JSON.stringify({ type: "game-chat", text: "가".repeat(18) }))).toEqual({ type: "game-chat", text: "가".repeat(18) });
+    expect(parseClientMessage(JSON.stringify({ type: "game-chat", text: "\u3000" }))).toEqual({ type: "game-chat", text: "\u3000" });
   });
 
   it("takes a server list row's load query with the row (C->S 0x4c)", () => {
