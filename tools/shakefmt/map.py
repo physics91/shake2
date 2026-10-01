@@ -158,6 +158,10 @@ def _validate(level: Level) -> None:
         raise MapFormatError(f"play area {level.area} not divisible by grid {level.grid_width}x{level.grid_height}")
 
     cell_count = len(level.cells)
+    kinds = {kind.value for kind in CellKind}
+    for index, cell in enumerate(level.cells):
+        if cell.raw[4] not in kinds:
+            raise MapFormatError(f"cell {index} has unknown kind {cell.raw[4]}")
     for block in level.fixed:
         _check_ref(level, block.sprite, block.cell, "fixed block")
         if level.cells[block.cell].kind != CellKind.FIXED:

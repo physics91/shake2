@@ -53,6 +53,7 @@ def cells_with(kind_of_cell0):
         pytest.param(build_map()[:-5], id="truncated-cells"),
         pytest.param(build_map()[:60], id="truncated-header"),
         pytest.param(build_map(fixed=[(0, 0)], cells=cells_with(0)), id="fixed-cell-not-marked"),
+        pytest.param(build_map(cells=cells_with(3)), id="unknown-cell-kind"),
         pytest.param(build_map(bricks=[(0, 0, 0)], cells=cells_with(2)), id="brick-index-mismatch"),
         pytest.param(build_map(fixed=[(5, 0)]), id="unknown-sprite"),
         pytest.param(build_map(fixed=[(0, 9)], cells=cells_with(0)), id="cell-out-of-grid"),
