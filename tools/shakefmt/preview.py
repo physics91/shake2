@@ -41,4 +41,9 @@ def _draw_first_frame(canvas, sheet: SprSheet, anim: int, x: int, y: int, *, use
     crop = Image.fromarray(sheet.rgba[frame.top : frame.bottom, frame.left : frame.right])
     if use_anchor:
         x, y = x - frame.anchor_x, y - frame.anchor_y
+    # As the game draws (0x462d92): a top-left above or left of the screen moves to 0, and a frame
+    # starting past the right or bottom edge shows nothing; Pillow cannot take boxes that far out.
+    x, y = max(x, 0), max(y, 0)
+    if x >= canvas.width or y >= canvas.height:
+        return
     canvas.alpha_composite(crop, (x, y))
