@@ -1,5 +1,5 @@
 import type { Manifest } from "../assets/types.ts";
-import { cp949Bytes, cutBytes, typeable } from "../server/cp949.ts";
+import { compareIgnoreCase, cp949Bytes, cutBytes, typeable } from "../server/cp949.ts";
 import type { ChannelRow, ClientMessage, OwnAccount, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
 import { badgeOf, shownName, START_BARS, typingPacketDue } from "../server/protocol.ts";
 import { hasItem, ITEM_KICK, ITEM_WHISPER } from "../server/items.ts";
@@ -335,6 +335,11 @@ class OnlineSession {
 
   /** The page's form: the login, then the first row's lobby once the auth server answers. */
   private formEnter(id: string, password: string): void {
+    // Logged in, the canvas offers no other login until the quit box's YES starts the program over.
+    if (this.account && compareIgnoreCase(id, this.account.id) !== 0) {
+      this.showError(`이미 ${this.account.id} 아이디로 로그인했습니다. 다른 아이디는 종료 상자의 YES로 다시 시작한 뒤 넣으세요.`);
+      return;
+    }
     if (this.auth.state !== "open") {
       this.auth.connect(this.serverUrl);
       this.showError("인증 서버에 접속하지 못했습니다. 잠시 뒤 다시 시도하세요.");
