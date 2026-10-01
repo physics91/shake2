@@ -755,7 +755,7 @@ export class StartScreen {
         break;
       case "exit":
         // The network box (0x443ce0); its YES resets scene 5 and leaves (0x4205e0).
-        this.openQuitBox();
+        this.openQuitBox({ x, y });
         break;
       case null:
         break;
@@ -841,14 +841,15 @@ export class StartScreen {
     if (inside(SERVER_BUTTONS.exit.hit, x, y)) {
       list.selected = -1;
       sounds.play(MENU_SOUNDS.primary);
-      this.openQuitBox();
+      this.openQuitBox({ x, y });
     }
   }
 
-  private openQuitBox(): void {
+  /** The mouse rests at `at`: the Exit release's place (a hidden mirror's click leaves the real mouse elsewhere), or the mouse for Esc. */
+  private openQuitBox(at: { x: number; y: number } = this.pointer.mouse): void {
     this.quitBox = openBox("esc");
     // Scenes 2 and 5 draw it at 0x40cac4: a mouse resting on a button selects it.
-    this.boxHover = boxHover(this.quitBox, this.pointer.mouse);
+    this.boxHover = boxHover(this.quitBox, at);
     this.announce("종료하시겠습니까? 예(Y), 아니오(N)");
   }
 
