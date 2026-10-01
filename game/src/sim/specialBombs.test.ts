@@ -390,6 +390,25 @@ describe("line bomb (0x4574e0)", () => {
     expect(state.bombs.map((b) => b.cell)).toEqual([0, 1, 2]);
     expect(state.events.filter((e) => e.type === "bomb-placed")).toEqual([]);
   });
+
+  it("plays bomb1 for an empty row when more own bombs are out than the capacity, but not with none left (0x45ba5b)", () => {
+    const state = playingMatch(["1........"], 1, VERSUS);
+    const player = state.players[0];
+    player.inv.line = true;
+    player.bombCapacity = 1; // as after the ? reset (0x40cea0) with two bombs still out
+    face(player, Dir.Right);
+    addBomb(state, cellAt(state, 0, 0), { owner: 1 });
+    addBomb(state, cellAt(state, 5, 0), { owner: 1 });
+    run(state, 1, { 1: SPACE });
+    expect(state.bombs).toHaveLength(2);
+    expect(state.events.filter((e) => e.type === "bomb-placed")).toHaveLength(1);
+
+    state.bombs.splice(1, 1);
+    run(state, 1, { 1: IDLE });
+    run(state, 1, { 1: SPACE });
+    expect(state.bombs).toHaveLength(1);
+    expect(state.events.filter((e) => e.type === "bomb-placed")).toEqual([]);
+  });
 });
 
 describe("Left Ctrl (0x45c264)", () => {

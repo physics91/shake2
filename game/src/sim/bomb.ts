@@ -142,11 +142,12 @@ export function spaceAction(state: MatchState, player: PlayerState): boolean {
 /**
  * 스페셜폭탄 (0x4574e0): one bomb per free cell from the next cell in the facing direction, up to
  * the capacity left; players do not stop the row. The network game plays one bomb1 for the row
- * (0x45bd34), practice none.
+ * (0x45bd34), practice none. Only a count of exactly zero skips it (0x45ba5b); with more own bombs
+ * out than the capacity (a ? reset) the row is empty but bomb1 still plays.
  */
 function lineBombs(state: MatchState, player: PlayerState, from: number): void {
   const count = player.bombCapacity - ownBombs(state, player);
-  if (count <= 0) return;
+  if (count === 0) return;
   const dir = facing(player);
   const { width } = state.layout;
   let col = from % width;
