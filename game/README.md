@@ -9,7 +9,7 @@
 Node 24 이상이 필요합니다(서버가 TypeScript를 빌드 없이 직접 실행).
 
 ```bash
-cd ../tools && python3 -m shakefmt.export   # 원본 그래픽·효과음·맵 → assets/extracted/
+cd ../tools && python3 -m shakefmt.export   # 원본 그래픽·맵 → assets/extracted/ (효과음은 sync-assets가 original/에서 복사)
 python3 -m shakefmt.dmreverb                 # 합성기 리버브 실측 → assets/extracted/dmsynth/reverb.npz (선택, Windows)
 python3 -m shakefmt.bgm                      # 원본 MIDI → assets/extracted/bgm/*.flac (선택)
 python3 -m shakefmt.font                     # Windows gulim.ttc의 비트맵 글자 → assets/extracted/font/ (선택)
