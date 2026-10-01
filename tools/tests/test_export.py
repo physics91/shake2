@@ -154,6 +154,28 @@ def test_records_a_map_object_naming_a_missing_sheet(synthetic_tree, tmp_path):
     assert index["summary"]["errors"] == 1
 
 
+def test_records_a_map_drawing_an_animation_its_sheet_lacks(synthetic_tree, tmp_path):
+    object_dir = synthetic_tree / "spr_data" / "object"
+    object_dir.mkdir()
+    for name in export.OBJECT_SHEETS:
+        rows = [[MAGENTA_BGR] + [RED_BGR] * 4] * 4
+        (object_dir / name).write_bytes(build_spr(rows, [build_anim("o", 5, [(1, 1, 1, 0, 5, 4)])]))
+    objects = [(0, 1, 0, 10, 10, 14, 14, 1, 5, 0)]
+    (synthetic_tree / "map_data" / "stage02.map").write_bytes(
+        build_map(background="stage", title="02오브젝트", sprites=("b1.spr",), objects=objects)
+    )
+    (synthetic_tree / "spr_data" / "brick" / "b2.spr").write_bytes(build_spr([[MAGENTA_BGR] + [RED_BGR] * 40] * 32, []))
+    (synthetic_tree / "map_data" / "stage03.map").write_bytes(
+        build_map(background="stage", title="03벽돌", sprites=("b2.spr",), bricks=[(0, 0, 1)])
+    )
+    index = export_tree(synthetic_tree, tmp_path / "out")
+
+    assert entry_for(index, "map_data/stage02.map")["error"]
+    assert entry_for(index, "map_data/stage03.map")["error"]
+    assert not (tmp_path / "out" / "map_data" / "stage02.json").exists()
+    assert index["summary"]["errors"] == 2
+
+
 def test_the_default_src_spelled_relatively_still_exports_the_borrowed_pictures(
     synthetic_tree, tmp_path, monkeypatch
 ):

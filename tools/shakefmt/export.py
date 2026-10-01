@@ -143,6 +143,11 @@ def _export_map(src: Path, rel: Path, dst: Path) -> dict:
         sheet: decode_spr((src / "spr_data" / "object" / OBJECT_SHEETS[sheet]).read_bytes())
         for sheet in {o.unknown_a for o in level.objects}
     }
+    # The preview draws animation 0 of each block's and brick's sheet and each object's own animation.
+    drawn = [(brick_sheets[level.sprites[b.sprite]], 0) for b in (*level.fixed, *level.bricks)]
+    drawn += [(object_sheets[o.unknown_a], o.anim) for o in level.objects]
+    if any(anim >= len(sheet.animations) for sheet, anim in drawn):
+        raise MapFormatError("a block, brick or object draws an animation its sheet lacks")
     metadata = rel.with_suffix(".json")
     preview = rel.with_suffix(".preview.png")
     _write_json(dst / metadata, _level_metadata(level, rel, preview))
