@@ -983,6 +983,23 @@ describe("Lobby (scene 4)", () => {
     t.lobby.handle(5, { type: "delete-friend", name: "둘" });
     expect(t.last(5, "friend-deleted")?.result).toBe(0);
   });
+
+  it("takes a login ID typed in another case as the account's (IDs are one whichever their case)", () => {
+    const ids: Record<string, string> = { alice: "Alice", bobby: "bobby" };
+    const t = makeLobby({ accountId: (name) => ids[name.toLowerCase()] });
+    t.connect(1, "Alice");
+    t.connect(2, "bobby");
+    t.lobby.handle(2, { type: "add-friend", name: "alice" });
+    expect(t.last(2, "friend-added")).toEqual({ type: "friend-added", result: 1, name: "alice" });
+    t.lobby.handle(2, { type: "friends" });
+    expect(t.last(2, "friends")?.friends.map((friend) => friend.name)).toEqual(["Alice"]);
+    t.lobby.handle(1, { type: "add-friend", name: "ALICE" });
+    expect(t.last(1, "friend-added")?.result).toBe(-5);
+    t.lobby.handle(2, { type: "delete-friend", name: "ALICE" });
+    expect(t.last(2, "friend-deleted")?.result).toBe(1);
+    t.lobby.handle(2, { type: "whisper", to: "alice", text: "안녕" });
+    expect(t.last(1, "whisper")).toEqual({ type: "whisper", from: "bobby", text: "안녕" });
+  });
 });
 
 describe("secret rooms (+0x28)", () => {

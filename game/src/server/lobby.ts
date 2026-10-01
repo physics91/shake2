@@ -52,6 +52,8 @@ export interface LobbyConfig {
   recordMatch?(name: string, record: MatchRecord): void;
   /** A login ID's guild and level for the friend list, connected or not; null for none. */
   badgeOf?(name: string): Badge | null;
+  /** A login ID typed in any case as its account spells it; undefined when no account has it. */
+  accountId?(name: string): string | undefined;
   /** Where a player not in this channel is, in another channel's words; blank when nowhere. */
   locate?(name: string): string;
   /** The option window's friend lists, by the name each player said hello with. */
@@ -262,13 +264,13 @@ export class Lobby {
         break;
       }
       case "add-friend":
-        peer.send({ type: "friend-added", result: this.config.friends.add(profile.name, message.name), name: message.name });
+        peer.send({ type: "friend-added", result: this.config.friends.add(profile.name, this.loginId(message.name)), name: message.name });
         break;
       case "delete-friend":
-        peer.send({ type: "friend-deleted", result: this.config.friends.remove(profile.name, message.name), name: message.name });
+        peer.send({ type: "friend-deleted", result: this.config.friends.remove(profile.name, this.loginId(message.name)), name: message.name });
         break;
       case "whisper":
-        this.whisper(peerId, profile.name, message.to, message.text);
+        this.whisper(peerId, profile.name, this.loginId(message.to), message.text);
         break;
       case "users":
         // The original's count is its server's (R): here, everyone who said hello.
@@ -446,6 +448,11 @@ export class Lobby {
     if (!chatAllowed(this.lobbyChat.get(peerId), text, now)) return;
     this.lobbyChat.set(peerId, { text, at: now });
     for (const peer of this.lobbyPeers()) peer.send({ type: "lobby-chat", name, text });
+  }
+
+  /** A typed ID as the account spells it, since IDs are one whichever their case; as typed when no account has it. */
+  private loginId(name: string): string {
+    return this.config.accountId?.(name) ?? name;
   }
 
   /**

@@ -242,6 +242,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         const account = accounts.get(name);
         return account ? { guild: account.guild, level: accounts.standing(account.id).level } : null;
       },
+      accountId: (name) => accounts.get(name)?.id,
       // A friend in another channel: that channel's name, lobby or room (a room's number is that channel's).
       locate: (name) => channels.find((channel) => channel.lobby.presence(name))?.row.name ?? "",
       now: () => Date.now(),
