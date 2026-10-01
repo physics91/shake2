@@ -523,6 +523,11 @@ export class LobbyScreen {
     return this.helpScreen || this.busy;
   }
 
+  /** No window over the lobby: its chat line is open or opens on the next key; a window closes it. */
+  get takesChat(): boolean {
+    return this.popup === null;
+  }
+
   /** The page's room 정보 mirrors a right release on the room, so it is dropped where that is. */
   get takesRoomInfo(): boolean {
     return !this.dropsClicks && this.clear;

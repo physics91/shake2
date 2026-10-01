@@ -238,7 +238,9 @@ export class LobbyView {
     });
     const submitChat = (event: Event) => {
       event.preventDefault();
-      // As the canvas line's Enter: the ↑ recall line takes it first.
+      // As the canvas line's Enter: nothing goes while a window has closed the line, and the form
+      // keeps its text as the line does; the ↑ recall line takes it first.
+      if (this.screen && !this.screen.takesChat) return;
       keepRecall(this.chatInput.value);
       say(this.chatInput.value);
       this.chatInput.value = "";
