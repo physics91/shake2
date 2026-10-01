@@ -267,17 +267,19 @@ class OnlineSession {
           if (row?.local) this.openLocalRoom();
           else this.enter(row?.channel ?? 0);
         },
-        // The row's double click, dropped while a row's connection is under way (the busy cursor).
+        // The row's double click, dropped while a connection is under way (the busy cursor): a
+        // row's, or the page form's login that goes on to one.
         local: () => {
-          if (!this.socket) this.openLocalRoom();
+          if (!this.socket && !this.enterAfterLogin) this.openLocalRoom();
         },
         enter: ({ id, password }) => this.formEnter(id, password),
         // A page cannot close its window: the program starts over, silent, from its logo, logged out.
         exit: () => {
           sounds.stopMusic();
           this.auth.dispose();
-          // A row's connection under way goes with the program.
+          // A connection under way goes with the program, and so does the form's wait for one.
           this.dropSocket();
+          this.enterAfterLogin = false;
           this.welcome = null;
           this.lobby = null;
           this.account = null;
