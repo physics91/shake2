@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FUSE_MS, nowMs, TIMER_FUSE_MS } from "./constants.ts";
+import { hasBomb } from "./grid.ts";
 import { addBomb, burning, cellAt, cellCenter, IDLE, playingMatch, PRACTICE, run, runUntil, VERSUS } from "./testing.ts";
 import type { InputFrame, MatchState, PlayerState } from "./types.ts";
 import { Anim, BombKind, Dir, ItemKind } from "./types.ts";
@@ -286,6 +287,28 @@ describe("glove throw", () => {
     expect(bomb.exploded).toBe(false);
     run(state, 1);
     expect(bomb.exploded).toBe(true);
+  });
+
+  it("takes the bomb bit off the cell, so a bomb still resting there no longer holds it (0x45b86d)", () => {
+    // P1 throws T down over P2's cell A, where N rests; P2 throws T on, the first bomb listed in A.
+    const state = playingMatch([".1.", ".2.", "...", "...", "...", "..."], 2);
+    const [p1, p2] = state.players;
+    p1.inv.glove = true;
+    p2.inv.glove = true;
+    run(state, 1, { 1: SPACE, 2: SPACE });
+    run(state, 1, { 1: IDLE, 2: IDLE });
+    run(state, 1, { 1: SPACE, 2: IDLE });
+    run(state, 1, { 1: IDLE, 2: SPACE });
+    const [t, n] = state.bombs;
+    const a = cellAt(state, 1, 1);
+    expect(t).toMatchObject({ firstFlight: true, flightLeft: 88 });
+    expect(n).toMatchObject({ cell: a, motion: 0 });
+    expect(hasBomb(state, a)).toBe(false);
+    // So P1 walks down into A once its throw is over.
+    run(state, 20, { 1: IDLE, 2: IDLE });
+    run(state, 6, { 1: { dir: Dir.Down, bomb: false }, 2: IDLE });
+    expect(n.exploded).toBe(false);
+    expect(p1.y).toBeGreaterThanOrEqual(32);
   });
 
   // RECONSTRUCTION (FIDELITY §8): 0311 reads no key during the throw animation (0x4021bb); the

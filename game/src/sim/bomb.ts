@@ -168,6 +168,8 @@ function throwBomb(state: MatchState, player: PlayerState, cell: number): void {
   state.events.push({ type: "bomb-thrown", playerId: player.id });
   const bomb = state.bombs.find((b) => b.cell === cell);
   if (!bomb) return;
+  // The throw takes the bomb bit off the cell (0x45b86d), whatever else still rests there.
+  for (const other of state.bombs) if (other.cell === cell) other.bitCleared = true;
   bomb.firstFlight = true;
   bomb.motion = dir + 5;
   bomb.flightLeft = dir === Dir.Down || dir === Dir.Up ? THROW_ALONG : THROW_ACROSS;
