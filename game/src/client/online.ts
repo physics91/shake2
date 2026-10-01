@@ -24,7 +24,7 @@ import { AuthLink } from "./authLink.ts";
 import { CaretBlink } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView } from "./gameView.ts";
-import { Balloons, closesExitBox, enterOpensChat, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
+import { Balloons, closesExitBox, countdownEnd, enterOpensChat, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
 import { FrameRate, PingMeter } from "./panelBars.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
 import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
@@ -1608,6 +1608,8 @@ class OnlineGame {
   private boxImages: BoxImages | null = null;
   /** The last data from the host (+0x25c), and the one call made when it has been silent too long. */
   private lastHeard = performance.now();
+  /** When the countdown the snapshots show runs out on this PC (0x40c868). */
+  private playFrom = Number.POSITIVE_INFINITY;
   private readonly hostLost: () => void;
   private hostGone = false;
   /** The account's candy as the match began. */
@@ -1703,6 +1705,7 @@ class OnlineGame {
   snapshot(wire: Parameters<typeof fromWireState>[0], events: SimEvent[], typing: readonly number[], bars: readonly PanelBar[]): void {
     const state = fromWireState(wire, this.layout);
     this.state = state;
+    if (state.phase === "countdown") this.playFrom = countdownEnd(state, performance.now());
     this.typing = typing;
     this.bars = new Map(bars.map(({ id, ...bar }) => [id, bar]));
     // The next round's world load frees every balloon (0x44d740 → 0x44feb0) and clears the ping table (0x44ef7b).
@@ -1898,7 +1901,7 @@ class OnlineGame {
     if (!state || !view) return;
     // The joystick is polled each frame, as DirectInput's device state was.
     if (this.joystick) this.syncInput();
-    if (!this.hostGone && hostSilent(state.phase, performance.now(), this.lastHeard)) {
+    if (!this.hostGone && hostSilent(state.phase, performance.now(), this.lastHeard, this.playFrom)) {
       this.hostGone = true;
       this.hostLost();
       return;

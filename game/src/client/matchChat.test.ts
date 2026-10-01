@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { balloonAt, Balloons, closesExitBox, enterOpensChat, HOST_SILENCE_MS, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
+import { COUNTDOWN_MS } from "../sim/constants.ts";
+import { createMatch, step } from "../sim/match.ts";
+import { layoutFromAscii, setups, VERSUS } from "../sim/testing.ts";
+import { balloonAt, Balloons, closesExitBox, countdownEnd, enterOpensChat, HOST_SILENCE_MS, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
 
 describe("match chat balloons (0x418940, 0x40c254)", () => {
   it("puts slot i's balloon at (606, 65 i + 8) and its lines from (608, 65 i + 11); practice's slot 3 is (606,203)", () => {
@@ -83,11 +86,27 @@ describe("match chat keys (0x45fafd, 0x461590)", () => {
 describe("hostSilent (0x40bf99 → 0x45ec60)", () => {
   it("gives up on the host after 5 s without a word from it, in play only", () => {
     expect(HOST_SILENCE_MS).toBe(5000);
-    expect(hostSilent("playing", 10_000, 5_001)).toBe(false);
-    expect(hostSilent("playing", 10_000, 5_000)).toBe(true);
+    expect(hostSilent("playing", 10_000, 5_001, 0)).toBe(false);
+    expect(hostSilent("playing", 10_000, 5_000, 0)).toBe(true);
   });
 
-  it("waits through the countdown, and the wait and result screens run no such check", () => {
-    for (const phase of ["countdown", "waiting", "round-over", "match-over"] as const) expect(hostSilent(phase, 60_000, 0)).toBe(false);
+  it("waits through the countdown, then counts the 5 s from its end or the last word, whichever is later (0x40c868, 0x40c905)", () => {
+    expect(hostSilent("countdown", 60_000, 0, Number.POSITIVE_INFINITY)).toBe(false);
+    expect(hostSilent("countdown", 8_999, 0, 4_000)).toBe(false);
+    expect(hostSilent("countdown", 9_000, 0, 4_000)).toBe(true);
+    expect(hostSilent("countdown", 10_999, 6_000, 4_000)).toBe(false);
+    expect(hostSilent("countdown", 11_000, 6_000, 4_000)).toBe(true);
+  });
+
+  it("runs no such check on the wait and result screens", () => {
+    for (const phase of ["waiting", "round-over", "match-over"] as const) expect(hostSilent(phase, 60_000, 0, 0)).toBe(false);
+  });
+
+  it("puts the countdown's end 4000 ms after its start, less what a frame shows gone", () => {
+    const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
+    while (state.phase !== "countdown") step(state, {});
+    expect(countdownEnd(state, 10_000)).toBe(10_000 + COUNTDOWN_MS);
+    for (let i = 0; i < 45; i++) step(state, {});
+    expect(countdownEnd(state, 10_000)).toBe(10_000 + COUNTDOWN_MS - 1500);
   });
 });

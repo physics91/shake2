@@ -2,7 +2,9 @@
 // the speaker too (record type 0x14, 0x446200 → 0x444500 → 0x45ec00); each player's last line shows
 // for 5 s in the balloon beside its face (0x418940). Enter sends and closes the line in one press.
 import type { Rect } from "../assets/types.ts";
-import type { Phase } from "../sim/types.ts";
+import { COUNTDOWN_MS } from "../sim/constants.ts";
+import { phaseElapsedMs } from "../sim/match.ts";
+import type { MatchState, Phase } from "../sim/types.ts";
 
 export const BALLOON_MS = 5000;
 /** mark.shk's "chat" label over a typing player (0x40c3df, 0x40ac4a); practice's is images.shk's. */
@@ -70,11 +72,22 @@ export function closesExitBox(phase: Phase, round: number): boolean {
 export const HOST_SILENCE_MS = 5000;
 
 /**
+ * When a guest's countdown runs out on its own clock (0x40c868: 4000 ms from its start), from a
+ * countdown frame heard at `now`: the frame shows how much of it has gone.
+ */
+export function countdownEnd(state: MatchState, now: number): number {
+  return now + COUNTDOWN_MS - phaseElapsedMs(state);
+}
+
+/**
  * Whether a guest gives the host up (0x40bf99): in play, not in the countdown, 5 s after the last
  * data from the host (set on each read, 0x4471d3, and when the countdown ends, 0x40c905). The wait
- * and result screens do not draw the field, where the check is. Here the server is the host.
+ * and result screens do not draw the field, where the check is. Here the server is the host, and
+ * play shows only once a snapshot brings it; a countdown still shown after `playFrom` (its end, see
+ * countdownEnd) is the guest's own play, its 5 s running from the later of that end and the last data.
  */
-export function hostSilent(phase: Phase, now: number, lastHeard: number): boolean {
+export function hostSilent(phase: Phase, now: number, lastHeard: number, playFrom: number): boolean {
+  if (phase === "countdown") return now - Math.max(lastHeard, playFrom) >= HOST_SILENCE_MS;
   return phase === "playing" && now - lastHeard >= HOST_SILENCE_MS;
 }
 
