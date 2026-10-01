@@ -5,7 +5,7 @@ import { createPractice } from "../sim/practice.ts";
 import type { MatchState, PlayerSetup } from "../sim/types.ts";
 import { loadImage } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
-import { BUBBLE_MS, CaretBlink, chatRecall, trimChat } from "./chat.ts";
+import { BUBBLE_MS, CaretBlink, chatRecall, gameRecall, trimChat } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView, runFixedLoop } from "./gameView.ts";
 import { connectedPad, padFrame } from "./gamepad.ts";
@@ -194,7 +194,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
         announce("채팅 입력: Enter로 보내기, Esc로 취소");
       }
     } else if (event.key === "ArrowUp" && chat.isOpen) {
-      chat.text = chatRecall.line; // 0x4600d9
+      chat.text = gameRecall(); // 0x4600d9
     }
   };
   const toScreen = (event: PointerEvent) => {

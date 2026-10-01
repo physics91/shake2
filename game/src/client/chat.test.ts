@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bubbleLines, CaretBlink, chatView, CommandCycle, cp949Bytes, fitsChat, lobbyKeyOpensChat, trimChat, typeable } from "./chat.ts";
+import { bubbleLines, CaretBlink, chatRecall, chatView, CommandCycle, cp949Bytes, fitsChat, gameRecall, lobbyKeyOpensChat, trimChat, typeable } from "./chat.ts";
 
 describe("practice chat line (editor 0x4714f8)", () => {
   it("counts cp949 bytes: one for ASCII, two for Hangul and the other double-byte characters", () => {
@@ -75,6 +75,22 @@ describe("the Down key's command cycle (0x460161, list 0x470924, place [0x497f24
     cycle.next();
     expect([cycle.current(), cycle.current()]).toEqual(["/w", "/w"]);
     expect(cycle.next()).toBe("/n");
+  });
+});
+
+describe("Up in a match or practice (0x4600d9)", () => {
+  it("puts back the recall line whole when the game's editor holds it", () => {
+    chatRecall.line = "y".repeat(36);
+    expect(gameRecall()).toBe("y".repeat(36));
+  });
+
+  it("cuts a longer lobby or room line to 36 bytes, never splitting a double-byte character", () => {
+    chatRecall.line = "x".repeat(44);
+    expect(gameRecall()).toBe("x".repeat(36));
+    chatRecall.line = "a" + "가".repeat(20);
+    expect(gameRecall()).toBe("a" + "가".repeat(17));
+    expect(chatRecall.line).toBe("a" + "가".repeat(20)); // the recall line itself stays as said
+    chatRecall.line = "";
   });
 });
 

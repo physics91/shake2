@@ -2,7 +2,7 @@
 // by 0x418550; Enter keeps the text on the local player and the bubble beside its face shows it
 // for 5 s (0x446200, 0x418940). Nothing is sent: practice has no server.
 import type { Rect } from "../assets/types.ts";
-import { cp949Bytes } from "../server/cp949.ts";
+import { cp949Bytes, cutBytes } from "../server/cp949.ts";
 
 export { cp949Bytes, trimChat, typeable } from "../server/cp949.ts";
 
@@ -118,6 +118,15 @@ export const commandCycle = new CommandCycle();
  * open line puts it back (0x4600d9).
  */
 export const chatRecall = { line: "" };
+
+/**
+ * Up in a match or practice: the recall line, cut to the 36 bytes the game's editor holds. The
+ * original copies it whole (0x4600d9 → 0x403db0): a lobby or room line of up to 39 bytes goes out
+ * in the match's chat record and a longer one overruns it (0x446356). The remake cuts it instead.
+ */
+export function gameRecall(): string {
+  return cutBytes(chatRecall.line, CHAT_LIMIT - 1);
+}
 
 /**
  * Whether a key opens the lobby's closed chat line (the default case, 0x4602f5). Space, F1-F9, F12,
