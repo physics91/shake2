@@ -436,8 +436,13 @@ export class RoomScreen {
     }
   }
 
-  /** The page's mirror of a slot icon: a release in the middle of it, with the canvas's gates. */
+  /**
+   * The page's mirror of a slot icon: a release in the middle of it, with the canvas's gates. Under
+   * an overlay no icon takes a release, so it does nothing (the sixth slot's whisper lies on the
+   * box's NO).
+   */
   slotIcon(slot: number, icon: SlotIcon): void {
+    if (this.dropsClicks) return;
     const { x, y } = SLOT_ORIGINS[slot];
     const [from, to] = SLOT_ICONS[icon].hit;
     this.release(x + Math.floor((from + to) / 2), y + 54);
