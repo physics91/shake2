@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { blendBlindFilter, blindWindow, punchKey } from "./blind.ts";
+import { blendBlindFilter, blindWindow, blindWindowAt, punchKey, resetBlindCentre } from "./blind.ts";
 
 /** A 200x160 filter: key where `key` holds, else the grey `level`. */
 function filter(key: (x: number, y: number) => boolean, level = 0): Uint8ClampedArray {
@@ -42,5 +42,16 @@ describe("apple blindness (0x406111, 0x412e20)", () => {
     const frame = new Uint8ClampedArray([255, 0, 255, 255, 255, 0, 254, 255]);
     punchKey(frame);
     expect([frame[3], frame[7]]).toEqual([0, 255]);
+  });
+});
+
+describe("the window's centre [0x471878] under the F1 help (0x4060c6, 0x408f07)", () => {
+  it("stays where the last frame without the help put it, (0,0) in a new program (0x4026d0)", () => {
+    resetBlindCentre();
+    expect(blindWindowAt(250, 179, true)).toEqual(blindWindow(0, 0));
+    expect(blindWindowAt(270, 200, false)).toEqual(blindWindow(270, 200));
+    expect(blindWindowAt(170, 200, true)).toEqual(blindWindow(270, 200));
+    resetBlindCentre();
+    expect(blindWindowAt(170, 200, true)).toEqual(blindWindow(0, 0));
   });
 });

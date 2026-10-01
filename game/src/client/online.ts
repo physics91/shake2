@@ -21,6 +21,7 @@ import type { MusicTrack } from "./audio.ts";
 import { loadImage } from "./assets.ts";
 import type { AuthState } from "./authLink.ts";
 import { AuthLink } from "./authLink.ts";
+import { resetBlindCentre } from "./blind.ts";
 import { CaretBlink, chatRecall, commandCycle, gameRecall, keepRecall } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView } from "./gameView.ts";
@@ -287,14 +288,16 @@ class OnlineSession {
           this.list.rows = [];
           // The new program's statics: no whisper target, no last line to repeat (0x4927c8, 0x446200)
           // or to recall (0x497d00), the Down key's commands from the start ([0x497f24]), no ranking
-          // rows ([0x48c2ac]), no F12 taken yet ([0x497f28]), an empty notice line (0x4927dc), the
-          // list's slide as it starts with no row chosen, and scene 5 as the YES leaves it (0x4205e0):
-          // no guild chosen, no notices until this login's S->C 0x101.
+          // rows ([0x48c2ac]), no F12 taken yet ([0x497f28]), the blind window's centre at (0,0)
+          // ([0x471878]), an empty notice line (0x4927dc), the list's slide as it starts with no row
+          // chosen, and scene 5 as the YES leaves it (0x4205e0): no guild chosen, no notices until
+          // this login's S->C 0x101.
           this.whisperTarget = "";
           chatRecall.line = "";
           commandCycle.reset();
           this.ranking.reset();
           resetCapture();
+          resetBlindCentre();
           this.timers = new ChatTimers();
           this.noticeLine = new NoticeLine();
           this.list.slide = newSlide();

@@ -36,7 +36,7 @@ import {
   timerGlyphs,
 } from "./hudLayout.ts";
 import type { BlindWindow } from "./blind.ts";
-import { blindWindow, drawBlindFilter } from "./blind.ts";
+import { blindWindowAt, drawBlindFilter } from "./blind.ts";
 import { bubbleLines, CHAT_BUBBLE, CHAT_LINE, TYPING_MARK } from "./chat.ts";
 import { balloonAt, NET_TYPING_MARK } from "./matchChat.ts";
 import type { NoticeLine } from "./noticeLine.ts";
@@ -172,14 +172,15 @@ function renderPracticeScreen(ctx: CanvasRenderingContext2D, assets: SceneAssets
 }
 
 /**
- * The screen's own player (0x469948) when blind: the window follows its point (0x406100). Its
- * timer runs out only in the alive player's update, so it outlasts a death (0x452f8c).
+ * The screen's own player (0x469948) when blind: the window follows its point (0x406100), but not
+ * under the F1 help (blindWindowAt). Its timer runs out only in the alive player's update, so it
+ * outlasts a death (0x452f8c).
  */
 function blindView(assets: SceneAssets, state: MatchState, view: RenderView): BlindWindow | null {
   const own = ownPlayer(state, view);
   if (own?.status.blind == null) return null;
   const at = screenPos(assets, own);
-  return blindWindow(at.x, at.y);
+  return blindWindowAt(at.x, at.y, view.help === true);
 }
 
 function ownPlayer(state: MatchState, view: RenderView): PlayerState | undefined {

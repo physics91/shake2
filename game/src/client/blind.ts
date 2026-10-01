@@ -30,6 +30,23 @@ export function blindWindow(x: number, y: number): BlindWindow {
   return { left, top, width, height, sx: left === 0 ? FILTER_W - width : 0, sy: top === 0 ? FILTER_H - height : 0 };
 }
 
+/** [0x471878]: the window's centre, (0,0) as the program starts (0x4026d0). */
+const centre = { x: 0, y: 0 };
+
+/**
+ * This frame's window: a frame with the F1 help up skips the blind block (practice 0x4060c6,
+ * network 0x408f07), so the centre stays where the last frame without it put it (0x406109, 0x408f51).
+ */
+export function blindWindowAt(x: number, y: number, help: boolean): BlindWindow {
+  if (!help) Object.assign(centre, { x, y });
+  return blindWindow(centre.x, centre.y);
+}
+
+/** A new program's centre. */
+export function resetBlindCentre(): void {
+  Object.assign(centre, { x: 0, y: 0 });
+}
+
 /**
  * Blend level 1 (0x413620, table 0x404020) is the per-channel maximum: the black middle leaves
  * the frame as it is and the grey edge fogs it. A colour-key pixel of the filter is written as it
