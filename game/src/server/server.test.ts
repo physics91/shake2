@@ -431,6 +431,24 @@ describe.skipIf(!HAS_ASSETS)("shutting down", () => {
     expect(atClose).toBe(before);
     expect(readFileSync(accountsFile, "utf8")).toBe(before);
   }, 20_000);
+
+  it("saves a sign-up still being hashed before close() resolves, and nothing after", async () => {
+    const accountsFile = await accountsFileWith(["alpha"]);
+    const server = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5, accountsFile });
+    const client = new Client(`ws://127.0.0.1:${server.port}/ws`);
+    await client.opened();
+    client.send({ type: "register", id: "fresh1", nick: "fresh1", password: "pass1234" });
+    // A socket's messages are taken in order and the hash starts at once: with this answer back, it runs.
+    client.send({ type: "server-info", channel: 0 });
+    await client.waitFor((m): m is ServerMessage => m.type === "server-info");
+
+    await server.close();
+    const atClose = readFileSync(accountsFile, "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    expect(atClose).toContain('"id":"fresh1"');
+    expect(readFileSync(accountsFile, "utf8")).toBe(atClose);
+  }, 20_000);
 });
 
 describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {

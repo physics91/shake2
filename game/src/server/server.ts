@@ -370,11 +370,14 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             clearInterval(heartbeat);
             closing = true;
             for (const socket of wss.clients) socket.terminate();
-            // wss calls back once every socket's close has run; save after those, so nothing is left to write.
+            // wss calls back once every socket's close has run; save after those and after the sign-ups
+            // being hashed, so nothing is left to write.
             wss.close(() => {
-              friendFile?.flush();
-              accountFile?.flush();
-              http.close(() => done());
+              void gate.settled().then(() => {
+                friendFile?.flush();
+                accountFile?.flush();
+                http.close(() => done());
+              });
             });
           }),
       });

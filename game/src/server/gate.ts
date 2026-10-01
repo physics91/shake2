@@ -139,6 +139,8 @@ export class Gate {
   /** Accounts in a channel now, by name key: the connection that holds each. */
   private readonly online = new Map<string, number>();
   private readonly guards = new Map<string, AuthGuard>();
+  /** The requests being answered now (a password being hashed or checked). */
+  private readonly answering = new Set<Promise<void>>();
 
   constructor(config: GateConfig) {
     this.config = config;
@@ -440,12 +442,19 @@ export class Gate {
       const connection = this.connections.get(next.connectionId);
       if (!connection) continue;
       guard.busy = true;
-      void this.answer(guard, connection, next.message).finally(() => {
+      const answer = this.answer(guard, connection, next.message).finally(() => {
+        this.answering.delete(answer);
         guard.busy = false;
         connection.waiting = false;
         this.drain(guard);
       });
+      this.answering.add(answer);
     }
+  }
+
+  /** Once no request is being answered: a sign-up whose password was being hashed is in the book by then. */
+  async settled(): Promise<void> {
+    while (this.answering.size > 0) await Promise.allSettled([...this.answering]);
   }
 
   private async answer(guard: AuthGuard, connection: Connection, message: AuthMessage): Promise<void> {
