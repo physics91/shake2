@@ -972,6 +972,8 @@ class OnlineSession {
     this.stopGame();
     this.roomView?.dispose();
     this.roomView = null;
+    // 0x44a3d4: the room tune stops with the start itself, before the world load, however that goes.
+    sounds.stopMusic();
     const screen = gameScreen(`온라인 대전 · 방 ${room.code}`, keysHelp(), () => this.send({ type: "leave-room" }));
     this.errorLine = null;
     mount(screen.root);
