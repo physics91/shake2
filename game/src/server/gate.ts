@@ -6,7 +6,7 @@
 // is not in the client, so sessions, the throttle and the refusals' causes are the remake's (R).
 import type { AccountBook, AccountRecord } from "./accounts.ts";
 import { GREETING_MAX_BYTES, isNick, levelFor, nameKey, NO_GUILD, REGISTERED } from "./accounts.ts";
-import { cutBytes, typeable } from "./cp949.ts";
+import { cutBytes, trimSpaces, typeable } from "./cp949.ts";
 import { hasItem, ITEM_NICK } from "./items.ts";
 import type { Lobby } from "./lobby.ts";
 import type { ChannelRow, ClientMessage, OwnAccount, RankingRow } from "./protocol.ts";
@@ -127,7 +127,7 @@ export function ownAccount(account: AccountRecord, book: AccountBook): OwnAccoun
 }
 
 function greetingText(greeting: string): string {
-  return cutBytes(typeable(greeting).trim(), GREETING_MAX_BYTES).trim();
+  return trimSpaces(cutBytes(trimSpaces(typeable(greeting)), GREETING_MAX_BYTES));
 }
 
 export class Gate {

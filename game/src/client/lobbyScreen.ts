@@ -1033,7 +1033,7 @@ export class LobbyScreen {
       return;
     }
     const text = trimChat(raw);
-    if (!text.trim()) return;
+    if (text === "") return;
     // C->S 0x58: the popup stays until the server's copy comes back (greetingSaved).
     this.options.saveGreeting(text);
   }
@@ -1069,7 +1069,7 @@ export class LobbyScreen {
       return;
     }
     const nick = trimChat(raw);
-    if (!nick.trim()) return;
+    if (nick === "") return;
     this.options.saveNick(nick);
   }
 

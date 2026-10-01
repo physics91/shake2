@@ -378,6 +378,10 @@ describe("the gate's saves over the auth connection (scene 5)", () => {
     expect(t.last(1, "error")?.message).toBe("알 수 없는 캐릭터입니다.");
     t.gate.handle(1, { type: "set-greeting", greeting: `  ${"가".repeat(20)}  ` });
     expect(t.last(1, "saved")?.account.greeting).toBe("가".repeat(17));
+    // Only spaces are cut: a full-width space (A1 A1) is a greeting, as the popup sends it (0x44b120).
+    t.gate.handle(1, { type: "set-greeting", greeting: "\u3000" });
+    expect(t.last(1, "saved")?.account.greeting).toBe("\u3000");
+    t.gate.handle(1, { type: "set-greeting", greeting: `  ${"가".repeat(20)}  ` });
     expect(t.accounts.get("tester")).toMatchObject({ character: "doona", hue: -30, useId: false, greeting: "가".repeat(17) });
 
     // In the lobby the character goes through the lobby, which answers with profile.

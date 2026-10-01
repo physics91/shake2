@@ -50,6 +50,11 @@ export function trimChat(text: string): string {
   return text.replace(/[ \t]+$/, "");
 }
 
+/** Leading and trailing spaces cut as 0x20 bytes are; a full-width space (A1 A1) is a character. */
+export function trimSpaces(text: string): string {
+  return text.replace(/^ +| +$/g, "");
+}
+
 /** The longest start of `text` that fits in `limit` bytes, never splitting a double-byte character. */
 export function cutBytes(text: string, limit: number): string {
   let kept = "";

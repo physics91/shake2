@@ -224,7 +224,7 @@ export class LobbyView {
       if (this.screen?.dropsClicks) return;
       // The nickname popup's O (0x44aff0): trailing blanks cut, empty or all blank sends nothing.
       const nick = trimChat(this.nickInput.value);
-      if (!nick.trim() || nick === profile.nick) return;
+      if (nick === "" || nick === profile.nick) return;
       saveNick(nick);
     };
     this.optionPanel = new OptionPanel({
