@@ -113,6 +113,7 @@ export function createMatch(layout: LevelLayout, setups: PlayerSetup[], rules: R
     effectSprites: [],
     breaking: [],
     items: [],
+    itemBitCleared: [],
     objects: [],
     timerSeconds: rules.roundSeconds,
     timerMs: -Infinity,
@@ -659,6 +660,7 @@ function startRound(state: MatchState, round: number): void {
   state.effectSprites = [];
   state.breaking = [];
   state.items = [];
+  state.itemBitCleared = [];
   resetObjects(state);
   // The world load reseeds (0x44d77c) before the host draws the spawns and again before the brick
   // items (0x44e2a0); practice loads through its own loader, which seeds once (0x4542e4).

@@ -7,7 +7,7 @@ import {
   SUDDEN_DEATH_INTERVAL_MS,
   SUDDEN_DEATH_SECONDS,
 } from "./constants.ts";
-import { cellIndex, isFree, playerCell } from "./grid.ts";
+import { addItem, cellIndex, hasItem, isFree, playerCell, takeItem } from "./grid.ts";
 import { itemKindOf, itemSubOf, practiceBrickItem, rollBrickItem } from "./items.ts";
 import { isFirepowerMode } from "./modes.ts";
 import { applyPickup } from "./pickup.ts";
@@ -66,7 +66,7 @@ export function placePracticeItems(state: MatchState): void {
   for (const [cell, word] of PRACTICE_ITEMS) {
     const target = freeNeighbour(state, cell);
     if (target === null) return;
-    state.items.push({ cell: target, kind: itemKindOf(word), sub: itemSubOf(word), tick: state.tick, dropped: true });
+    addItem(state, { cell: target, kind: itemKindOf(word), sub: itemSubOf(word), tick: state.tick, dropped: true });
   }
 }
 
@@ -82,7 +82,7 @@ export function updateBricks(state: MatchState): void {
     finished.push(brick.cell);
     if (brick.item !== null) {
       const kind = itemKindOf(brick.item);
-      state.items.push({ cell: brick.cell, kind, sub: itemSubOf(brick.item), tick: state.tick, dropped: false });
+      addItem(state, { cell: brick.cell, kind, sub: itemSubOf(brick.item), tick: state.tick, dropped: false });
     }
   }
   if (finished.length > 0) state.breaking = state.breaking.filter((b) => !finished.includes(b.cell));
@@ -102,10 +102,9 @@ export function startBreaking(state: MatchState, cell: number): void {
  * Practice's dummies never pick up: the call is made for the local player only (0x4501f0).
  */
 export function collectItem(state: MatchState, player: PlayerState, cell: number | null): void {
-  if (player.dummy) return;
-  const index = state.items.findIndex((item) => item.cell === cell);
-  if (index < 0) return;
-  const [item] = state.items.splice(index, 1);
+  if (player.dummy || cell === null) return;
+  const item = takeItem(state, cell);
+  if (!item) return;
   state.events.push({ type: "item-picked", playerId: player.id, kind: item.kind });
   // The capsule is handled apart from the pickup table (0x40b2ac).
   if (item.kind === ItemKind.Capsule) reviveTeammate(state, player, item.cell);
@@ -141,7 +140,7 @@ export function scatterItems(state: MatchState, player: PlayerState): void {
   for (const kind of kinds) {
     const target = freeNeighbour(state, cell);
     if (target === null) continue;
-    state.items.push({ cell: target, kind, tick: state.tick, dropped: true });
+    addItem(state, { cell: target, kind, tick: state.tick, dropped: true });
   }
 }
 
@@ -232,5 +231,8 @@ export function applySuddenDeath(state: MatchState): void {
     const object = state.layout.objectAt[cell];
     if (object >= 0) state.objects[object].cell = -1;
   }
-  if (closed.size > 0) state.items = state.items.filter((item) => !closed.has(item.cell));
+  // One listed item per cell each frame, while the cell's bit is on; the bit stays on (0x4016e4).
+  for (const cell of closed) {
+    if (hasItem(state, cell)) state.items.splice(state.items.findIndex((item) => item.cell === cell), 1);
+  }
 }

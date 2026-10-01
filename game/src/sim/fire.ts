@@ -1,6 +1,6 @@
 // Explosions and fires (0x417170, 0x417860, fire branch of the bomb loop 0x406a6b-0x407a53).
 import { animDue, FIRE_FPS, FIRE_FRAMES, nowMs, PUMPKIN_MS } from "./constants.ts";
-import { cellIndex, STEP_X, STEP_Y } from "./grid.ts";
+import { cellIndex, STEP_X, STEP_Y, takeItem } from "./grid.ts";
 import { isZone, rollGenerator, setOffZone } from "./mapObjects.ts";
 import { BOOST, PAD_BITS, tileB, WARP_BITS } from "./tiles.ts";
 import type { BombState, MatchState } from "./types.ts";
@@ -53,12 +53,7 @@ function burnCell(state: MatchState, bomb: BombState, cell: number): Burn {
     startBreaking(state, cell);
     return Burn.Last;
   }
-  const item = state.items.findIndex((i) => i.cell === cell);
-  if (item >= 0) {
-    state.items.splice(item, 1);
-    return Burn.Last;
-  }
-  return Burn.Pass;
+  return takeItem(state, cell) ? Burn.Last : Burn.Pass;
 }
 
 /**

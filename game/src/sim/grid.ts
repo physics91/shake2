@@ -1,6 +1,6 @@
 import { TNT_MOVES } from "./constants.ts";
 import { PAD_BITS, tileB, WARP_BITS } from "./tiles.ts";
-import type { BombState, MatchState, PlayerState } from "./types.ts";
+import type { BombState, ItemState, MatchState, PlayerState } from "./types.ts";
 import { BombKind, CellKind, Dir } from "./types.ts";
 
 export const STEP_X: Record<Dir, number> = { [Dir.Down]: 0, [Dir.Left]: -1, [Dir.Up]: 0, [Dir.Right]: 1 };
@@ -104,6 +104,24 @@ export function truncCell(state: MatchState, x: number, y: number): number {
   return cell >= 0 && cell < width * height ? cell : 0;
 }
 
+/** The cell's item bit: an item listed there, the bit not turned off by a pickup or a fire since. */
 export function hasItem(state: MatchState, cell: number | null): boolean {
-  return cell !== null && state.items.some((item) => item.cell === cell);
+  return cell !== null && !state.itemBitCleared.includes(cell) && state.items.some((item) => item.cell === cell);
+}
+
+/** 0x441de0 appends the item to the list and the cell's bit goes on (0x401a54), whatever the cell already lists. */
+export function addItem(state: MatchState, item: ItemState): void {
+  state.items.push(item);
+  state.itemBitCleared = state.itemBitCleared.filter((cell) => cell !== item.cell);
+}
+
+/**
+ * A pickup or a fire on the cell (0x451100, 0x417bb0): with the bit on, the first item listed
+ * there goes and the bit goes off (0x4515d4, 0x417c50); another item listed there stays drawn.
+ */
+export function takeItem(state: MatchState, cell: number): ItemState | null {
+  if (!hasItem(state, cell)) return null;
+  const [item] = state.items.splice(state.items.findIndex((i) => i.cell === cell), 1);
+  if (state.items.some((i) => i.cell === cell)) state.itemBitCleared.push(cell);
+  return item;
 }

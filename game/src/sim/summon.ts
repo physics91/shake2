@@ -2,7 +2,7 @@
 // (original/FIDELITY.md §12).
 import { nowMs, SPAWN_DX, SPAWN_DY } from "./constants.ts";
 import { addEffect } from "./effects.ts";
-import { cellTopLeft, isFree, playerCell } from "./grid.ts";
+import { addItem, cellTopLeft, isFree, playerCell } from "./grid.ts";
 import { isSummonMode } from "./modes.ts";
 import { msvcRand, srandTime } from "./rng.ts";
 import { resetAbilities } from "./status.ts";
@@ -17,7 +17,7 @@ export function dropCapsule(state: MatchState, player: PlayerState): void {
   if (!isSummonMode(state.rules.mode)) return;
   const cell = playerCell(state, player);
   if (cell === null || !isFree(state, cell)) return;
-  state.items.push({ cell, kind: ItemKind.Capsule, tick: state.tick, dropped: true });
+  addItem(state, { cell, kind: ItemKind.Capsule, tick: state.tick, dropped: true });
 }
 
 /**

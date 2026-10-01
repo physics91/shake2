@@ -438,6 +438,12 @@ export interface MatchState {
   effectSprites: EffectSprite[];
   breaking: BreakingBrick[];
   items: ItemState[];
+  /**
+   * Cells whose item bit (tile +0x10 & 0x200) a pickup or a fire turned off while another item
+   * stays listed there: that one is drawn, but no pickup, fire or drop sees it until another item
+   * lands on the cell and turns the bit on again (0x451123, 0x417b7c, 0x410920).
+   */
+  itemBitCleared: number[];
   objects: ObjectState[];
   timerSeconds: number;
   timerMs: number;

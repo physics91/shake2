@@ -1,7 +1,7 @@
 // Map objects (original/FIDELITY.md §10): their animation (0x411700), the blast zone
 // (0x417860 → 0x417c80) and the generator's item roll (0x417f00).
 import { animDue, LONG_AGO_MS, nowMs } from "./constants.ts";
-import { hasItem } from "./grid.ts";
+import { addItem, hasItem } from "./grid.ts";
 import { isFirepowerMode } from "./modes.ts";
 import { msvcRand } from "./rng.ts";
 import { objectAnim } from "./sheets.ts";
@@ -154,7 +154,7 @@ export function rollGenerator(state: MatchState, bomb: BombState): void {
   if ((tileB(state, bomb.cell) & GENERATOR) === 0 || bomb.kind >= BombKind.Water) return;
   if (!state.players.some((p) => p.id === bomb.owner) || hasItem(state, bomb.cell)) return;
   const kind = generatorItem(() => msvcRand(state), isFirepowerMode(state.rules.mode));
-  if (kind !== null) state.items.push({ cell: bomb.cell, kind, tick: state.tick, dropped: false });
+  if (kind !== null) addItem(state, { cell: bomb.cell, kind, tick: state.tick, dropped: false });
 }
 
 /** The 화력 modes' generator bands (0x417f00): r below 85 only, one rand() in all. */

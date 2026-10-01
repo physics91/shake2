@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { FIRE_FRAMES, FUSE_MS, nowMs, START_BOMBS, START_FIRE } from "./constants.ts";
+import { addItem, isFree } from "./grid.ts";
+import { deathFrames } from "./sheets.ts";
 import { addBomb, burning, cellAt, cellCenter, IDLE, playingMatch, run, runUntil } from "./testing.ts";
-import type { BombState, MatchState } from "./types.ts";
+import type { BombState, ItemState, MatchState, SimEvent } from "./types.ts";
 import { CellKind, Dir, ItemKind } from "./types.ts";
-import { rollHiddenItems, startBreaking, suddenDeathOrder } from "./world.ts";
+import { collectItem, rollHiddenItems, startBreaking, suddenDeathOrder } from "./world.ts";
 
 const press = { 1: { dir: null, bomb: true } };
 
@@ -234,6 +236,23 @@ describe("bombs", () => {
     expect(state.bombs[0].fireCells).toEqual([0, 1, 2]);
   });
 
+  it("burns only the first of two items in a cell; the one left stops no later fire (0x417bb0, 0x417b7c)", () => {
+    const state = playingMatch([".....1"]);
+    removePlayers(state);
+    state.items.push({ cell: 2, kind: ItemKind.Speed, tick: 0, dropped: false }, { cell: 2, kind: ItemKind.Fire, tick: 0, dropped: false });
+    expiredBomb(state, 0, 4);
+
+    run(state, 1);
+    expect(state.items.map((i) => i.kind)).toEqual([ItemKind.Fire]);
+    expect(state.bombs[0].fireCells).toEqual([0, 1, 2]);
+
+    runUntil(state, () => state.bombs.length === 0);
+    expiredBomb(state, 0, 4);
+    run(state, 1);
+    expect(state.items.map((i) => i.kind)).toEqual([ItemKind.Fire]);
+    expect(state.bombs[0].fireCells).toEqual([0, 1, 2, 3, 4]);
+  });
+
   it("hides an item in about 106 of 300 bricks, the switch, shake and candy at most once", () => {
     const state = playingMatch(["1" + "B".repeat(3999)]);
     state.grid = state.layout.kinds.slice();
@@ -282,6 +301,55 @@ describe("death drops", () => {
       [cellAt(state, 1, 0), ItemKind.Kick],
       [cellAt(state, 2, 0), ItemKind.Jump],
     ]);
+  });
+});
+
+describe("two items in one cell (item bit 0x200)", () => {
+  it("a death drop into a crumbling brick, then the brick's item: one pickup, the other drawn and free (0x451123, 0x410920)", () => {
+    const state = playingMatch(["......", "B1....", "......", "2....3"], 3);
+    const [dying, walker] = state.players;
+    const brick = cellAt(state, 0, 1);
+    state.hidden[brick] = ItemKind.Fire;
+    dying.bombCapacity = 2;
+    state.flame[cellAt(state, 1, 1)] = 1;
+    runUntil(state, () => dying.frame === deathFrames(dying.character) - 1);
+    startBreaking(state, brick);
+    runUntil(state, () => dying.gone);
+    runUntil(state, () => state.breaking.length === 0);
+    expect(state.items.map((i) => [i.cell, i.kind])).toEqual([
+      [brick, ItemKind.Bomb],
+      [brick, ItemKind.Fire],
+    ]);
+
+    const picked: SimEvent[] = [];
+    for (let i = 0; i < 60; i++) {
+      run(state, 1, { 2: { dir: Dir.Up, bomb: false } });
+      picked.push(...state.events.filter((e) => e.type === "item-picked"));
+    }
+
+    expect(picked).toEqual([{ type: "item-picked", playerId: 2, kind: ItemKind.Bomb }]);
+    expect([walker.bombCapacity, walker.firePower]).toEqual([START_BOMBS + 1, START_FIRE]);
+    expect(state.items.map((i) => [i.cell, i.kind])).toEqual([[brick, ItemKind.Fire]]);
+    expect(isFree(state, brick)).toBe(true);
+  });
+
+  it("is seen again once another item lands there, and a pickup takes the oldest first (0x441de0, 0x401a54)", () => {
+    const state = playingMatch(["1...."]);
+    const player = state.players[0];
+    const cell = cellAt(state, 2, 0);
+    const item = (kind: ItemKind): ItemState => ({ cell, kind, tick: 0, dropped: true });
+    addItem(state, item(ItemKind.Bomb));
+    addItem(state, item(ItemKind.Fire));
+    collectItem(state, player, cell);
+    collectItem(state, player, cell);
+    expect(state.items.map((i) => i.kind)).toEqual([ItemKind.Fire]);
+
+    addItem(state, item(ItemKind.Speed));
+    collectItem(state, player, cell);
+
+    expect(state.items.map((i) => i.kind)).toEqual([ItemKind.Speed]);
+    expect(player.firePower).toBe(START_FIRE + 1);
+    expect(isFree(state, cell)).toBe(true);
   });
 });
 
