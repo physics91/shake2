@@ -189,6 +189,16 @@ describe("option window (scene 13)", () => {
       expect(keyboard.window.keys[0]).toBe(0x39);
     });
 
+    it("does nothing after 초기화 marks 1P while the joystick is still the device", () => {
+      const { window, click, saved } = setup({ ...defaultSettings(), control: 1 });
+      click(AT.reset);
+      expect(window.device).toBe(0);
+      expect(saved().control).toBe(1);
+      click(AT.bomb);
+      window.poll(["KeyA"]);
+      expect(window.keys[0]).toBe(0x39);
+    });
+
     it("stops the live macro sync while it is on", () => {
       const { window, click } = setup();
       click(AT.macro(1));

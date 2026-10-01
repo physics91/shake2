@@ -148,12 +148,13 @@ export class OptionWindow {
   }
 
   /**
-   * The key-change poll (0x402090, each frame, keyboard only): the lowest held DIK. D is refused.
+   * The key-change poll (0x402090), each frame, only while the keyboard is the device (not the 1P
+   * mark, which 초기화 sets alone): the lowest held DIK. D is refused.
    * A key another slot holds goes to that slot's place first: that slot takes this slot's key,
    * and this slot takes the key on the next poll if it is still held (0x40218e-0x402268).
    */
   poll(held: Iterable<string>): void {
-    if (this.changing < 0 || this.device !== 0) return;
+    if (this.changing < 0 || this.host.current().control !== 0) return;
     const dik = firstHeld(held);
     if (dik === null) return;
     if (dik === GESTURE_DIK) {
