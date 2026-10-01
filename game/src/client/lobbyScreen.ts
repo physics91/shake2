@@ -411,16 +411,16 @@ export class LobbyScreen {
   showMessage(text: string): void {
     this.message = { text, since: performance.now() };
     this.status.textContent = text;
-    // A refused save ends the wait; the window stays with its edits (0x445069).
-    if (this.myInfo) this.myInfo.busy = false;
   }
 
   /**
    * The server's refusal: a refused create or join ends its wait (S->C 0x03, 0x04: lock and cursor
-   * off, then the box). Another reply's box, such as a save's, leaves a create or join waiting.
+   * off, then the box), and so does a refused save, whose window stays with its edits (0x445069).
+   * Another reply's box, such as a save's or a nick's (0x44b080), leaves them waiting.
    */
   refused(text: string): void {
     this.roomAsked = false;
+    if (this.myInfo) this.myInfo.busy = false;
     this.showMessage(text);
   }
 
