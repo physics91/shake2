@@ -523,6 +523,11 @@ export class LobbyScreen {
     return this.helpScreen || this.busy;
   }
 
+  /** The page's room 정보 mirrors a right release on the room, so it is dropped where that is. */
+  get takesRoomInfo(): boolean {
+    return !this.dropsClicks && this.clear;
+  }
+
   /** Nothing over the lobby: its own hover, held and balloon art show (the "no popup" gate). */
   private get clear(): boolean {
     return this.popup === null && this.message === null;

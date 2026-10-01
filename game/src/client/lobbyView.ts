@@ -403,8 +403,8 @@ export class LobbyView {
                   type: "button",
                   "aria-label": `${roomNumberText(room.number)}번 방 정보`,
                   onclick: () => {
-                    // What a right release on the room does, dropped as it is under the help or a wait.
-                    if (this.screen?.dropsClicks) return;
+                    // What a right release on the room does, dropped as it is under the help, a wait, a popup or a message.
+                    if (this.screen && !this.screen.takesRoomInfo) return;
                     this.infoAsked = room.code;
                     this.actions.send({ type: "room-info", code: room.code });
                   },
