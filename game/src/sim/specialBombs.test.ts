@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FUSE_MS, nowMs, TIMER_FUSE_MS } from "./constants.ts";
+import { BOMB_DY, FUSE_MS, nowMs, TIMER_FUSE_MS } from "./constants.ts";
 import { hasBomb } from "./grid.ts";
 import { addBomb, burning, cellAt, cellCenter, IDLE, playingMatch, PRACTICE, run, runUntil, VERSUS } from "./testing.ts";
 import type { InputFrame, MatchState, PlayerState } from "./types.ts";
@@ -289,6 +289,21 @@ describe("glove throw", () => {
     run(state, 1, { 1: SPACE });
     runUntil(state, () => bomb.motion === 0);
     expect(bomb).toMatchObject({ y: 3 * 32 + 28, cell: cellAt(state, 0, 3) });
+  });
+
+  it("sets the flying bomb's cell under it every update, truncating towards zero above the area (0x40dbca, 0x410a90)", () => {
+    const state = thrower(["1.......", "........", "........"], Dir.Right);
+    const bomb = state.bombs[0];
+    const flight: { y: number; cell: number }[] = [];
+    run(state, 1, { 1: SPACE });
+    while (bomb.motion >= 5) {
+      flight.push({ y: bomb.y, cell: bomb.cell });
+      run(state, 1);
+    }
+    // Less than a cell above the top row it is over that row's cell; a full cell above, in none.
+    expect(flight.map((f) => f.y)).toEqual([-5, -17, -24, -28, -31, -32, -31, -28, -24, -17, -5]);
+    expect(flight.map((f) => f.cell)).toEqual([0, 1, 1, 1, 1, -6, 2, 2, 2, 3, 3]);
+    expect(bomb).toMatchObject({ cell: 3, y: BOMB_DY, motion: 0 });
   });
 
   it("keeps a flagged bomb in the air and sets it off after it lands", () => {

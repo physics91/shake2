@@ -94,6 +94,17 @@ export function blocksWalk(state: MatchState, cell: number | null): boolean {
 }
 
 /**
+ * pixelToCell (0x410a90) as a flight stores it every update (0x40dbca): no range check, division
+ * truncating towards zero. So a bomb risen less than a cell above the area is over the top row's
+ * cell under it, and one a full cell above is in a negative cell no player stands in. (The
+ * original's 0 off the 800x600 screen is out of reach: every area starts 49 px or more down.)
+ */
+export function flightCell(state: MatchState, x: number, y: number): number {
+  const { width, cellW, cellH } = state.layout;
+  return Math.trunc(y / cellH) * width + Math.trunc(x / cellW);
+}
+
+/**
  * pixelToCell (0x410a90) where the original feeds it points off the grid: division truncates
  * towards zero, and a cell outside the tile array is taken as cell 0 (the original returns 0 off
  * the 800x600 screen and reads past the array otherwise).

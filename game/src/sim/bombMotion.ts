@@ -1,6 +1,6 @@
 // Moving bombs (0x40db00): rolling after a kick or as a 직격탄 (0x415820), flying after a throw (0x40ddc0).
 import { BOMB_DX, BOMB_DY } from "./constants.ts";
-import { cellAtPixel, cellTopLeft, isFree, playersIn, rawCellAt, STEP_X, STEP_Y } from "./grid.ts";
+import { cellAtPixel, cellTopLeft, flightCell, isFree, playersIn, rawCellAt, STEP_X, STEP_Y } from "./grid.ts";
 import type { BombState, MatchState } from "./types.ts";
 import { BombKind, Dir } from "./types.ts";
 
@@ -190,7 +190,7 @@ function fly(state: MatchState, bomb: BombState, now: number): void {
       bomb.y -= flyAcross(state, bomb);
       break;
   }
-  bomb.cell = rawCellAt(state, bomb.x, bomb.y) ?? bomb.cell;
+  bomb.cell = flightCell(state, bomb.x, bomb.y);
   if (bomb.motion === 0) {
     const { x, y } = cellTopLeft(state, bomb.cell);
     bomb.x = x + BOMB_DX;
