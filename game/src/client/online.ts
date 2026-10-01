@@ -1271,6 +1271,8 @@ class RoomView {
     this.chatInput.addEventListener("input", () => fitBytes(this.chatInput, ROOM_CHAT_LIMIT));
     const submitChat = (event: Event) => {
       event.preventDefault();
+      // The canvas's line sends nothing while the EXIT box takes the keys; the form keeps its text as the line does.
+      if (this.screen?.boxUp) return;
       say(this.chatInput.value);
       this.chatInput.value = "";
     };

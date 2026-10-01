@@ -239,6 +239,11 @@ export class RoomScreen {
     return this.helpScreen || this.kicked || this.overlay !== null;
   }
 
+  /** The EXIT box: every key is its own (0x460097), so the chat line sends nothing under it. */
+  get boxUp(): boolean {
+    return this.overlay?.kind === "box";
+  }
+
   private get me(): LobbyPlayer | undefined {
     return this.room.players.find((p) => p.id === this.options.playerId);
   }
