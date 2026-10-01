@@ -356,8 +356,18 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   }, 4);
 
   return new Promise((resolve, reject) => {
-    http.once("error", reject);
+    // A port that cannot be had: wss passes the error on (with no listener of its own it would throw
+    // past http's), and the timers go, so nothing is left running.
+    const failed = (error: Error) => {
+      clearInterval(clock);
+      clearInterval(heartbeat);
+      reject(error);
+    };
+    http.once("error", failed);
+    wss.once("error", failed);
     http.listen(options.port, options.host, () => {
+      http.off("error", failed);
+      wss.off("error", failed);
       const port = (http.address() as AddressInfo).port;
       log(`shake2 server on ${tls ? "wss" : "ws"}://${options.host}:${port}/ws (${maps.length} maps, ${channels.length} channels, ${accounts.size} accounts)`);
       const warning = startupWarning(options.host, tls !== undefined);

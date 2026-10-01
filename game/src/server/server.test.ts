@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -400,6 +402,22 @@ describe.skipIf(!HAS_ASSETS)("friends across channels", () => {
       second.socket.close();
     } finally {
       await server.close();
+    }
+  });
+});
+
+describe.skipIf(!HAS_ASSETS)("starting up", () => {
+  it("rejects on a port already taken, and leaves no timer running", async () => {
+    const holder = createNetServer();
+    await new Promise<void>((resolve) => holder.listen(0, "127.0.0.1", resolve));
+    const { port } = holder.address() as AddressInfo;
+    const timers = () => process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
+    const before = timers();
+    try {
+      await expect(startServer({ host: "127.0.0.1", port, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5 })).rejects.toMatchObject({ code: "EADDRINUSE" });
+      expect(timers()).toBe(before);
+    } finally {
+      holder.close();
     }
   });
 });
