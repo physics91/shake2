@@ -8,6 +8,7 @@ export const RANKING_TIMEOUT_MS = 5000;
 
 export type RankingReply = Extract<ServerMessage, { type: "ranking" | "ranking-search" }>;
 
+type RankingRequest = Extract<ClientMessage, { type: RankingReply["type"] }>;
 type Send = (message: ClientMessage) => boolean;
 
 /** The list and its two fetches, bound to one connection. */
@@ -26,7 +27,7 @@ export class RankingBoard {
   rows: readonly RankingRow[] = [];
   /** [0x46e740]: the lobby window's page. */
   windowPage = 1;
-  private waiting: { type: RankingReply["type"]; done: (reply: RankingReply | null) => void } | null = null;
+  private waiting: { message: RankingRequest; done: (reply: RankingReply | null) => void } | null = null;
 
   async page(send: Send, page: number): Promise<boolean> {
     return this.take(await this.ask(send, { type: "ranking", page }));
@@ -42,8 +43,12 @@ export class RankingBoard {
     return this.take(reply);
   }
 
+  /** A page's answer names its page, so a late one for an earlier page is not taken for this one. */
   receive(reply: RankingReply): void {
-    if (this.waiting?.type === reply.type) this.waiting.done(reply);
+    const waiting = this.waiting;
+    if (waiting?.message.type !== reply.type) return;
+    if (waiting.message.type === "ranking" && reply.page !== waiting.message.page) return;
+    waiting.done(reply);
   }
 
   /** The connection went: an awaited answer will not come. */
@@ -76,7 +81,7 @@ export class RankingBoard {
   }
 
   /** One request at a time, as the blocking socket allowed; a second while one waits fails. */
-  private ask(send: Send, message: Extract<ClientMessage, { type: RankingReply["type"] }>): Promise<RankingReply | null> {
+  private ask(send: Send, message: RankingRequest): Promise<RankingReply | null> {
     if (this.waiting) return Promise.resolve(null);
     return new Promise((resolve) => {
       const timer = setTimeout(() => done(null), RANKING_TIMEOUT_MS);
@@ -85,7 +90,7 @@ export class RankingBoard {
         this.waiting = null;
         resolve(reply);
       };
-      this.waiting = { type: message.type, done };
+      this.waiting = { message, done };
       if (!send(message)) done(null);
     });
   }

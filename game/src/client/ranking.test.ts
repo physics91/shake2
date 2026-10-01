@@ -73,6 +73,20 @@ describe("the ranking list (0x447290, 0x447700)", () => {
     expect(access.rows).toEqual([]);
   });
 
+  it("does not take a late answer for the next page asked", async () => {
+    vi.useFakeTimers();
+    const { board, access } = wired();
+    const slow = access.page(1);
+    vi.advanceTimersByTime(RANKING_TIMEOUT_MS);
+    expect(await slow).toBe(false);
+    const next = access.page(2);
+    // The server answers in order: the first page's late answer comes before the second's.
+    board.receive({ type: "ranking", page: 1, rows: [row(1), row(2)] });
+    board.receive({ type: "ranking", page: 2, rows: [row(16), row(17)] });
+    expect(await next).toBe(true);
+    expect(access.rows.map((r) => r.rank)).toEqual([16, 17]);
+  });
+
   it("fails an awaited answer when the connection goes", async () => {
     const { board, access } = wired();
     const asked = access.search("id1");
