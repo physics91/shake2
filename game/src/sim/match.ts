@@ -493,6 +493,8 @@ function kill(state: MatchState, player: PlayerState): void {
   player.frame = 0;
   // The local player's death start is the one place practice points the static at it (0x40829c).
   if (state.localMark?.playerId === player.id) Object.assign(state.localMark, { x: player.x, y: player.y });
+  // The network game counts the player out as the death starts (0x40afb4, a remote death 0x45da9b).
+  if (!state.rules.practice) markGone(state, player);
   state.events.push({ type: "death", playerId: player.id });
 }
 
@@ -509,31 +511,34 @@ function advanceDeath(state: MatchState, player: PlayerState, now: number): void
   player.gone = true;
   // Practice still sets the bit on this frame (0x407f4d, 0x4083ad); the network game clears the
   // slot's bits at once (0x45e8a0 at 0x40ad4d, 0x40b7be).
-  if (state.rules.practice) state.lingering.push(player.id);
-  markGone(state, player);
+  if (state.rules.practice) {
+    state.lingering.push(player.id);
+    markGone(state, player);
+  }
   dropCapsule(state, player);
   scatterItems(state, player);
   decideRound(state);
 }
 
-/** 0x441110: the round's last player out (room +0x938), by death or by leaving (0x4408b2). */
+/** 0x441110: the round's last player out (room +0x938), by a death's start or by leaving (0x4408b2). */
 function markGone(state: MatchState, player: PlayerState): void {
   state.lastGoneId = player.id;
   state.lastGoneTeam = player.team;
 }
 
 /**
- * 0x441130, at each death animation's end and each leave. Practice has no rounds: the box comes
- * up when the local player's death ends (0x4083be) or no dummy is left (0x407b02), and the game
- * runs on under it.
+ * 0x441130, at each death animation's end and each leave. It counts only the players not out
+ * (+0x27c clear), so one whose death has started but not ended is out already. Practice has no
+ * rounds: the box comes up when the local player's death ends (0x4083be) or no dummy is left
+ * (0x407b02), and the game runs on under it.
  */
 function decideRound(state: MatchState): void {
-  const remaining = state.players.filter((p) => !p.gone);
   if (state.rules.practice) {
     const gone = state.players.find((p) => p.id === state.lastGoneId);
-    if (!gone?.dummy || !remaining.some((p) => p.dummy)) state.events.push({ type: "practice-over" });
+    if (!gone?.dummy || !state.players.some((p) => !p.gone && p.dummy)) state.events.push({ type: "practice-over" });
     return;
   }
+  const remaining = state.players.filter((p) => p.alive);
   if (isTeamMode(state.rules.mode)) decideTeamRound(state, remaining);
   else decideIndividualRound(state, remaining);
 }

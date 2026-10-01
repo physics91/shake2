@@ -20,6 +20,21 @@ function burnPlayers(state: MatchState, ids: number[]): void {
   }
 }
 
+/** Flame under the player for one update: its death starts on it. */
+function killNow(state: MatchState, id: number, inputs: Record<number, InputFrame> = {}): void {
+  const p = state.players.find((q) => q.id === id)!;
+  const cell = Math.floor(p.y / 32) * state.layout.width + Math.floor(p.x / 40);
+  state.flame[cell] = 1;
+  step(state, inputs);
+  state.flame[cell] = 0;
+  expect(p.alive).toBe(false);
+}
+
+/** Players of the given characters, each on its own team. */
+function cast(characters: string[]) {
+  return characters.map((character, i) => ({ id: i + 1, name: `P${i + 1}`, character, team: i + 1 }));
+}
+
 describe("round start", () => {
   it("spawns players at (cellX + 20, cellY + 16) and waits 1 s before the countdown", () => {
     const state = createMatch(layoutFromAscii(ARENA), setups(4), VERSUS, 1);
@@ -197,7 +212,7 @@ describe("round end", () => {
     expect(state.players[0].medals).toBe(1);
   });
 
-  it("gives the medal to the player whose death animation ends last when nobody is left", () => {
+  it("gives the medal to the last player out when nobody is left: the later slot in one update", () => {
     const state = createMatch(layoutFromAscii(ARENA), setups(2), VERSUS, 1);
     run(state, TO_PLAY);
     burnPlayers(state, [1, 2]);
@@ -206,6 +221,34 @@ describe("round end", () => {
 
     expect(state.roundWinnerId).toBe(2);
     expect(state.players[1].medals).toBe(1);
+  });
+
+  it("counts a player out from the death's start (0x441110 at 0x40afb4): the later death wins though its animation ends first", () => {
+    for (const mode of [0, 1] as const) {
+      // doomsy's 앞죽음 has 9 frames, rookie's 8.
+      const state = createMatch(layoutFromAscii(ARENA), cast(["doomsy", "rookie"]), { ...VERSUS, mode }, 1);
+      const [p1, p2] = state.players;
+      run(state, TO_PLAY);
+      killNow(state, 1);
+      run(state, 1);
+      killNow(state, 2);
+      runUntil(state, () => state.phase !== "playing");
+      expect([p1.gone, p2.gone]).toEqual([false, true]);
+      expect([state.roundWinnerId, state.roundWinnerTeam]).toEqual(mode === 0 ? [2, null] : [null, 2]);
+      expect([p1.medals, p2.medals]).toEqual([0, 1]);
+    }
+  });
+
+  it("decides the round at the first death end when one player alone has not started dying (0x441130)", () => {
+    const state = createMatch(layoutFromAscii(ARENA), cast(["rookie", "rookie", "rookie"]), VERSUS, 1);
+    const [p1, p2] = state.players;
+    run(state, TO_PLAY);
+    killNow(state, 1);
+    run(state, 7); // one death frame later
+    killNow(state, 2);
+    runUntil(state, () => p1.gone);
+    expect(p2.gone).toBe(false);
+    expect([state.phase, state.roundWinnerId]).toEqual(["round-over", 3]);
   });
 
   it("ends the match straight away on the third medal", () => {
