@@ -154,6 +154,7 @@ export class LobbyView {
     });
     const create = (event: Event) => {
       event.preventDefault();
+      if (this.screen?.busy) return;
       // The create popup's OK (0x4300d0): a leading space asks for a title; an empty one does nothing there.
       const result = createTitle(title.value);
       if (result === null || "message" in result) {
@@ -175,6 +176,7 @@ export class LobbyView {
     });
     const join = (event: Event) => {
       event.preventDefault();
+      if (this.screen?.busy) return;
       const value = code.value.trim().toUpperCase();
       if (value.length !== ROOM_CODE_LENGTH) {
         this.errorLine.textContent = `방 코드 ${ROOM_CODE_LENGTH}자리를 입력하세요.`;

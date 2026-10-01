@@ -450,6 +450,8 @@ export class LobbyScreen {
 
   /** A room's line (0x459e06): a playing room says so, a secret one asks for its password, any other is joined. */
   joinRoom(room: RoomSummary): void {
+    // The page's mirror too: while a create, a join or a save waits, the click is dropped (0x458794).
+    if (this.busy) return;
     if (room.playing) this.showMessage("이미 시작 되었습니다.");
     else if (room.secret) this.askPassword(room.code);
     else this.options.send({ type: "join-room", code: room.code });
@@ -510,7 +512,7 @@ export class LobbyScreen {
   }
 
   /** Waiting for a reply ([0x496ca0]): the mouse and Esc are dropped, the busy cursor shows. */
-  private get busy(): boolean {
+  get busy(): boolean {
     return this.roomAsked || (this.myInfo?.busy ?? false) || (this.option?.window.busy ?? false) || (this.rankingWindow?.busy ?? false);
   }
 
