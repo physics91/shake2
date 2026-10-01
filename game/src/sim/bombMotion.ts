@@ -62,13 +62,19 @@ function roll(state: MatchState, bomb: BombState, now: number): void {
   bomb.cell = cellAtPixel(state, bomb.x, bomb.y) ?? bomb.cell;
 }
 
-/** Move by one step; true when that changed the cell (the bomb bit moves with it). */
+/**
+ * Move by one step; true when that changed the cell. The bomb bit moves with it (0x415a4f): the
+ * cell left loses it, whatever other bomb still rests there.
+ */
 function shift(state: MatchState, bomb: BombState, dx: number, dy: number): boolean {
   const from = cellAtPixel(state, bomb.x, bomb.y);
   bomb.x += dx;
   bomb.y += dy;
   const moved = cellAtPixel(state, bomb.x, bomb.y) !== from;
-  if (moved) bomb.bitCleared = false;
+  if (moved) {
+    bomb.bitCleared = false;
+    for (const other of state.bombs) if (other !== bomb && from !== null && other.cell === from) other.bitCleared = true;
+  }
   return moved;
 }
 

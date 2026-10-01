@@ -228,6 +228,19 @@ describe("kick (0x450769)", () => {
     runUntil(state, () => bomb.motion === 0, 60);
     expect(bomb).toMatchObject({ cell: 3, x: 140 });
   });
+
+  it("takes the bomb bit off the cell it rolls out of, so a bomb still resting there no longer holds it (0x415a4f)", () => {
+    const state = kicker(["1.........."]);
+    const a = cellAt(state, 1, 0);
+    const [rolled] = state.bombs;
+    const resting = addBomb(state, a, { placedMs: nowMs(0) });
+    run(state, 4, { 1: { dir: Dir.Right, bomb: false } });
+    expect(rolled.motion).toBe(Dir.Right + 1);
+    expect(resting.motion).toBe(0);
+    runUntil(state, () => rolled.cell !== a, 10);
+    expect(resting).toMatchObject({ cell: a, motion: 0, exploded: false });
+    expect(hasBomb(state, a)).toBe(false);
+  });
 });
 
 describe("glove throw", () => {
