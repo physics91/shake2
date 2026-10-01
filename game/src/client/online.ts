@@ -944,7 +944,7 @@ class OnlineSession {
           break;
         }
         this.showError(message.message);
-        this.lobbyView?.showMessage(message.message);
+        this.lobbyView?.refused(message.message);
         // In the room the server's refusals come as system lines of the chat log (0x44a260).
         if (this.roomView) {
           this.chatLog.push(`sys${message.message}`);

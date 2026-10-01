@@ -413,8 +413,15 @@ export class LobbyScreen {
     this.status.textContent = text;
     // A refused save ends the wait; the window stays with its edits (0x445069).
     if (this.myInfo) this.myInfo.busy = false;
-    // So does a refused create or join (S->C 0x03, 0x04: lock and cursor off, then the box).
+  }
+
+  /**
+   * The server's refusal: a refused create or join ends its wait (S->C 0x03, 0x04: lock and cursor
+   * off, then the box). Another reply's box, such as a save's, leaves a create or join waiting.
+   */
+  refused(text: string): void {
     this.roomAsked = false;
+    this.showMessage(text);
   }
 
   /** SEND_create, SEND_join (0x448790, 0x448800): the lock and the busy cursor until the answer; a room's answer ends the lobby. */

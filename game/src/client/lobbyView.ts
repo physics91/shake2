@@ -526,10 +526,17 @@ export class LobbyView {
     if (message.type === "add-friend" || message.type === "delete-friend") this.friendAskers.push(asker);
   }
 
-  /** A refusal (a join reply, a bad title): the original's message box, and the page's alert line. */
+  /** A reply or a bad title: the original's message box, and the page's alert line. */
   showMessage(text: string): void {
     this.errorLine.textContent = text;
     if (this.screen) this.screen.showMessage(text);
+    else this.pendingMessage = text;
+  }
+
+  /** The server's refusal, which also ends a create or join's wait. */
+  refused(text: string): void {
+    this.errorLine.textContent = text;
+    if (this.screen) this.screen.refused(text);
     else this.pendingMessage = text;
   }
 
