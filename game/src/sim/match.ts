@@ -547,11 +547,13 @@ function decideRound(state: MatchState): void {
 
 /**
  * Individual modes: with one player left that player wins; with none, the last player out.
- * The match ends on the winner's third medal, or when only one player is left in the room.
+ * The match ends on the winner's third medal, or when only one player is left in the room: that
+ * one wins before the out flags are read (0x4412cc), dying or not.
  */
 function decideIndividualRound(state: MatchState, remaining: PlayerState[]): void {
-  if (remaining.length > 1) return;
-  const winner = state.players.find((p) => p.id === (remaining.length === 1 ? remaining[0].id : state.lastGoneId));
+  const alone = state.players.length === 1 ? state.players[0] : undefined;
+  if (!alone && remaining.length > 1) return;
+  const winner = alone ?? state.players.find((p) => p.id === (remaining.length === 1 ? remaining[0].id : state.lastGoneId));
   state.roundWinnerId = winner?.id ?? null;
   if (winner) winner.medals += 1;
   const over = winner !== undefined && (winner.medals >= state.rules.medalsToWin || state.players.length === 1);

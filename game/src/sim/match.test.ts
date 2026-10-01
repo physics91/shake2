@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { NETWORK_SPAWNS, START_FIRE } from "./constants.ts";
-import { countdownValue, createMatch, matchResultDone, step } from "./match.ts";
+import { countdownValue, createMatch, matchResultDone, removePlayer, step } from "./match.ts";
 import { layoutFromAscii, PRACTICE, run, runUntil, setups, VERSUS } from "./testing.ts";
 import { msvcRand } from "./rng.ts";
 import { rollHiddenItems } from "./world.ts";
@@ -249,6 +249,18 @@ describe("round end", () => {
     runUntil(state, () => p1.gone);
     expect(p2.gone).toBe(false);
     expect([state.phase, state.roundWinnerId]).toEqual(["round-over", 3]);
+  });
+
+  it("ends the match when the only other player leaves during a death: one slot left wins before the out flags (0x4412cc)", () => {
+    for (const mode of [0, 3] as const) {
+      const state = createMatch(layoutFromAscii(ARENA), cast(["rookie", "rookie"]), { ...VERSUS, mode }, 1);
+      const [p1] = state.players;
+      run(state, TO_PLAY);
+      killNow(state, 1);
+      if (mode === 3) killNow(state, 2);
+      removePlayer(state, 2);
+      expect([state.phase, state.matchWinnerId, p1.medals]).toEqual(["match-over", 1, 1]);
+    }
   });
 
   it("keeps the latch of a player whose death outlasts the round: the poll skips the hidden (0x45af4a)", () => {
