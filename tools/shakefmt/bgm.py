@@ -101,7 +101,7 @@ def export_bgm(tracks: list[tuple[Path, str]], dls_path: Path, dst: Path, reverb
             audio = apply_reverb(audio, reverb)
         file = midi.with_suffix(".flac").name
         _encode_flac(audio, dst / file)
-        peak = float(np.abs(audio).max())
+        peak = float(np.abs(audio).max(initial=0.0))
         entries.append({
             "name": midi.stem,
             "role": role,

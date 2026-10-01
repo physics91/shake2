@@ -99,6 +99,15 @@ def test_renders_every_track_with_an_index(game_tree):
     assert json.loads((dst / "index.json").read_text(encoding="utf-8")) == index
 
 
+def test_renders_a_song_with_no_events_to_an_empty_track(game_tree):
+    src, dls, dst = game_tree
+    (src / "bgm" / "silent.mid").write_bytes(build_midi([]))
+    index = export_bgm([(src / "bgm" / "silent.mid", "game")], dls, dst)
+
+    assert index["tracks"][0]["seconds"] == 0
+    assert index["tracks"][0]["peak_dbfs"] is None
+
+
 def test_uses_the_synthesizer_mix_level_instead_of_normalizing(game_tree):
     src, dls, dst = game_tree
     index = export_bgm(original_tracks(src), dls, dst)
