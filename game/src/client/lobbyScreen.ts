@@ -728,7 +728,8 @@ export class LobbyScreen {
 
   /** A right release on a room (0x430880): its info popup, filled by the server's reply. */
   private rightRelease(x: number, y: number): void {
-    if (this.helpScreen || !this.clear) return;
+    // Busy, the mouse is dropped before the right release is looked at (0x458794).
+    if (this.helpScreen || this.busy || !this.clear) return;
     const row = roomRowAt(x, y);
     const room = row >= 0 ? this.rows[row] : null;
     if (!room?.title) return;
@@ -1296,7 +1297,8 @@ export class LobbyScreen {
       option.enter(this.message !== null);
     } else if (event.code === "Escape") {
       event.preventDefault();
-      if (option.window.busy) return;
+      // Any wait drops Esc (0x461590), the window's own or a create or join sent from the page.
+      if (this.busy) return;
       if (this.helpScreen) this.helpScreen = false;
       else if (this.message) this.hideMessage();
       else option.window.escape();

@@ -126,6 +126,8 @@ export class LobbyView {
   private state: LobbyState;
   /** The room whose 정보 button was pressed last. */
   private infoAsked: string | null = null;
+  /** Who sent each add or delete still unanswered, in order: the server answers them in turn. */
+  private friendAskers: ("window" | "section")[] = [];
   private disposed = false;
 
   constructor(
@@ -202,6 +204,7 @@ export class LobbyView {
     };
     const saveMyInfo = (event: Event) => {
       event.preventDefault();
+      if (this.screen?.busy) return;
       // The window's O: nothing changed closes without asking the server (0x43e110).
       const hue = this.hueInput.disabled ? profile.hue : Math.max(-180, Math.min(180, Math.trunc(Number(this.hueInput.value) || 0)));
       if (this.characterSelect.value === profile.character && hue === profile.hue) return;
@@ -209,6 +212,7 @@ export class LobbyView {
     };
     const saveNickname = (event: Event) => {
       event.preventDefault();
+      if (this.screen?.busy) return;
       // The nickname popup's O (0x44aff0): trailing blanks cut, empty or all blank sends nothing.
       const nick = trimChat(this.nickInput.value);
       if (!nick.trim() || nick === profile.nick) return;
@@ -216,8 +220,12 @@ export class LobbyView {
     };
     this.optionPanel = new OptionPanel({
       settings,
-      send,
+      send: (message) => {
+        this.noteFriendAsk(message, "section");
+        send(message);
+      },
       message: (text) => this.showMessage(text),
+      busy: () => this.screen?.busy ?? false,
     });
     const submitChat = (event: Event) => {
       event.preventDefault();
@@ -319,7 +327,10 @@ export class LobbyView {
             maps: welcome.maps,
             sounds,
             waitingOnly,
-            send,
+            send: (message) => {
+              this.noteFriendAsk(message, "window");
+              send(message);
+            },
             say,
             exit,
             filterChanged,
@@ -379,6 +390,8 @@ export class LobbyView {
                   type: "button",
                   "aria-label": `${roomNumberText(room.number)}번 방 정보`,
                   onclick: () => {
+                    // What a right release on the room does, dropped as it is while the canvas waits.
+                    if (this.screen?.busy) return;
                     this.infoAsked = room.code;
                     this.actions.send({ type: "room-info", code: room.code });
                   },
@@ -489,8 +502,12 @@ export class LobbyView {
 
   /** S->C 0x64 or 0x65: the canvas window or the page section, whichever asked, takes it. */
   friendReplied(reply: FriendReply): void {
-    this.screen?.friendReplied(reply);
-    this.optionPanel.friendReplied(reply);
+    if (this.friendAskers.shift() === "section") this.optionPanel.friendReplied(reply);
+    else this.screen?.friendReplied(reply);
+  }
+
+  private noteFriendAsk(message: ClientMessage, asker: "window" | "section"): void {
+    if (message.type === "add-friend" || message.type === "delete-friend") this.friendAskers.push(asker);
   }
 
   /** A refusal (a join reply, a bad title): the original's message box, and the page's alert line. */

@@ -19,6 +19,8 @@ export interface OptionPanelHost {
   send(message: ClientMessage): void;
   /** An add or delete result: the window's message box and the page's alert line. */
   message(text: string): void;
+  /** The canvas waits for a reply ([0x496ca0]); its clicks are dropped, so this section's are too. */
+  busy(): boolean;
 }
 
 const KEY_SLOTS = ["폭탄 (BOMB)", "공격용 아이템 (ITEM 1)", "회피용 아이템 (ITEM 2)"];
@@ -183,6 +185,10 @@ export class OptionPanel {
 
   /** As the window's 1P and 조이스틱 checks: set up at once and saved by 저장, or the error and the old mark. */
   private chooseDevice(control: Control): void {
+    if (this.host.busy()) {
+      this.devices.forEach((radio, i) => (radio.checked = this.host.settings.current.control === i));
+      return;
+    }
     if (control === 1 && !connectedPad()) {
       this.host.message(DEVICE_ERRORS.joystick);
       this.devices.forEach((radio, i) => (radio.checked = this.host.settings.current.control === i));
@@ -244,14 +250,14 @@ export class OptionPanel {
   /** C->S 0x64: the server decides (S->C 0x64). One question at a time, as the window's wait allows. */
   private addFriend(event: Event): void {
     event.preventDefault();
-    if (this.asked) return;
+    if (this.asked || this.host.busy()) return;
     this.asked = true;
     this.host.send({ type: "add-friend", name: this.friendInput.value });
   }
 
   /** C->S 0x65. */
   private deleteFriend(name: string): void {
-    if (this.asked) return;
+    if (this.asked || this.host.busy()) return;
     this.asked = true;
     this.host.send({ type: "delete-friend", name });
   }
