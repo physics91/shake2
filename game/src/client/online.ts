@@ -1295,6 +1295,7 @@ class RoomView {
       event.preventDefault();
       // The canvas's line sends nothing while the EXIT box takes the keys; the form keeps its text as the line does.
       if (this.screen?.boxUp) return;
+      keepRecall(this.chatInput.value);
       say(this.chatInput.value);
       this.chatInput.value = "";
     };

@@ -14,6 +14,7 @@ import { loadLobbyAssets, LobbyScreen } from "./lobbyScreen.ts";
 import { mapTitle } from "./menu.ts";
 import type { NoticeLine } from "./noticeLine.ts";
 import { CHARACTER_IDS, CHARACTER_NAMES, NICK_LIMIT } from "./myInfoLayout.ts";
+import { keepRecall } from "./chat.ts";
 import { OptionPanel } from "./optionPanel.ts";
 import type { RankingAccess } from "./ranking.ts";
 import { chatLineClass, shownChat } from "./roomChat.ts";
@@ -237,6 +238,8 @@ export class LobbyView {
     });
     const submitChat = (event: Event) => {
       event.preventDefault();
+      // As the canvas line's Enter: the ↑ recall line takes it first.
+      keepRecall(this.chatInput.value);
       say(this.chatInput.value);
       this.chatInput.value = "";
     };
