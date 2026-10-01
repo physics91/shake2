@@ -1405,8 +1405,10 @@ class RoomView {
     this.screen?.setLog([]);
   }
 
+  /** A refusal ends the busy cursor; a refused pick leaves the page's radios on the room's values. */
   refused(): void {
     this.screen?.refused();
+    if (this.room) this.syncChoices(this.room);
   }
 
   waitForKick(): void {
@@ -1464,10 +1466,14 @@ class RoomView {
       this.renderChoices(room, false);
     } else {
       // The host may have changed them on the canvas: keep the radios in step without rebuilding them.
-      syncChoice(this.modeSection, String(room.mode));
-      syncChoice(this.mapSection, room.mapId);
-      syncChoice(this.musicSection, String(room.music));
+      this.syncChoices(room);
     }
+  }
+
+  private syncChoices(room: RoomInfo): void {
+    syncChoice(this.modeSection, String(room.mode));
+    syncChoice(this.mapSection, room.mapId);
+    syncChoice(this.musicSection, String(room.music));
   }
 
   private slotItem(room: RoomInfo, slot: number, isHost: boolean, teams: boolean): HTMLElement {
