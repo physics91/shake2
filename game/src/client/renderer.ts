@@ -662,9 +662,9 @@ function drawBottomBar(ctx: CanvasRenderingContext2D, notice: RenderView["notice
 }
 
 /**
- * Name tags centred at (x, y + 5) under each player, only for this remake's two players on one
- * keyboard, who have no diff1 marker. The original's game screen draws no name under players:
- * its only text calls there are the candy count, notices and the bottom message.
+ * Name tags centred at (x, y + 5) under each player, for this remake's two players on one
+ * keyboard, who have no diff1 marker. The original draws names under the other players only while
+ * the local chat line is open (the panel function, 0x40fb81); online that is drawChatNameTags.
  */
 function drawNameTags(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState): void {
   for (const player of state.players) {
