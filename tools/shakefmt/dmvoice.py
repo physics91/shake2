@@ -347,9 +347,9 @@ class MixVoice:
             if not self.in_use:
                 break
 
-    def _apply_events(self, before: int):
-        """QueueNotes: stops that fall inside the buffer act before it is mixed."""
-        while self.events and self.events[0][0] < before:
+    def _apply_events(self, end: int):
+        """QueueNotes(stEndTime): stops up to the buffer's end, that time too, act before it is mixed."""
+        while self.events and self.events[0][0] <= end:
             t, kind = self.events.pop(0)
             t = max(t, self.start + 1)
             if self.note_on:
@@ -364,7 +364,7 @@ class MixVoice:
                 self.eg1.quick_stop_at(self.stop, self.rate)
 
     def _mix_buffer(self, out, begin: int, end: int):
-        if self.cut < end:  # stolen by a note in this buffer: cleared before it is mixed
+        if self.cut <= end:  # stolen by a note this buffer's queue takes: cleared before it is mixed
             self.in_use = False
             return
         self._apply_events(end)

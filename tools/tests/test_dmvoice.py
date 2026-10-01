@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from dls_builders import art1, build_dls, instrument, region, wave, wsmp
 from shakefmt.dls import Connection, decode_dls
@@ -10,16 +11,18 @@ from shakefmt.dmvoice import (
     PAN_VREL,
     SINE,
     VOLUME_STEPS,
+    ChannelControls,
     EgSource,
     Envelope,
     Lfo,
     LfoSource,
+    MixVoice,
     muldiv,
     parse_articulation,
     volume_fraction,
 )
 from shakefmt.midi import Event, Song
-from shakefmt.synth import render
+from shakefmt.synth import render, schedule
 
 RATE = 22050
 TC_ZERO = -0x80000000
@@ -107,3 +110,38 @@ def test_a_volume_change_moves_in_a_staircase_over_the_span_that_ends_after_it()
     for stair in range(2211, 2211 + 8 * 50, 8):
         assert len(set(level[stair: stair + 8].tolist())) == 1
     assert (level[2646:2700] == after).all()
+
+
+def mixed_alone(cut=None, events=()):
+    """One held note (1 s release) mixed by itself in 441-sample buffers, cut or stopped at sample times."""
+    col = decode_dls(build_dls(
+        [instrument(0, [region(wave=0, sample=wsmp(unity=69, loop=(0, 2205)))],
+                    articulation=art1((0, 0, 0x206, 0, TC_ZERO), (0, 0, 0x209, 0, 0)))],
+        [wave(np.full(2205, 0.5))],
+    ))
+    voices, channels = schedule(Song(events=(Event(0.0, "on", 0, (69, 127)),), length=0.5), col)
+    voice = voices[0]
+    if cut is not None:
+        voice.cut = cut / RATE
+    voice.events = [(t / RATE, kind) for t, kind in events]
+    out = np.zeros((RATE, 2), np.int64)
+    MixVoice(voice, ChannelControls.of(channels[0], RATE), RATE).mix_into(out, 441)
+    return out
+
+
+# ddksynth CSynth::Mix: QueueNotes(stEndTime = llPosition + dwLength) takes the notes at or before
+# the buffer's end (CNoteIn::GetNote), and StealVoice clears its victim before the voices mix.
+@pytest.mark.parametrize("cut", [2205 - 100, 2205, 2205 + 1])
+def test_a_stolen_voice_is_silent_from_the_start_of_the_buffer_whose_queue_takes_the_note(cut):
+    out = mixed_alone(cut=cut)
+    silent_from = (cut - 1) // 441 * 441
+    assert out[silent_from - 10: silent_from].any()
+    assert not out[silent_from:].any()
+
+
+def test_a_quick_stop_at_the_buffer_end_acts_before_that_buffer_mixes():
+    released = [(1000, "stop")]
+    at_end = mixed_alone(events=released + [(2205, "quick")])
+    inside = mixed_alone(events=released + [(1800, "quick")])
+    assert (at_end[1764:2205] == inside[1764:2205]).all()
+    assert (at_end[1764:2205] != mixed_alone(events=released)[1764:2205]).any()
