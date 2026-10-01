@@ -174,6 +174,13 @@ describe("passwords", () => {
     expect(await checkPassword("x", "scrypt$1$1$1$aa$bb")).toBe(false);
     expect(await checkPassword("x", "plain")).toBe(false);
   });
+
+  it("matches nothing with a hash whose cost scrypt refuses to run", async () => {
+    const salt = Buffer.alloc(16).toString("base64");
+    const key = Buffer.alloc(32).toString("base64");
+    // 128·N·r is 64 MiB here, over derive's memory bound: scrypt throws instead of answering.
+    await expect(checkPassword("x", `scrypt$65536$8$1$${salt}$${key}`)).resolves.toBe(false);
+  });
 });
 
 describe("the account file (ACCOUNTS_FILE)", () => {

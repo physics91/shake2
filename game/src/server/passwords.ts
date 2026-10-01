@@ -35,8 +35,9 @@ export async function checkPassword(password: string, stored: string): Promise<b
   if (expected.length !== KEY_BYTES) return false;
   const cost = { N: Number(n), r: Number(r), p: Number(p) };
   if (cost.N < 2 || (cost.N & (cost.N - 1)) !== 0 || cost.N > 1 << 20 || cost.r > 32 || cost.p > 16) return false;
-  const actual = await derive(password, Buffer.from(salt, "base64"), cost);
-  return timingSafeEqual(actual, expected);
+  // A cost over derive's memory bound makes scrypt throw rather than answer.
+  const actual = await derive(password, Buffer.from(salt, "base64"), cost).catch(() => null);
+  return actual !== null && timingSafeEqual(actual, expected);
 }
 
 /** A hash no password matches, checked against when an ID is unknown so the answer takes as long. */
