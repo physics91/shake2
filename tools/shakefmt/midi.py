@@ -38,8 +38,9 @@ class Song:
 
 
 def _varlen(data: bytes, pos: int) -> tuple[int, int]:
+    """SMF 1.0: at most four bytes, so at most 0x0FFFFFFF."""
     value = 0
-    while True:
+    for _ in range(4):
         if pos >= len(data):
             raise MidiFormatError("truncated variable-length value")
         byte = data[pos]
@@ -47,6 +48,7 @@ def _varlen(data: bytes, pos: int) -> tuple[int, int]:
         value = (value << 7) | (byte & 0x7F)
         if not byte & 0x80:
             return value, pos
+    raise MidiFormatError("variable-length value longer than 4 bytes")
 
 
 def _track_events(data: bytes):

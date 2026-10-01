@@ -113,6 +113,14 @@ def test_rejects_what_has_no_timing_or_a_status_byte_for_data(data):
         parse_midi(data)
 
 
+def test_rejects_a_variable_length_value_past_four_bytes():
+    # SMF 1.0: a delta time or a length is at most four bytes (0x0FFFFFFF).
+    with pytest.raises(MidiFormatError):
+        parse_midi(build_midi([(0, b"\x90\x3c\x64"), (0x10000000, b"\x80\x3c\x00")]))
+    long = parse_midi(build_midi([(0, b"\x90\x3c\x64"), (0x0FFFFFFF, b"\x80\x3c\x00")], division=0x7FFF))
+    assert (long.events[-1].kind, long.events[-1].time) == ("off", pytest.approx(0x0FFFFFFF / 0x7FFF * 0.5))
+
+
 def test_the_segment_lasts_to_the_end_of_the_bar_holding_the_end_of_track():
     # DirectMusic's segment for a MIDI file (GetLength on all 16 tracks) and so the loop period.
     four_four = (0, b"\xff\x58\x04\x04\x02\x18\x08")
