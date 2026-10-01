@@ -869,20 +869,25 @@ export class StartScreen {
       [this.idLine.element, this.pwLine.element, this.options.canvas, document.body].includes(active as HTMLElement);
     if (!ours) return;
     this.options.sounds.unlock();
-    if (event.code === "F1") {
-      event.preventDefault();
-      // 0x460264 refuses F1 only while loading (scene 1).
-      if (this.scene !== "loading") this.helpScreen = !this.helpScreen;
-      return;
-    }
     if (this.quitBox && (this.scene === "servers" || this.scene === "status")) {
+      // 0x460097: while the box is up every key, F1 too, only turns the help screen off.
       this.helpScreen = false;
+      if (event.code === "F1") {
+        event.preventDefault();
+        return;
+      }
       const result = boxKey(this.quitBox, event.key);
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") this.boxHover = boxKeyCursor(this.quitBox);
       if (result) {
         event.preventDefault();
         this.answer(result);
       }
+      return;
+    }
+    if (event.code === "F1") {
+      event.preventDefault();
+      // 0x460264 refuses F1 only while loading (scene 1).
+      if (this.scene !== "loading") this.helpScreen = !this.helpScreen;
       return;
     }
     if (event.code === "Escape") {
