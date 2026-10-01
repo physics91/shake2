@@ -42,7 +42,7 @@ import { answerLocal, LOCAL_IDS, localLists, localRoom, nextCharacter, VERSUS_RU
 import { macroOpens, macroSlot } from "./macro.ts";
 import { mapChoices, mapTitle, portraitCanvas } from "./menu.ts";
 import type { MyProfile } from "./lobbyScreen.ts";
-import { nickRefusal } from "./myInfoLayout.ts";
+import { CHARACTER_IDS, nickRefusal } from "./myInfoLayout.ts";
 import type { LobbyState } from "./lobbyView.ts";
 import { LobbyView } from "./lobbyView.ts";
 import { listedTrack, playWaitingMusic } from "./music.ts";
@@ -250,10 +250,7 @@ class OnlineSession {
         login: (id, password) => this.login(id, password),
         listServers: () => this.listServer(),
         practice: (character, hue) => this.startPractice(character, hue),
-        saveCharacter: (character, hue, useId) => {
-          writePreference("p1", character);
-          if (this.account) this.auth.send({ type: "set-character", character, hue, useId });
-        },
+        saveCharacter: (character, hue, useId) => this.saveCharacter(character, hue, useId),
         saveStatus: (profile) => this.saveStatus("status", { type: "set-status", ...profile }),
         saveGuild: (guild) => this.saveStatus("guild", { type: "set-guild", guild }),
         ranking: this.ranking.access((message) => this.account !== null && this.auth.send(message)),
@@ -348,6 +345,12 @@ class OnlineSession {
     this.auth.send({ type: "login", id, password });
   }
 
+  /** Scene 5's Go game (the old C->S 0x1a's place): the character, hue and ID check, kept and saved to the account. */
+  private saveCharacter(character: string, hue: number, useId: boolean): void {
+    writePreference("p1", character);
+    if (this.account) this.auth.send({ type: "set-character", character, hue, useId });
+  }
+
   /** Scene 5's save on the auth connection, answered by saved or a refusal; false with nothing to send it to. */
   private saveStatus(kind: "status" | "guild", message: ClientMessage): boolean {
     this.statusSaving = this.account !== null && this.auth.send(message) ? kind : null;
@@ -384,6 +387,8 @@ class OnlineSession {
         this.startView?.loggedIn(message.account);
         if (this.enterAfterLogin) {
           this.enterAfterLogin = false;
+          // The form stands for scene 5's Go game too, which saves what scene 5 shows first.
+          this.saveCharacter(CHARACTER_IDS[this.status.character], this.status.hue, this.status.useId);
           this.enter(0);
           // The login's answer ended the busy cursor; the form goes on to a row's connection, which keeps it.
           if (this.socket) this.startView?.connecting();
