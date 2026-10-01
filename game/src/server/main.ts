@@ -57,14 +57,15 @@ const server = await startServer({
     : process.env.CHANNEL
       ? [{ name: channelName(process.env.CHANNEL), colour: "#ffffff" }]
       : undefined,
-  accountsFile: process.env.ACCOUNTS_FILE || join(import.meta.dirname, "..", "..", "data", "accounts.json"),
+  // Blank file lines are unset as well, not a file named " " in the working directory.
+  accountsFile: process.env.ACCOUNTS_FILE?.trim() ? process.env.ACCOUNTS_FILE : join(import.meta.dirname, "..", "..", "data", "accounts.json"),
   defaultItems: parseIndexList(process.env.DEFAULT_ITEMS, ITEM_COUNT, DEFAULT_ITEMS, "DEFAULT_ITEMS"),
   defaultPairs: parseIndexList(process.env.DEFAULT_PAIRS, PAIR_COUNT, DEFAULT_PAIRS, "DEFAULT_PAIRS"),
-  friendsFile: process.env.FRIENDS_FILE || join(import.meta.dirname, "..", "..", "data", "friends.json"),
+  friendsFile: process.env.FRIENDS_FILE?.trim() ? process.env.FRIENDS_FILE : join(import.meta.dirname, "..", "..", "data", "friends.json"),
   tls: tlsFiles(process.env.TLS_CERT, process.env.TLS_KEY),
   trustedProxies: list(process.env.TRUST_PROXY),
   notice: noticeText(process.env.NOTICE_TEXT),
-  statusNotice: process.env.STATUS_NOTICE_FILE ? statusNoticeText(readFileSync(process.env.STATUS_NOTICE_FILE, "utf8")) : undefined,
+  statusNotice: process.env.STATUS_NOTICE_FILE?.trim() ? statusNoticeText(readFileSync(process.env.STATUS_NOTICE_FILE, "utf8")) : undefined,
   log: (line) => console.log(line),
 });
 
