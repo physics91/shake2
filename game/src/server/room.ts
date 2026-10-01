@@ -73,7 +73,6 @@ interface Member {
   slot: number;
   dir: Dir | null;
   buttons: PeerButtons;
-  lastChat: ChatSent | null;
   /** The match's chat line is open ([0x48c0e8]): the keys go unread (0x45aec8) and the "chat" mark shows. */
   typing: boolean;
   /** What the peers last took from this player's state packet (remote +0x2c8, 0x45d300). */
@@ -298,16 +297,14 @@ export class Room {
   }
 
   /**
-   * A room chat line, dropped like the original client drops it: a repeat, or within 2 s (0x43f7a0).
+   * A room chat line (the lobby has checked the send rule), false when it goes nowhere.
    * Every room line names the player as the slot does (+0x68: 0x446c5d, 0x44a212, 0x427a3c).
    */
-  chat(peerId: number, text: string): void {
+  chat(peerId: number, text: string): boolean {
     const member = this.members.get(peerId);
-    if (!member || this.playing) return;
-    const now = this.deps.now();
-    if (!chatAllowed(member.lastChat, text, now)) return;
-    member.lastChat = { text, at: now };
+    if (!member || this.playing) return false;
     this.broadcastChat("talk", shownName(member.profile), text);
+    return true;
   }
 
   setMode(peerId: number, mode: GameMode): string | null {
@@ -542,7 +539,6 @@ export class Room {
       slot,
       dir: null,
       buttons: new PeerButtons(),
-      lastChat: null,
       typing: false,
       shownTyping: false,
       typingSentMs: Number.NEGATIVE_INFINITY,

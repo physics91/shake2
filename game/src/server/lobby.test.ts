@@ -874,6 +874,24 @@ describe("Lobby (scene 4)", () => {
     expect(t.chats(3)).toEqual([]);
   });
 
+  it("keeps one last line per player for the lobby and the room, as the client's one buffer (0x4937bc)", () => {
+    const t = makeLobby();
+    t.connect(1, "하나");
+    t.connect(2, "둘");
+    t.lobby.handle(1, { type: "chat", text: "안녕" });
+    t.lobby.handle(1, { type: "create-room", title: "" });
+    t.clock.now = 1000;
+    t.lobby.handle(1, { type: "chat", text: "방" });
+    t.clock.now = 2100;
+    t.lobby.handle(1, { type: "chat", text: "잘 가" });
+    t.lobby.handle(1, { type: "leave-room" });
+    t.clock.now = 4200;
+    t.lobby.handle(1, { type: "chat", text: "안녕" });
+    const talk = t.chats(1).filter((m) => m.kind === "talk").map((m) => m.text);
+    expect(talk).toEqual(["잘 가"]);
+    expect(t.lobbyChats(2).map((m) => m.text)).toEqual(["안녕", "안녕"]);
+  });
+
   it("saves the character from the my-info window in the lobby and answers with it (C->S / S->C 0x1a)", () => {
     const saved: unknown[] = [];
     const t = makeLobby({ saveCharacter: (name, choice) => saved.push([name, choice]) });

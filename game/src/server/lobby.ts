@@ -75,7 +75,8 @@ export class Lobby {
   private readonly profiles = new Map<number, Profile>();
   private readonly roomOf = new Map<number, Room>();
   private readonly rooms = new Map<string, Room>();
-  private readonly lobbyChat = new Map<number, ChatSent>();
+  /** Each player's last chat line, the lobby's or the room's: the client keeps one ([0x4937bc]). */
+  private readonly lastChat = new Map<number, ChatSent>();
   /** When each player's last whisper went on (the client's 2000 ms, kept here too). */
   private readonly whispered = new Map<number, number>();
   /** Players who turned whispers off with /wno. */
@@ -156,7 +157,7 @@ export class Lobby {
     this.dropPasswordAttempt(peerId);
     this.peers.delete(peerId);
     this.profiles.delete(peerId);
-    this.lobbyChat.delete(peerId);
+    this.lastChat.delete(peerId);
     this.whispered.delete(peerId);
     this.noWhispers.delete(peerId);
     this.dirty = true;
@@ -233,8 +234,7 @@ export class Lobby {
         break;
       }
       case "chat":
-        if (room) room.chat(peerId, message.text);
-        else this.chatInLobby(peerId, shownName(profile), message.text);
+        this.chat(peerId, room, shownName(profile), message.text);
         break;
       case "start":
         fail(room ? room.start(peerId) : "방에 들어가 있지 않습니다.");
@@ -440,14 +440,19 @@ export class Lobby {
   }
 
   /**
-   * A lobby chat line, dropped like the room's: a repeat, or within 2 s of the last (0x43f7a0). It
+   * A chat line in the room or the lobby, dropped as the original client drops it: a repeat of the
+   * last line, or within 2 s of it (0x43f7a0), whichever of the two the last went to. A lobby line
    * names the speaker as the room does: the lobby's own-line test reads the shown name too (0x42d393).
    */
-  private chatInLobby(peerId: number, name: string, text: string): void {
+  private chat(peerId: number, room: Room | undefined, name: string, text: string): void {
     const now = this.config.now();
-    if (!chatAllowed(this.lobbyChat.get(peerId), text, now)) return;
-    this.lobbyChat.set(peerId, { text, at: now });
-    for (const peer of this.lobbyPeers()) peer.send({ type: "lobby-chat", name, text });
+    if (!chatAllowed(this.lastChat.get(peerId), text, now)) return;
+    if (room) {
+      if (!room.chat(peerId, text)) return;
+    } else {
+      for (const peer of this.lobbyPeers()) peer.send({ type: "lobby-chat", name, text });
+    }
+    this.lastChat.set(peerId, { text, at: now });
   }
 
   /** A typed ID as the account spells it, since IDs are one whichever their case; as typed when no account has it. */
