@@ -267,6 +267,26 @@ describe("teleport (item 14)", () => {
       expect(playerCell(state, lander)).toBe(BOMB_CELL);
     });
   });
+
+  it("undoes a corner slide that stays in a bomb cell just landed on, as one in another cell (0x450e10)", () => {
+    // The pad at (5, 0) sends player 2 right; column 5 is walled below it, so the teleport finds no
+    // landable cell down the column and comes down off-centre at player 2 + (20, 16) (0x45cc42).
+    const rows = Array.from({ length: 15 }, (_, row) => (row === 0 ? "....2>........." : row === 7 ? ".....#....1...." : ".....#........."));
+    const state = playingMatch(rows, 2, VERSUS);
+    const [lander, other] = state.players;
+    lander.inv.teleport = 1;
+    runUntil(state, () => other.anim >= Anim.Jump, 30, { 1: IDLE, 2: walk(Dir.Right) });
+    run(state, 1, { 1: { dir: Dir.Down, bomb: false, evade: true }, 2: IDLE });
+    runUntil(state, () => lander.flight === null, 50, { 1: walk(Dir.Down), 2: IDLE });
+    const landing = cellAt(state, 6, 1);
+    expect({ x: lander.x, y: lander.y, cell: playerCell(state, lander) }).toEqual({ x: 245, y: 32, cell: landing });
+    expect(lander.lastCell).toBe(cellAt(state, 10, 7));
+    addBomb(state, landing, { owner: 2 });
+    // Down with the wall at (5, 1) under the left probe: a slide right, still in the landing cell.
+    run(state, 1, { 1: walk(Dir.Down), 2: IDLE });
+    expect(lander.anim).toBe(Anim.Walk + Dir.Right);
+    expect(lander.x).toBe(245);
+  });
 });
 
 describe("Z priority (0x45ca1e, 0x45cb0c, 0x45cb8c)", () => {

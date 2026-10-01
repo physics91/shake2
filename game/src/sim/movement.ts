@@ -1,5 +1,5 @@
 import { HIT_BOTTOM, HIT_LEFT, HIT_RIGHT, HIT_TOP } from "./constants.ts";
-import { blocksWalk, cellAtPixel, cellTopLeft, hasBomb, isSolid, playerCell, STEP_X, STEP_Y } from "./grid.ts";
+import { blocksWalk, cellAtPixel, cellTopLeft, hasBomb, isSolid, STEP_X, STEP_Y } from "./grid.ts";
 import { kickBomb } from "./bomb.ts";
 import { warp } from "./gates.ts";
 import { stepOnPad } from "./pads.ts";
@@ -89,10 +89,14 @@ function clampToArea(state: MatchState, x: number, y: number): Point {
   return [x, bottom - 12];
 }
 
-/** Move the current position `speed` px sideways and turn; undone if the centre enters a solid or bomb cell. */
+/**
+ * Move the current position `speed` px sideways and turn; undone if the centre ends in a solid or
+ * bomb cell other than +0x184 (0x450e10-0x450e52), which just after a teleport landing is still
+ * the cell before the flight.
+ */
 function slide(state: MatchState, player: PlayerState, dir: Dir, p0Free: boolean): void {
   const [side, animOffset] = p0Free ? SLIDES[dir].p0Free : SLIDES[dir].p1Free;
-  const from = playerCell(state, player);
+  const from = player.lastCell;
   const x = player.x + STEP_X[side] * player.speed;
   const y = player.y + STEP_Y[side] * player.speed;
   const to = cellAtPixel(state, x, y);
