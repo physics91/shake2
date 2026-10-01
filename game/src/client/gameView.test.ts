@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createMatch, removePlayer, step } from "../sim/match.ts";
 import { layoutFromAscii, setups, VERSUS } from "../sim/testing.ts";
+import type { MatchState, SimEvent } from "../sim/types.ts";
 import type { SoundBank } from "./audio.ts";
 import type { GameView as View } from "./gameView.ts";
 
@@ -72,5 +73,35 @@ describe("GameView.dispose", () => {
       view.dispose(keepMusic);
       expect(ringing.has("end")).toBe(true);
     }
+  });
+});
+
+describe("GameView.catchUp", () => {
+  it("follows the snapshots that came before the pictures without sounding their cues", () => {
+    const calls: string[] = [];
+    const bank = {
+      play: (name: string) => calls.push(`play:${name}`),
+      stop: (name: string) => calls.push(`stop:${name}`),
+      playMusic: () => calls.push("playMusic"),
+      stopMusic: () => calls.push("stopMusic"),
+    } as unknown as SoundBank;
+    const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
+    const batches: { state: MatchState; events: SimEvent[] }[] = [];
+    const record = () => batches.push({ state: structuredClone(state), events: [...state.events] });
+    while (state.phase !== "playing") (step(state, {}), record());
+    // Hurry, then time up: round 1 is a DRAW, and round 2's wait screen is up when the pictures come.
+    state.timerSeconds = 2;
+    state.suddenDeath.lastMs = Infinity; // below 60 s it would close the arena first
+    const roundTwoWaiting = () => state.phase === "waiting" && state.round === 2;
+    while (!roundTwoWaiting()) (step(state, {}), record());
+    const cued = new Set(batches.flatMap((b) => b.events.map((e) => e.type)));
+    expect(["start-shown", "go", "hurry", "round-over", "round-start"].every((type) => cued.has(type as SimEvent["type"]))).toBe(true);
+
+    const ctx = { canvas: { addEventListener() {}, removeEventListener() {} } } as unknown as CanvasRenderingContext2D;
+    const view = new GameView(ctx, {} as never, bank, { localPlayerIds: [1], hostId: 1, music: { file: "x.mid" } as never });
+    calls.length = 0;
+    view.catchUp(batches);
+    expect(calls).toEqual([]);
+    expect((view as unknown as { lastRoundDraw: boolean }).lastRoundDraw).toBe(true);
   });
 });

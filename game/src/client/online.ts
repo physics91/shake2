@@ -1621,7 +1621,8 @@ class OnlineGame {
   private readonly listeners: [EventTarget, string, EventListener][] = [];
   private view: GameView | null = null;
   private state: MatchState | null = null;
-  private queued: SimEvent[] = [];
+  /** The snapshots that came before the pictures, each with its own state. */
+  private queued: { state: MatchState; events: SimEvent[] }[] = [];
   private lastSent: Required<InputFrame> = { dir: null, bomb: false, attack: false, evade: false };
   private frame = 0;
   private stopped = false;
@@ -1727,10 +1728,8 @@ class OnlineGame {
         notice: this.notice,
       });
       this.screen.loaded();
-      if (this.state) {
-        this.view.ingest(this.state, this.queued);
-        this.queued = [];
-      }
+      this.view.catchUp(this.queued);
+      this.queued = [];
       const draw = () => {
         if (this.stopped) return;
         this.render();
@@ -1760,7 +1759,7 @@ class OnlineGame {
       Object.assign(window, { shakeMatch: { ...state, events }, shakeBars: { bars, own } });
     }
     if (this.view) this.view.ingest(state, events);
-    else this.queued.push(...events);
+    else this.queued.push({ state, events });
     const stage = this.screen.stage.dataset;
     stage.phase = state.phase;
     stage.round = String(state.round);

@@ -4,7 +4,7 @@ import type { MatchState, Phase, SimEvent } from "../sim/types.ts";
 import type { MusicTrack, SoundBank } from "./audio.ts";
 import { GAME_REPEATS } from "./music.ts";
 import type { NoticeLine } from "./noticeLine.ts";
-import type { Presentation } from "./presentation.ts";
+import type { Cues, Presentation } from "./presentation.ts";
 import { initialPresentation, MUSIC_GATED, phaseFades, present } from "./presentation.ts";
 import { presentBlind } from "./blind.ts";
 import type { RenderView } from "./renderer.ts";
@@ -104,11 +104,31 @@ export class GameView {
     for (const name of cues.play) this.sounds.play(name, MUSIC_GATED.has(name) ? "music" : "effects");
     if (cues.music === "start" && this.options.music) this.sounds.playMusic(this.options.music, GAME_REPEATS, true);
     if (cues.music === "stop") this.sounds.stopMusic();
+    this.follow(state, events);
+    for (const event of events) {
+      const text = announcement(state, event);
+      if (text) this.options.announce?.(text);
+    }
+  }
+
+  /**
+   * The snapshots that came while the pictures loaded (the original's world load blocks instead):
+   * what they changed follows on (HURRY UP's time, a round's DRAW, the faces), but their cues are
+   * past, so none sounds now; the game music plays if the last of them left it on.
+   */
+  catchUp(batches: readonly { state: MatchState; events: readonly SimEvent[] }[]): void {
+    let music: Cues["music"] = null;
+    for (const { state, events } of batches) {
+      music = present(this.presentation, state, events, this.options.localPlayerIds).music ?? music;
+      this.follow(state, events);
+    }
+    if (music === "start" && this.options.music) this.sounds.playMusic(this.options.music, GAME_REPEATS, true);
+  }
+
+  private follow(state: MatchState, events: readonly SimEvent[]): void {
     for (const event of events) {
       if (event.type === "round-over") this.lastRoundDraw = state.draw;
       if (event.type === "round-start") this.faces.reset();
-      const text = announcement(state, event);
-      if (text) this.options.announce?.(text);
     }
   }
 
