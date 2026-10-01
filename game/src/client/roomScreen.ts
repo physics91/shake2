@@ -234,6 +234,11 @@ export class RoomScreen {
 
   // State
 
+  /** The help screen, the EXIT box, a dropdown or the kick's box: a release reaches none of the room's controls. */
+  get dropsClicks(): boolean {
+    return this.helpScreen || this.kicked || this.overlay !== null;
+  }
+
   private get me(): LobbyPlayer | undefined {
     return this.room.players.find((p) => p.id === this.options.playerId);
   }

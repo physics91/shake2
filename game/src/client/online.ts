@@ -1185,6 +1185,7 @@ class RoomView {
   readonly code: string;
   private readonly welcome: Welcome;
   private readonly manifest: Manifest;
+  /** The page's controls: what a release on the canvas sends, dropped where the canvas drops it. */
   private readonly send: (message: ClientMessage) => void;
   private readonly canvas = h("canvas", {
     width: SCREEN_W,
@@ -1244,10 +1245,12 @@ class RoomView {
     this.manifest = manifest;
     this.welcome = welcome;
     this.code = room.code;
-    this.send = send;
+    this.send = (message) => {
+      if (!this.screen?.dropsClicks) send(message);
+    };
     this.errorLine = h("p", { class: "error", role: "alert" });
-    this.readyButton.addEventListener("click", () => send({ type: "set-ready", ready: !this.ready }));
-    this.startButton.addEventListener("click", () => send({ type: "start" }));
+    this.readyButton.addEventListener("click", () => this.send({ type: "set-ready", ready: !this.ready }));
+    this.startButton.addEventListener("click", () => this.send({ type: "start" }));
     this.chatInput.addEventListener("input", () => fitBytes(this.chatInput, ROOM_CHAT_LIMIT));
     const submitChat = (event: Event) => {
       event.preventDefault();
