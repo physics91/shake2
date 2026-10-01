@@ -108,6 +108,11 @@ export class CommandCycle {
   current(): string {
     return DOWN_COMMANDS[this.index];
   }
+
+  /** A new program's place: "/stat", so the first Down gives "/w". */
+  reset(): void {
+    this.index = 0;
+  }
 }
 
 export const commandCycle = new CommandCycle();

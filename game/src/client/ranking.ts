@@ -56,6 +56,13 @@ export class RankingBoard {
     this.waiting?.done(null);
   }
 
+  /** A new program's list: no rows, the window on page 1, nothing awaited. */
+  reset(): void {
+    this.drop();
+    this.rows = [];
+    this.windowPage = 1;
+  }
+
   access(send: Send): RankingAccess {
     const board = this;
     return {

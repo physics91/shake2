@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CAPTURE_INTERVAL_MS, captureBmp, captureDue, captureFileName } from "./screenCapture.ts";
+import { attachCapture, CAPTURE_INTERVAL_MS, captureBmp, captureDue, captureFileName, resetCapture } from "./screenCapture.ts";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("F12 screen capture (0x4602b3 → [0x48c2b8] → 0x413300)", () => {
   it("names the file month, day, hour, minute and second, two digits each (0x46b028)", () => {
@@ -13,6 +18,23 @@ describe("F12 screen capture (0x4602b3 → [0x48c2b8] → 0x413300)", () => {
     expect(captureDue(1000, Number.NEGATIVE_INFINITY)).toBe(true);
     expect(captureDue(3999, 1000)).toBe(false);
     expect(captureDue(4000, 1000)).toBe(true);
+  });
+
+  it("lets a new program take its first F12 at once", () => {
+    const keys: ((event: unknown) => void)[] = [];
+    const frames: unknown[] = [];
+    vi.stubGlobal("window", { addEventListener: (_: string, f: (event: unknown) => void) => keys.push(f), removeEventListener() {} });
+    vi.stubGlobal("requestAnimationFrame", (f: unknown) => frames.push(f));
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
+    const detach = attachCapture({} as HTMLCanvasElement);
+    const f12 = () => keys[0]({ code: "F12", preventDefault() {} });
+    f12();
+    f12();
+    expect(frames).toHaveLength(1);
+    resetCapture();
+    f12();
+    expect(frames).toHaveLength(2);
+    detach();
   });
 
   it("writes the original's 24-bit headers, the file size field 2 bytes over (0x413329-0x4133a1)", () => {

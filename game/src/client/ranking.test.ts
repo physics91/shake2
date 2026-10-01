@@ -93,4 +93,13 @@ describe("the ranking list (0x447290, 0x447700)", () => {
     board.drop();
     expect(await asked).toBe(false);
   });
+
+  it("empties the list and the window's page for a new program", async () => {
+    const { board, access } = wired();
+    const asked = access.search("id1");
+    board.receive({ type: "ranking-search", page: 3, rows: [row(41)] });
+    expect(await asked).toBe(true);
+    board.reset();
+    expect({ rows: board.rows, windowPage: board.windowPage }).toEqual({ rows: [], windowPage: 1 });
+  });
 });

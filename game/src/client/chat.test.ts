@@ -76,6 +76,13 @@ describe("the Down key's command cycle (0x460161, list 0x470924, place [0x497f24
     expect([cycle.current(), cycle.current()]).toEqual(["/w", "/w"]);
     expect(cycle.next()).toBe("/n");
   });
+
+  it("starts over as a new program's on reset", () => {
+    const cycle = new CommandCycle();
+    cycle.next();
+    cycle.reset();
+    expect([cycle.current(), cycle.next()]).toEqual(["/stat", "/w"]);
+  });
 });
 
 describe("Enter on an open line keeps the recall line (0x45fb56-0x45fb60)", () => {

@@ -53,7 +53,13 @@ export function captureBmp(rgba: Uint8ClampedArray, width: number, height: numbe
   return bytes;
 }
 
+/** [0x497f28]: when F12 was last taken. */
 let lastAsked = Number.NEGATIVE_INFINITY;
+
+/** A new program has taken no F12 yet. */
+export function resetCapture(): void {
+  lastAsked = Number.NEGATIVE_INFINITY;
+}
 
 function save(canvas: HTMLCanvasElement): void {
   const ctx = canvas.getContext("2d");
