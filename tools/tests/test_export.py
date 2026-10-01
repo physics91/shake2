@@ -207,6 +207,17 @@ def test_records_decode_failures_instead_of_stopping(synthetic_tree, tmp_path):
     assert Path(tmp_path / "out" / "image" / "Logo.png").exists()
 
 
+def test_records_an_empty_picture_instead_of_stopping(synthetic_tree, tmp_path):
+    (synthetic_tree / "image" / "empty.shk").write_bytes(build_shk(0, 5, []))
+    (synthetic_tree / "spr_data" / "empty.spr").write_bytes(build_spr([[]] * 3, []))
+    index = export_tree(synthetic_tree, tmp_path / "out")
+
+    assert entry_for(index, "image/empty.shk")["error"]
+    assert entry_for(index, "spr_data/empty.spr")["error"]
+    assert index["summary"]["errors"] == 2
+    assert Path(tmp_path / "out" / "image" / "Logo.png").exists()
+
+
 @pytest.mark.skipif(not DEFAULT_SRC.is_dir(), reason="original Shake0311 files not extracted")
 def test_real_shake0311_tree_exports_without_errors(tmp_path):
     index = export_tree(DEFAULT_SRC, tmp_path)

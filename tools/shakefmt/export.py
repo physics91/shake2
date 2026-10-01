@@ -262,6 +262,9 @@ def _summarize(entries: list[dict]) -> dict:
 
 
 def _save_png(rgba, path: Path) -> None:
+    if rgba.size == 0:
+        # The decoders take an empty picture; PNG has none (Pillow raises SystemError).
+        raise ValueError(f"{path.name} would be an empty picture")
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(rgba).save(path)
 
