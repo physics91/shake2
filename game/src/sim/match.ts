@@ -601,7 +601,9 @@ function finishRound(state: MatchState, matchOver: boolean, winnerId: number | n
 
 /**
  * A player who leaves is out of the match for good. Mid-round the leaver becomes the last player
- * out (0x4408b2) and the round is judged again (0x44f341), so the last one standing wins it.
+ * out (0x4408b2) and the round is judged again (0x44f341), so the last one standing wins it. In
+ * the countdown and in play the leaver first drops what a death drops, unless its death animation
+ * already did (0x44f2d1).
  * On the round's result screen the round is already judged; the match still ends when one player,
  * or one team, is all the room has left (0x441130), with no medal more (I).
  */
@@ -610,6 +612,10 @@ export function removePlayer(state: MatchState, playerId: number): void {
   if (!leaver) return;
   state.players = state.players.filter((p) => p !== leaver);
   if (state.phase === "waiting" || state.phase === "countdown" || state.phase === "playing") {
+    if (state.phase !== "waiting" && !leaver.gone) {
+      dropCapsule(state, leaver);
+      scatterItems(state, leaver);
+    }
     markGone(state, leaver);
     decideRound(state);
   } else if (state.phase === "round-over" && !state.rules.practice) {

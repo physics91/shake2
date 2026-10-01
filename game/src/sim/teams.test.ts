@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { createMatch, removePlayer, step } from "./match.ts";
 import { isFirepowerMode, isSummonMode, isTeamMode } from "./modes.ts";
-import { layoutFromAscii, run, setups, VERSUS } from "./testing.ts";
+import { cellAt, layoutFromAscii, run, runUntil, setups, VERSUS } from "./testing.ts";
 import type { GameMode, MatchState, SimEvent } from "./types.ts";
+import { ItemKind } from "./types.ts";
 
 const ARENA = ["1...2", ".#.#.", "3...4"];
 const TO_PLAY = 150;
@@ -168,5 +169,40 @@ describe("individual round end with one player left in the room (0x441130)", () 
 
     removePlayer(state, 1);
     expect(state.phase).toBe("round-over");
+  });
+});
+
+describe("a leaver in the countdown or in play drops what a death drops (0x44f2d1 → 0x453270)", () => {
+  it("leaves its raised stats in its first free neighbours", () => {
+    const state = teamMatch([0, 0, 0], 0);
+    state.players[2].bombCapacity += 1;
+
+    removePlayer(state, 3);
+
+    expect(state.phase).toBe("playing");
+    expect(state.items.map((i) => [i.cell, i.kind])).toEqual([[cellAt(state, 0, 1), ItemKind.Bomb]]);
+  });
+
+  it("lays a 소환 capsule on its cell in the countdown", () => {
+    const players = setups(4).map((setup, i) => ({ ...setup, team: [1, 1, 2, 2][i] }));
+    const state = createMatch(layoutFromAscii(ARENA), players, { ...VERSUS, mode: 6 }, 1);
+    runUntil(state, () => state.phase === "countdown");
+
+    removePlayer(state, 4);
+
+    expect(state.items.map((i) => [i.cell, i.kind])).toEqual([[cellAt(state, 4, 2), ItemKind.Capsule]]);
+  });
+
+  it("drops nothing more once its death animation has dropped", () => {
+    const state = teamMatch([0, 0, 0], 0);
+    const leaver = state.players[2];
+    leaver.bombCapacity += 1;
+    burn(state, [3]);
+    runUntil(state, () => leaver.gone);
+    expect(state.items).toHaveLength(1);
+
+    removePlayer(state, 3);
+
+    expect(state.items).toHaveLength(1);
   });
 });
