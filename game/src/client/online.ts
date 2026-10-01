@@ -1085,7 +1085,7 @@ class OnlineSession {
       binding: VERSUS_KEYS[i],
     }));
     const back = () => this.showLocalRoom(this.shownPicture());
-    this.runLocal("2인 대전", VERSUS_KEYS_HELP, from, back, (screen, finish) =>
+    this.runLocal("2인 대전", VERSUS_KEYS_HELP, from, back, (screen, finish, cancelled) =>
       startLocalGame({
         canvas: screen.canvas,
         levelId: mapId,
@@ -1095,20 +1095,22 @@ class OnlineSession {
         music: listedTrack(this.manifest, local.lists.music, music),
         announce: screen.announce,
         onExit: () => finish(back),
+        cancelled,
       }),
     );
   }
 
   /**
    * A game screen for a match on this PC, faded in from `from`. `start` runs it and calls `finish`
-   * with what comes next when it ends; the page's hidden exit button finishes it with `leave`.
+   * with what comes next when it ends; the page's hidden exit button finishes it with `leave`, and
+   * `cancelled` tells a start still loading that it was.
    */
   private runLocal(
     title: string,
     keys: string,
     from: HTMLCanvasElement | null,
     leave: () => void,
-    start: (screen: GameScreen, finish: (then: () => void) => void) => Promise<() => void>,
+    start: (screen: GameScreen, finish: (then: () => void) => void, cancelled: () => boolean) => Promise<() => void>,
   ): void {
     this.stopGame();
     this.startView?.dispose();
@@ -1128,7 +1130,7 @@ class OnlineSession {
     this.errorLine = null;
     mount(screen.root);
     this.fadeTo(screen.root, from);
-    start(screen, finish).then(
+    start(screen, finish, () => over).then(
       (stop) => {
         if (over) stop();
         else {

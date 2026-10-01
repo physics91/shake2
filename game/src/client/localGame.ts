@@ -23,6 +23,8 @@ export interface LocalGameOptions {
   music: MusicTrack | null;
   announce: (text: string) => void;
   onExit: () => void;
+  /** The match was left while its pictures loaded: nothing starts, the tune playing is left alone. */
+  cancelled?: () => boolean;
 }
 
 /**
@@ -35,6 +37,7 @@ export async function startLocalGame(options: LocalGameOptions): Promise<() => v
     options.levelId,
     players.map((p) => p.setup.character),
   );
+  if (options.cancelled?.()) return () => undefined;
   // Shadows and the invisible blend read the screen back each frame (0x413620 works on the surface).
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("canvas 2d context unavailable");
