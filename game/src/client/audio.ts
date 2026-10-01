@@ -19,6 +19,8 @@ export class SoundBank {
   private context: AudioContext | null = null;
   private buffers = new Map<string, Promise<AudioBuffer | null>>();
   private voices = new Map<string, { source: AudioBufferSourceNode; gate: Gate }>();
+  /** Each effect's latest play or stop: a play whose file arrives after a newer one does not sound. */
+  private requests = new Map<string, number>();
   private music: { key: string; sources: AudioBufferSourceNode[]; timer: number } | null = null;
   private musicRequest = 0;
   /** Music asked for before the first user gesture; it starts on unlock. */
@@ -40,9 +42,10 @@ export class SoundBank {
     const context = this.context;
     const enabled = () => (gate === "music" ? this.musicOn : this.effects);
     if (!context || !enabled()) return;
+    const request = this.request(name);
     void this.buffer(context, `${SOUND_BASE}${name}.wav`).then((buffer) => {
-      if (!buffer || !enabled()) return;
-      this.stop(name);
+      if (!buffer || !enabled() || this.requests.get(name) !== request) return;
+      this.silence(name);
       const source = context.createBufferSource();
       source.buffer = buffer;
       source.connect(context.destination);
@@ -54,7 +57,19 @@ export class SoundBank {
     });
   }
 
+  /** Stops the effect, and a play of it still loading its file. */
   stop(name: string): void {
+    this.request(name);
+    this.silence(name);
+  }
+
+  private request(name: string): number {
+    const request = (this.requests.get(name) ?? 0) + 1;
+    this.requests.set(name, request);
+    return request;
+  }
+
+  private silence(name: string): void {
     const voice = this.voices.get(name);
     if (!voice) return;
     this.voices.delete(name);

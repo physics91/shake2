@@ -70,3 +70,17 @@ describe("SoundBank switches", () => {
     expect(end.stopped).toBe(false);
   });
 });
+
+describe("SoundBank.stop", () => {
+  it("wins over a play still loading its file: the cue does not start after it", async () => {
+    const bank = new SoundBank();
+    bank.unlock();
+    bank.play("end", "music");
+    bank.stop("end");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sources.filter((source) => source.started && !source.stopped)).toHaveLength(0);
+    // The next play sounds as usual.
+    await playing(bank, "end", "music");
+  });
+});
