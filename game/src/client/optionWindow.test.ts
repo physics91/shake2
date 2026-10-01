@@ -262,6 +262,18 @@ describe("option window (scene 13)", () => {
       expect(log.at(-1)).toBe("edit friend ");
     });
 
+    it("keeps waiting for its O's answer through a list it did not ask for", () => {
+      const { window, click } = setup();
+      window.friendsAnswered([{ name: "영희", location: "", badge: null }]);
+      click(AT.friend(0));
+      click(AT.popupOk);
+      window.friendsAnswered([{ name: "영희", location: "복원판 채널", badge: null }], false);
+      expect(window.friends[0].location).toBe("복원판 채널");
+      expect(window.busy).toBe(true);
+      window.friendAnswered();
+      expect(window.busy).toBe(false);
+    });
+
     it("takes only its O and X while open; an ID over 10 bytes closes it without asking", () => {
       const { window, click, log } = setup();
       click(AT.friend(0));

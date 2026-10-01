@@ -441,9 +441,9 @@ export class LobbyScreen {
     this.showMessage("수정 되었습니다.");
   }
 
-  /** S->C 0x63: the option window's friend list and the end of its wait. */
-  friendsAnswered(friends: readonly FriendRecord[]): void {
-    this.option?.friendsAnswered(friends);
+  /** S->C 0x63: the option window's friend list, and the end of its wait when it asked. */
+  friendsAnswered(friends: readonly FriendRecord[], ownAsk: boolean): void {
+    this.option?.friendsAnswered(friends, ownAsk);
   }
 
   /** S->C 0x64 or 0x65: the answer to the option window's friend popup. */

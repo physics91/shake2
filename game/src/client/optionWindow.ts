@@ -75,10 +75,10 @@ export class OptionWindow {
     this.macros = [...settings.macros];
   }
 
-  /** S->C 0x63: the list replaces the records and the wait ends (0x44bda0). */
-  friendsAnswered(friends: readonly FriendRecord[]): void {
+  /** S->C 0x63: the list replaces the records, and the wait ends when the window asked for it (0x44bda0). */
+  friendsAnswered(friends: readonly FriendRecord[], ownAsk = true): void {
     this.friends = friends.slice(0, 12).map((f) => ({ ...f }));
-    this.busy = false;
+    if (ownAsk) this.busy = false;
   }
 
   /** The answer to the popup's O (S->C 0x64 0x44c050, 0x65 0x44c220): the popup closes and the wait ends. */

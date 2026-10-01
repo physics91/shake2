@@ -140,9 +140,9 @@ export class OptionScreen {
     return element === this.macroLine.element || element === this.idLine.element;
   }
 
-  /** S->C 0x63 for this window. */
-  friendsAnswered(friends: readonly FriendRecord[]): void {
-    this.window.friendsAnswered(friends);
+  /** S->C 0x63 for this window, or for the page's option section (ownAsk false). */
+  friendsAnswered(friends: readonly FriendRecord[], ownAsk: boolean): void {
+    this.window.friendsAnswered(friends, ownAsk);
     const on = friends.filter((f) => f.location).length;
     this.host.announce(`친구 ${friends.length}명, 접속 중 ${on}명.`);
   }

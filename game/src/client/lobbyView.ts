@@ -131,6 +131,8 @@ export class LobbyView {
   private infoAsked: string | null = null;
   /** Who sent each add or delete still unanswered, in order: the server answers them in turn. */
   private friendAskers: ("window" | "section")[] = [];
+  /** Who asked for each friend list still unanswered, in order. */
+  private listAskers: ("window" | "section")[] = [];
   private disposed = false;
 
   constructor(
@@ -510,9 +512,9 @@ export class LobbyView {
     this.nickButton.disabled = locked;
   }
 
-  /** S->C 0x63: the option window's friend list. */
+  /** S->C 0x63: both show the list; it ends the canvas window's wait only when the window asked for it. */
   friendsAnswered(friends: readonly FriendRecord[]): void {
-    this.screen?.friendsAnswered(friends);
+    this.screen?.friendsAnswered(friends, this.listAskers.shift() === "window");
     this.optionPanel.friendsAnswered(friends);
   }
 
@@ -523,6 +525,7 @@ export class LobbyView {
   }
 
   private noteFriendAsk(message: ClientMessage, asker: "window" | "section"): void {
+    if (message.type === "friends") this.listAskers.push(asker);
     if (message.type === "add-friend" || message.type === "delete-friend") this.friendAskers.push(asker);
   }
 
