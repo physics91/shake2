@@ -19,7 +19,7 @@ export interface OptionPanelHost {
   send(message: ClientMessage): void;
   /** An add or delete result: the window's message box and the page's alert line. */
   message(text: string): void;
-  /** The canvas waits for a reply ([0x496ca0]); its clicks are dropped, so this section's are too. */
+  /** The canvas waits for a reply ([0x496ca0]) or shows the help; its clicks are dropped, so this section's are too. */
   busy(): boolean;
 }
 
@@ -122,12 +122,13 @@ export class OptionPanel {
         { onsubmit: (event: Event) => this.addFriend(event) },
         h("div", { class: "field" }, h("label", { for: "option-friend" }, `친구 아이디 (최대 ${FRIEND_ID_LIMIT - 1}바이트)`), this.friendInput),
         h("button", { class: "btn", type: "submit" }, "추가"),
-        h("button", { class: "btn", type: "button", onclick: () => this.requestFriends() }, "위치 새로 고침"),
+        h("button", { class: "btn", type: "button", onclick: () => this.refreshFriends() }, "위치 새로 고침"),
       ),
     );
-    // Opening the section asks where the friends are, as opening the window does (C->S 0x63).
+    // Opening the section asks where the friends are, as opening the window does (C->S 0x63), which
+    // the remote's 옵션 does only when the lobby takes clicks.
     this.root.addEventListener("toggle", () => {
-      if (this.root.open) this.requestFriends();
+      if (this.root.open && !this.host.busy()) this.requestFriends();
     });
     this.stopListening = host.settings.listen(() => {
       if (!this.saving) this.refresh();
@@ -210,8 +211,9 @@ export class OptionPanel {
     this.status.textContent = "옵션을 저장했습니다.";
   }
 
-  /** 초기화: the defaults, the device kept, saved at once. */
+  /** 초기화: the defaults, the device kept, saved at once; a click, dropped as the window's is. */
   private reset(): void {
+    if (this.host.busy()) return;
     this.host.settings.save(resetSettings(this.host.settings.current));
     this.status.textContent = "기본값으로 되돌려 저장했습니다.";
   }
@@ -227,6 +229,11 @@ export class OptionPanel {
 
   private requestFriends(): void {
     this.host.send({ type: "friends" });
+  }
+
+  /** 위치 새로 고침: the list again, a click dropped as the window's are. */
+  private refreshFriends(): void {
+    if (!this.host.busy()) this.requestFriends();
   }
 
   private renderFriends(): void {
