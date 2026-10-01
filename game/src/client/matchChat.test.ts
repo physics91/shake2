@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { COUNTDOWN_MS } from "../sim/constants.ts";
 import { createMatch, step } from "../sim/match.ts";
 import { layoutFromAscii, setups, VERSUS } from "../sim/testing.ts";
-import { balloonAt, Balloons, closesExitBox, countdownEnd, enterOpensChat, HOST_SILENCE_MS, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
+import { balloonAt, Balloons, closesExitBox, countdownEnd, enterOpensChat, helpAllowed, HOST_SILENCE_MS, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
 
 describe("match chat balloons (0x418940, 0x40c254)", () => {
   it("puts slot i's balloon at (606, 65 i + 8) and its lines from (608, 65 i + 11); practice's slot 3 is (606,203)", () => {
@@ -64,6 +64,14 @@ describe("match chat keys (0x45fafd, 0x461590)", () => {
     expect(closesExitBox("waiting", 1)).toBe(false);
     expect(closesExitBox("countdown", 2)).toBe(false);
     expect(closesExitBox("playing", 2)).toBe(false);
+  });
+
+  it("has F1's help only in the countdown and play: the wait and result screens refuse it and turn it off (0x460285, 0x406054)", () => {
+    expect(helpAllowed("countdown")).toBe(true);
+    expect(helpAllowed("playing")).toBe(true);
+    expect(helpAllowed("waiting")).toBe(false);
+    expect(helpAllowed("round-over")).toBe(false);
+    expect(helpAllowed("match-over")).toBe(false);
   });
 
   it("opens the line with Enter except on the result screens; the wait screen opens it unseen (0x45fec8)", () => {

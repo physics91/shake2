@@ -68,6 +68,15 @@ export function closesExitBox(phase: Phase, round: number): boolean {
   return phase === "round-over" || phase === "match-over" || (phase === "waiting" && round > 1);
 }
 
+/**
+ * F1's help belongs to the countdown and play: on the wait, round result and final result screens
+ * F1 does not turn it on (0x460285) and every frame turns it off (0x406054), so an unseen help
+ * never holds the keys into the next round or takes the first wait screen's Esc.
+ */
+export function helpAllowed(phase: Phase): boolean {
+  return phase === "countdown" || phase === "playing";
+}
+
 /** A guest leaves when the host has sent nothing for this long (0x45ec60, `+0x25c`). */
 export const HOST_SILENCE_MS = 5000;
 

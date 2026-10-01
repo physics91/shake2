@@ -24,7 +24,7 @@ import { AuthLink } from "./authLink.ts";
 import { CaretBlink } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView } from "./gameView.ts";
-import { Balloons, closesExitBox, countdownEnd, enterOpensChat, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
+import { Balloons, closesExitBox, countdownEnd, enterOpensChat, helpAllowed, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
 import { FrameRate, PingMeter } from "./panelBars.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
 import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
@@ -1820,7 +1820,7 @@ class OnlineGame {
       return;
     }
     if (event.code === "F1") {
-      this.help = !this.help; // 0x460264
+      this.help = !this.help && state !== null && helpAllowed(state.phase); // 0x460264
     } else if (event.code === "Escape") {
       if (state) this.escape(state);
     } else if (event.key === "Enter") {
@@ -1921,6 +1921,7 @@ class OnlineGame {
     }
     this.measure(state);
     if (this.box && closesExitBox(state.phase, state.round)) this.closeBox();
+    if (this.help && !helpAllowed(state.phase)) this.help = false;
     const box = this.box;
     const images = this.boxImages;
     this.chat.locked = box !== null;
