@@ -44,11 +44,12 @@ const count = (value: string | undefined, name: string) => {
 };
 
 const server = await startServer({
-  host: process.env.HOST ?? "127.0.0.1",
-  port: Number(process.env.PORT ?? 8787),
+  // A blank HOST= or PORT= line is unset, not "every interface" or "any port".
+  host: process.env.HOST?.trim() || "127.0.0.1",
+  port: process.env.PORT?.trim() ? Number(process.env.PORT) : 8787,
   assetsDir: join(import.meta.dirname, "..", "..", "public", "assets"),
   allowedOrigins: list(process.env.ALLOWED_ORIGINS),
-  maxRooms: Number(process.env.MAX_ROOMS ?? 50),
+  maxRooms: count(process.env.MAX_ROOMS, "MAX_ROOMS") ?? 50,
   maxUsers: count(process.env.MAX_USERS, "MAX_USERS"),
   channels: process.env.CHANNELS
     ? parseChannels(process.env.CHANNELS)
