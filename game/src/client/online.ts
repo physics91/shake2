@@ -1646,8 +1646,8 @@ class OnlineGame {
   private readonly listeners: [EventTarget, string, EventListener][] = [];
   private view: GameView | null = null;
   private state: MatchState | null = null;
-  /** The snapshots that came before the pictures, each with its own state. */
-  private queued: { state: MatchState; events: SimEvent[] }[] = [];
+  /** The snapshots that came before the pictures, each with its own state; none once the load is over. */
+  private queued: { state: MatchState; events: SimEvent[] }[] | null = [];
   private lastSent: Required<InputFrame> = { dir: null, bomb: false, attack: false, evade: false };
   private frame = 0;
   private stopped = false;
@@ -1753,8 +1753,8 @@ class OnlineGame {
         notice: this.notice,
       });
       this.screen.loaded();
-      this.view.catchUp(this.queued);
-      this.queued = [];
+      this.view.catchUp(this.queued ?? []);
+      this.queued = null;
       const draw = () => {
         if (this.stopped) return;
         this.render();
@@ -1762,6 +1762,8 @@ class OnlineGame {
       };
       this.frame = requestAnimationFrame(draw);
     } catch (error) {
+      // Nothing will catch up with the snapshots now.
+      this.queued = null;
       this.screen.failed(`에셋을 불러오지 못했습니다: ${(error as Error).message}`);
     }
   }
@@ -1784,7 +1786,7 @@ class OnlineGame {
       Object.assign(window, { shakeMatch: { ...state, events }, shakeBars: { bars, own } });
     }
     if (this.view) this.view.ingest(state, events);
-    else this.queued.push({ state, events });
+    else this.queued?.push({ state, events });
     const stage = this.screen.stage.dataset;
     stage.phase = state.phase;
     stage.round = String(state.round);
