@@ -208,6 +208,13 @@ class OnlineSession {
     this.disposed = true;
     this.stopVeil?.();
     this.stopGame();
+    // Each screen runs its own frame loop and window keys until disposed.
+    this.startView?.dispose();
+    this.startView = null;
+    this.lobbyView?.dispose();
+    this.lobbyView = null;
+    this.roomView?.dispose();
+    this.roomView = null;
     this.auth.dispose();
     this.socket?.close();
     this.socket = null;
@@ -220,6 +227,7 @@ class OnlineSession {
    * page load, as once a program start; later entries begin at the login.
    */
   showStart(options: { begin?: StartScene; fadeFrom?: HTMLCanvasElement; message?: string } = {}): void {
+    if (this.disposed) return;
     this.stopVeil?.();
     this.roomView?.dispose();
     this.roomView = null;
@@ -440,7 +448,7 @@ class OnlineSession {
 
   private showRoom(room: RoomInfo): void {
     const welcome = this.welcome;
-    if (!welcome) return;
+    if (!welcome || this.disposed) return;
     if (this.roomView?.code !== room.code) {
       const entering = this.roomView === null && this.lastAct === "join-room";
       this.lastAct = null;
@@ -477,7 +485,7 @@ class OnlineSession {
     // Put out of a room, the lobby waits for the message box (0x44a1db).
     if (this.kicked) return;
     const { welcome, lobby } = this;
-    if (!welcome || !lobby || this.room || this.game) return;
+    if (!welcome || !lobby || this.room || this.game || this.disposed) return;
     if (this.lobbyView) {
       this.lobbyView.update(lobby);
       return;
@@ -985,6 +993,7 @@ class OnlineSession {
 
   /** The local room on the GAME ROOM screen, faded in from `from` (or from black). */
   private showLocalRoom(from: HTMLCanvasElement | null): void {
+    if (this.disposed) return;
     const saved = (key: string, fallback: string) => {
       const name = readPreference(key) ?? fallback;
       return this.manifest.characters.includes(name) ? name : this.manifest.characters[0];
