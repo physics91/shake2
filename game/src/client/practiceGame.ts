@@ -108,7 +108,23 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   function show(kind: PracticeBox["kind"]): void {
     if (box) return;
     box = openBox(kind);
-    announce(kind === "end" ? "다시 시작할까요? 예(Y), 아니오(N)" : "종료하시겠습니까? 예(Y), 아니오(N)");
+    announcePrompt(box);
+  }
+
+  /**
+   * The practice is over. With no dummy left the box comes up unless one is (0x407b59); the own
+   * death's end runs Show (0x443ce0) whatever is up, so a box already up keeps its kind and goes
+   * back to YES (0x4083be).
+   */
+  function over(ownDeath: boolean): void {
+    if (!box || !ownDeath) return show("end");
+    box.selection = 1;
+    hover = 0;
+    announcePrompt(box);
+  }
+
+  function announcePrompt(shown: PracticeBox): void {
+    announce(shown.kind === "end" ? "다시 시작할까요? 예(Y), 아니오(N)" : "종료하시겠습니까? 예(Y), 아니오(N)");
   }
 
   function answer(result: BoxResult): void {
@@ -246,7 +262,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
       step(state, { [local.id]: input });
       view.ingest(state, state.events);
       for (const event of state.events) {
-        if (event.type === "practice-over") show("end");
+        if (event.type === "practice-over") over(state.lastGoneId === local.id);
         if (event.type === "practice-time-up") {
           stop();
           options.onTimeUp();
