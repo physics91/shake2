@@ -492,6 +492,11 @@ export class StartScreen {
     this.busy = true;
   }
 
+  /** The form's wait for its login ended with the auth connection: its busy cursor goes (scene 5's saves keep theirs). */
+  formFailed(): void {
+    this.busy = false;
+  }
+
   /** FD_CONNECT failed (0x460edc): busy off and the message; the row stays chosen. */
   connectFailed(): void {
     this.busy = false;

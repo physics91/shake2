@@ -361,6 +361,7 @@ class OnlineSession {
     if (this.enterAfterLogin) {
       this.enterAfterLogin = false;
       this.showError("인증 서버에 접속하지 못했습니다.");
+      this.startView?.formFailed();
     }
     this.startView?.authFailed();
   }

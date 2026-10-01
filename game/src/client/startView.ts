@@ -311,6 +311,10 @@ export class StartView {
     this.withScreen((screen) => screen.connecting());
   }
 
+  formFailed(): void {
+    this.withScreen((screen) => screen.formFailed());
+  }
+
   serverFull(): void {
     this.errorLine.textContent = "사용자가 너무 많습니다";
     this.withScreen((screen) => screen.serverFull());
