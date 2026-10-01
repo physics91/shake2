@@ -1,6 +1,8 @@
+import struct
+
 import pytest
 
-from dls_builders import art1, build_dls, instrument, region, sine, wave, wsmp
+from dls_builders import art1, build_dls, chunk, instrument, list_chunk, region, sine, wave, wsmp
 from shakefmt.dls import DlsFormatError, decode_dls, find_instrument, find_region
 
 
@@ -71,3 +73,59 @@ def test_lookup_prefers_exact_bank_and_falls_back_to_bank_zero():
 def test_rejects_non_dls_data():
     with pytest.raises(DlsFormatError):
         decode_dls(b"RIFF\x04\x00\x00\x00WAVE")
+
+
+def cues_cut_short():
+    """ptbl claims two cues but holds one offset."""
+    body = b"DLS " + chunk(b"colh", struct.pack("<I", 1)) + list_chunk(b"lins", instrument(0, [region()]))
+    body += list_chunk(b"wvpl", wave(sine(440, 0.01)))
+    body += chunk(b"ptbl", struct.pack("<III", 8, 2, 0))
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def connections_cut_short():
+    """art1 claims 1000 connections but holds one."""
+    body = struct.pack("<II", 8, 1000) + struct.pack("<HHHHi", 0, 0, 0x206, 0, 0)
+    art = list_chunk(b"lart", chunk(b"art1", body))
+    return build_dls([instrument(0, [region()], articulation=art)], [wave(sine(440, 0.01))])
+
+
+def loop_record_past_its_chunk():
+    """wsmp's cbSize puts its loop record far past the chunk."""
+    sample = chunk(b"wsmp", struct.pack("<IHhiII", 0x100000, 60, 0, 0, 0, 1))
+    return build_dls([instrument(0, [region(sample=sample)])], [wave(sine(440, 0.01))])
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(cues_cut_short(), id="ptbl-cues"),
+        pytest.param(connections_cut_short(), id="art1-connections"),
+        pytest.param(loop_record_past_its_chunk(), id="wsmp-loop-record"),
+        pytest.param(build_dls([instrument(0, [region(wave=5)])], [wave(sine(440, 0.01))]), id="missing-wave"),
+        pytest.param(build_dls([instrument(0, [region()])], [wave(sine(440, 0.01), rate=0)]), id="zero-rate"),
+        pytest.param(
+            build_dls([instrument(0, [region(sample=wsmp(loop=(0, 1000)))])], [wave(sine(440, 0.01))]),
+            id="loop-past-region-wave",
+        ),
+        pytest.param(
+            build_dls([instrument(0, [region()])], [wave(sine(440, 0.01), sample=wsmp(loop=(200, 100)))]),
+            id="loop-past-wave",
+        ),
+    ],
+)
+def test_rejects_records_past_their_chunk_and_references_rendering_cannot_follow(data):
+    with pytest.raises(DlsFormatError):
+        decode_dls(data)
+
+
+def test_a_name_outside_cp1252_does_not_reject_the_collection():
+    named = list_chunk(
+        b"ins ",
+        chunk(b"insh", struct.pack("<III", 1, 0, 0)),
+        list_chunk(b"lrgn", region()),
+        list_chunk(b"INFO", chunk(b"INAM", "갂".encode("cp949") + b"\0")),
+    )
+    col = decode_dls(build_dls([named], [wave(sine(440, 0.01))]))
+
+    assert col.instruments[0].name == "\ufffdA"

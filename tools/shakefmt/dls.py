@@ -96,6 +96,13 @@ def _chunks(data: bytes, start: int, end: int):
         pos = body + size + (size & 1)
 
 
+def _record(fmt: str, data: bytes, offset: int, end: int, what: str) -> tuple:
+    """One fixed-size record that must lie inside its chunk, which ends at `end`."""
+    if offset + struct.calcsize(fmt) > end:
+        raise DlsFormatError(f"{what} at {offset} runs past its chunk")
+    return struct.unpack_from(fmt, data, offset)
+
+
 def _children(data: bytes, start: int, end: int) -> dict:
     """Map chunk id (or LIST type) to the first (body_start, body_end) found."""
     found: dict[bytes, tuple[int, int]] = {}
@@ -115,11 +122,11 @@ def _lists(data: bytes, start: int, end: int, kind: bytes):
 def _sample(data: bytes, span) -> Sample | None:
     if span is None:
         return None
-    start, _ = span
-    cb, unity, fine, atten, options, loops = struct.unpack_from("<IHhiII", data, start)
+    start, end = span
+    cb, unity, fine, atten, options, loops = _record("<IHhiII", data, start, end, "wsmp")
     loop = None
     if loops:
-        _, _, loop_start, loop_length = struct.unpack_from("<IIII", data, start + cb)
+        _, _, loop_start, loop_length = _record("<IIII", data, start + cb, end, "wsmp loop")
         loop = (loop_start, loop_length)
     return Sample(unity_note=unity, fine_tune=fine, attenuation=atten, options=options, loop=loop)
 
@@ -130,9 +137,9 @@ def _articulation(data: bytes, span) -> tuple[Connection, ...]:
     art = _children(data, *span).get(b"art1")
     if art is None:
         return ()
-    cb, count = struct.unpack_from("<II", data, art[0])
+    cb, count = _record("<II", data, art[0], art[1], "art1")
     return tuple(
-        Connection(*struct.unpack_from("<HHHHi", data, art[0] + cb + 12 * i)) for i in range(count)
+        Connection(*_record("<HHHHi", data, art[0] + cb + 12 * i, art[1], "art1 connection")) for i in range(count)
     )
 
 
@@ -140,8 +147,8 @@ def _region(data: bytes, start: int, end: int) -> Region:
     parts = _children(data, start, end)
     if b"rgnh" not in parts or b"wlnk" not in parts:
         raise DlsFormatError(f"region at {start} lacks rgnh or wlnk")
-    key_lo, key_hi, vel_lo, vel_hi, options, key_group = struct.unpack_from("<HHHHHH", data, parts[b"rgnh"][0])
-    wave_index = struct.unpack_from("<HHII", data, parts[b"wlnk"][0])[3]
+    key_lo, key_hi, vel_lo, vel_hi, options, key_group = _record("<HHHHHH", data, *parts[b"rgnh"], "rgnh")
+    wave_index = _record("<HHII", data, *parts[b"wlnk"], "wlnk")[3]
     return Region(
         key_lo=key_lo,
         key_hi=key_hi,
@@ -161,14 +168,15 @@ def _info_name(data: bytes, span) -> str:
     name = _children(data, *span).get(b"INAM")
     if name is None:
         return ""
-    return data[name[0] : name[1]].split(b"\0", 1)[0].decode(INFO_ENCODING)
+    # A name is only shown; one outside the code page does not make the collection unusable.
+    return data[name[0] : name[1]].split(b"\0", 1)[0].decode(INFO_ENCODING, errors="replace")
 
 
 def _instrument(data: bytes, start: int, end: int) -> Instrument:
     parts = _children(data, start, end)
     if b"insh" not in parts:
         raise DlsFormatError(f"instrument at {start} lacks insh")
-    _, bank, program = struct.unpack_from("<III", data, parts[b"insh"][0])
+    _, bank, program = _record("<III", data, *parts[b"insh"], "insh")
     lrgn = parts.get(b"lrgn")
     regions = tuple(_region(data, *span) for span in _lists(data, *lrgn, b"rgn ")) if lrgn else ()
     return Instrument(
@@ -182,9 +190,9 @@ def _instrument(data: bytes, start: int, end: int) -> Instrument:
 
 
 def _pcm(data: bytes, fmt_span, data_span) -> tuple[int, np.ndarray]:
-    tag, channels, rate, _, _, bits = struct.unpack_from("<HHIIHH", data, fmt_span[0])
-    if tag != 1 or channels != 1 or bits not in (8, 16):
-        raise DlsFormatError(f"unsupported wave format tag={tag} channels={channels} bits={bits}")
+    tag, channels, rate, _, _, bits = _record("<HHIIHH", data, *fmt_span, "fmt")
+    if tag != 1 or channels != 1 or bits not in (8, 16) or rate == 0:
+        raise DlsFormatError(f"unsupported wave format tag={tag} channels={channels} rate={rate} bits={bits}")
     raw = data[data_span[0] : data_span[1]]
     if bits == 16:
         pcm = np.frombuffer(raw[: len(raw) // 2 * 2], "<i2").astype(np.float32) / 32768.0
@@ -212,17 +220,35 @@ def decode_dls(data: bytes) -> Collection:
 
     instruments = tuple(_instrument(data, *span) for span in _lists(data, *top[b"lins"], b"ins "))
 
-    ptbl_start = top[b"ptbl"][0]
-    cb, cues = struct.unpack_from("<II", data, ptbl_start)
+    ptbl_start, ptbl_end = top[b"ptbl"]
+    cb, cues = _record("<II", data, ptbl_start, ptbl_end, "ptbl")
     pool_start, pool_end = top[b"wvpl"]
     waves = []
     for i in range(cues):
-        offset = struct.unpack_from("<I", data, ptbl_start + cb + 4 * i)[0]
+        offset = _record("<I", data, ptbl_start + cb + 4 * i, ptbl_end, "ptbl cue")[0]
         spans = list(_chunks(data, pool_start + offset, pool_end))
         if not spans or spans[0][0] != b"LIST" or data[spans[0][1] : spans[0][1] + 4] != b"wave":
             raise DlsFormatError(f"cue {i} does not point at a wave list")
         waves.append(_wave(data, spans[0][1] + 4, spans[0][2]))
-    return Collection(instruments=instruments, waves=tuple(waves))
+    collection = Collection(instruments=instruments, waves=tuple(waves))
+    _check_references(collection)
+    return collection
+
+
+def _check_references(col: Collection) -> None:
+    """Every region names a wave, and every loop lies inside the wave it plays."""
+    for wave in col.waves:
+        _check_loop(wave.sample, wave)
+    for inst in col.instruments:
+        for region in inst.regions:
+            if region.wave_index >= len(col.waves):
+                raise DlsFormatError(f"{inst.name!r} links wave {region.wave_index} of {len(col.waves)}")
+            _check_loop(col.sample_for(region), col.waves[region.wave_index])
+
+
+def _check_loop(sample: Sample | None, wave: Wave) -> None:
+    if sample is not None and sample.loop is not None and sum(sample.loop) > len(wave.pcm):
+        raise DlsFormatError(f"loop {sample.loop} runs past a wave of {len(wave.pcm)} samples")
 
 
 def find_instrument(col: Collection, bank: int, program: int, drums: bool) -> Instrument | None:
