@@ -401,6 +401,8 @@ export class Gate {
     const old = this.tokenOf.get(account);
     if (old !== undefined) this.sessions.delete(old);
     for (const [token, session] of this.sessions) {
+      // An account in a channel is using its session; its idle time starts when it leaves (disconnect).
+      if (this.online.has(session.account)) continue;
       if (this.config.now() - session.lastUsed >= SESSION_IDLE_MS) this.session(token);
     }
     const token = this.config.token();

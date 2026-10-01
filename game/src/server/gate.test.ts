@@ -233,6 +233,23 @@ describe("the gate's game servers (C->S 0x47 and 0x0a)", () => {
     expect(t.last(6, "refused")?.code).toBe(REFUSED_LOGIN);
   });
 
+  it("keeps the session of an account in a channel past SESSION_IDLE_MS, whoever logs in meanwhile", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    await t.enter(1, "tester");
+    const reply = t.last(1, "login");
+    t.clock.now += SESSION_IDLE_MS + 60 * 60 * 1000;
+    t.connect(2, "198.51.100.7");
+    await t.login(2, "other");
+    // 채널변경: the lobby connection closes and the client comes back with its session.
+    t.gate.disconnect(1);
+    t.connect(3);
+    t.gate.handle(3, { type: "version", version: PROTOCOL_VERSION, channel: 0 });
+    t.gate.handle(3, { type: "hello", token: reply?.ok ? reply.token : "" });
+    expect(t.last(3, "refused")).toBeUndefined();
+    expect(t.last(3, "welcome")).toBeDefined();
+  });
+
   it("closes on a full row before the version reply, and gives another version its answer but no hello", async () => {
     const t = await makeGate(["tester", "other"], [{ maxUsers: 1 }]);
     t.connect(1);
