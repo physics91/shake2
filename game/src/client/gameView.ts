@@ -114,12 +114,15 @@ export class GameView {
   /**
    * The snapshots that came while the pictures loaded (the original's world load blocks instead):
    * what they changed follows on (HURRY UP's time, a round's DRAW, the faces), but their cues are
-   * past, so none sounds now; the game music plays if the last of them left it on.
+   * past, so none sounds now. Their stops still apply, such as a wait screen's stop of a last
+   * match's end (0x41014e); the game music plays if the last of them left it on.
    */
   catchUp(batches: readonly { state: MatchState; events: readonly SimEvent[] }[]): void {
     let music: Cues["music"] = null;
     for (const { state, events } of batches) {
-      music = present(this.presentation, state, events, this.options.localPlayerIds).music ?? music;
+      const cues = present(this.presentation, state, events, this.options.localPlayerIds);
+      for (const name of cues.stop) this.sounds.stop(name);
+      music = cues.music ?? music;
       this.follow(state, events);
     }
     if (music === "start" && this.options.music) this.sounds.playMusic(this.options.music, GAME_REPEATS, true);

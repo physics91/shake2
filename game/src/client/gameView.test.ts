@@ -77,7 +77,7 @@ describe("GameView.dispose", () => {
 });
 
 describe("GameView.catchUp", () => {
-  it("follows the snapshots that came before the pictures without sounding their cues", () => {
+  it("follows the snapshots that came before the pictures without sounding their cues, but with their stops", () => {
     const calls: string[] = [];
     const bank = {
       play: (name: string) => calls.push(`play:${name}`),
@@ -101,7 +101,8 @@ describe("GameView.catchUp", () => {
     const view = new GameView(ctx, {} as never, bank, { localPlayerIds: [1], hostId: 1, music: { file: "x.mid" } as never });
     calls.length = 0;
     view.catchUp(batches);
-    expect(calls).toEqual([]);
+    // Round 2's wait screen still stops the round result cue (0x41014e).
+    expect(calls).toEqual(["stop:end"]);
     expect((view as unknown as { lastRoundDraw: boolean }).lastRoundDraw).toBe(true);
   });
 });
