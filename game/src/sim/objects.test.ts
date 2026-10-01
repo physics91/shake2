@@ -172,7 +172,7 @@ describe("gates and pads as obstacles", () => {
   });
 });
 
-describe("폭발증폭 (0x41720a, 0x457bdc)", () => {
+describe("폭발증폭 (0x41720a, 0x4576a2, 0x457bdc)", () => {
   it("gives a bomb exploding there the map width", () => {
     const state = playingMatch(["#1p....#"]);
     const bomb = addBomb(state, cellAt(state, 2, 0));
@@ -190,11 +190,31 @@ describe("폭발증폭 (0x41720a, 0x457bdc)", () => {
     expect(bomb.fireCells).not.toContain(cellAt(state, 0, 0));
   });
 
-  it("gives a bomb placed there the map width", () => {
+  it("leaves a bomb placed there at the player's fire power: 0x457ed0 never reads the cell", () => {
     const state = playingMatch(["#1p....#"]);
     Object.assign(player(state), { x: 100 });
     run(state, 1, { 1: { dir: null, bomb: true } });
-    expect(state.bombs[0].power).toBe(8);
+    expect(state.bombs[0].power).toBe(player(state).firePower);
+  });
+
+  it("lets a 직격탄 fired from there burn with the player's fire power where it stops", () => {
+    const state = playingMatch(["#1p.......#"]);
+    Object.assign(player(state), { x: 100, anim: Anim.Stand + Dir.Right });
+    player(state).inv.missile = 1;
+    run(state, 1, { 1: { dir: null, bomb: false, attack: true } });
+    const bomb = state.bombs[0];
+    runUntil(state, () => bomb.exploded, 300, { 1: IDLE });
+    expect(bomb.cell).toBe(cellAt(state, 9, 0));
+    expect([...bomb.fireCells].sort((a, b) => a - b)).toEqual([7, 8, 9]);
+  });
+
+  it("gives a bomb of a line laid there the map width (0x4576a2)", () => {
+    const state = playingMatch(["1.p....#"]);
+    Object.assign(player(state), { anim: Anim.Stand + Dir.Right, bombCapacity: 3 });
+    player(state).inv.line = true;
+    addBomb(state, cellAt(state, 0, 0), { owner: 1 });
+    run(state, 1, { 1: { dir: null, bomb: true } });
+    expect(state.bombs.map((b) => [b.cell, b.power])).toEqual([[0, 1], [1, 2], [2, 8]]);
   });
 });
 

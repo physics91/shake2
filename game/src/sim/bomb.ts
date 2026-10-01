@@ -34,8 +34,9 @@ function holdsWaterBomb(inv: Inventory): boolean {
 }
 
 /**
- * 0x457ed0: a bomb at the cell's anchor with a 2000 ms fuse. The power item or a 폭발증폭 cell
- * (0x457bdc) gives it the map width; the double item doubles its fire, or else a pumpkin makes
+ * 0x457ed0: a bomb at the cell's anchor with a 2000 ms fuse. The power item gives it the map
+ * width (0x458092); so does a 폭발증폭 cell for a bomb of a line (0x4576a2, 0x457bdc), while
+ * 0x457ed0 itself never reads the cell. The double item doubles its fire, or else a pumpkin makes
  * it last. The water family comes first and uses one charge (0x458100). Otherwise a 직격탄 rolls
  * off at once and takes no special kind, and the first special stock held decides the kind: nuke
  * and TNT use up their whole stock, timer, X and mine one each. A mine in a line of bombs starts
@@ -76,7 +77,7 @@ export function createBomb(state: MatchState, player: PlayerState, cell: number,
     fireMs: LONG_AGO_MS,
   };
   const inv = player.inv;
-  if (inv.power > 0 || tileB(state, cell) & BOOST) bomb.power = state.layout.width;
+  if (inv.power > 0 || (line && tileB(state, cell) & BOOST)) bomb.power = state.layout.width;
   if (inv.double > 0) {
     bomb.double = true;
     inv.double = 0;
