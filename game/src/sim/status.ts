@@ -1,9 +1,10 @@
 // Timed player states: setters 0x453110, 0x453190, 0x453200, 0x452e20, 0x452cd0, 0x4517a0,
 // 0x40d7a0 and 0x40cea0; they run out in the player update (0x452651) and its timer pass (0x452e60).
-import { START_BOMBS, START_FIRE, START_SPEED } from "./constants.ts";
+import { START_BOMBS, START_FIRE, START_SPEED, WALK_FPS } from "./constants.ts";
 import { addEffect } from "./effects.ts";
 import { emptyInventory } from "./pickup.ts";
 import type { MatchState, PlayerState } from "./types.ts";
+import { Anim } from "./types.ts";
 
 /** Curses, the egg and invisibility last 10 s; the bomb switch freezes for 5 s. Each ends once `now - start > length`. */
 export const CURSE_MS = 10_000;
@@ -80,7 +81,8 @@ export function resetAbilities(player: PlayerState, now: number): void {
 
 /**
  * The slow curse at the top of the player update (0x452651): in walk and stand states the speed
- * is held at 2 and the animation at 4 fps. When it runs out the saved speed returns. Returns the
+ * is held at 2 and the animation at 4 fps. When it runs out the saved speed returns, and that
+ * update a walk animates at its own rate, without the speed's bonus (0x4526e5). Returns the
  * animation rate it imposes, if any.
  */
 export function holdSlow(player: PlayerState, now: number, inWalkOrStand: boolean): number | null {
@@ -90,7 +92,7 @@ export function holdSlow(player: PlayerState, now: number, inWalkOrStand: boolea
   if (now - start <= CURSE_MS) return inWalkOrStand ? SLOW_FPS : null;
   player.speed = player.savedSpeed;
   player.status.slow = null;
-  return null;
+  return player.anim < Anim.Stand ? WALK_FPS : null;
 }
 
 /** 0x452e60, every update: states and the icon end when their time is up. */

@@ -5,7 +5,7 @@ import { applyPickup } from "./pickup.ts";
 import { CURSE_MS, FREEZE_MS, RESET_ICON_MS, SLOW_SPEED } from "./status.ts";
 import { playingMatch, run, runUntil } from "./testing.ts";
 import type { InputFrame } from "./types.ts";
-import { Dir, ItemKind } from "./types.ts";
+import { Anim, Dir, ItemKind } from "./types.ts";
 
 const walk = (dir: Dir): InputFrame => ({ dir, bomb: false });
 
@@ -47,6 +47,26 @@ describe("slow curse (0x453110, 0x452651)", () => {
     applyPickup(state, player, ItemKind.Speed);
     runUntil(state, () => player.status.slow === null);
     expect(player.speed).toBe(START_SPEED);
+  });
+
+  it("animates a walk at the walk's own 18 fps, without the speed's bonus, on the update it runs out (0x4526e5)", () => {
+    const state = playingMatch(["1....#"]);
+    const player = state.players[0];
+    player.speed = 10;
+    applyPickup(state, player, ItemKind.Mystery, 33);
+    const start = player.status.slow!;
+    run(state, ticksPast(start, CURSE_MS) - state.tick - 1, { 1: walk(Dir.Right) });
+    expect(player.status.slow).toBe(start);
+    // 40 ms since the last frame: past speed 10's 1000/38 ms, short of the walk's own 1000/18.
+    player.animMs = nowMs(state.tick + 1) - 40;
+    const frame = player.frame;
+    run(state, 1, { 1: walk(Dir.Right) });
+    expect(player.status.slow).toBeNull();
+    expect(player).toMatchObject({ speed: 10, anim: Anim.Walk + Dir.Right, frame });
+    // From the next update the speed's bonus is back.
+    player.animMs = nowMs(state.tick + 1) - 40;
+    run(state, 1, { 1: walk(Dir.Right) });
+    expect(player.frame).not.toBe(frame);
   });
 });
 
