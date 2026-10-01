@@ -95,7 +95,13 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     hover = 0;
     nextView.ingest(next, next.events);
   }
-  await begin();
+  try {
+    await begin();
+  } catch (error) {
+    // Nothing else is running yet; the chat line's input and focus listener go with the failed start.
+    chat.dispose();
+    throw error;
+  }
 
   function show(kind: PracticeBox["kind"]): void {
     if (box) return;
