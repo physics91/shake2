@@ -46,9 +46,11 @@ export class FriendBook {
   /** A name said hello: it can be found from now on. */
   meet(name: string): void {
     if (this.known.has(name)) {
-      // The most recently seen go last, so the forgotten ones are those long gone.
+      if ([...this.known].at(-1) === name) return;
+      // The most recently seen go last, so the forgotten ones are those long gone; the file keeps the order.
       this.known.delete(name);
       this.known.add(name);
+      this.changed();
       return;
     }
     if (this.known.size >= MAX_KNOWN_NAMES && !this.forgetOne()) return;

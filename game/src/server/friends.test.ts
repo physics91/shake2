@@ -47,6 +47,13 @@ describe("the friend book (S->C 0x64, 0x65 results, R)", () => {
     expect(changes()).toBe(4);
   });
 
+  it("tells of a change when a name met again moves to the end, so the file keeps the book's order", () => {
+    const { book, changes } = bookOf("a", "b");
+    book.meet("a");
+    expect(changes()).toBe(3);
+    expect(book.data().known).toEqual(["b", "a"]);
+  });
+
   it("forgets the least recently seen name no list holds, and never one a list holds or has", () => {
     const names = Array.from({ length: MAX_KNOWN_NAMES }, (_, i) => `n${i}`);
     const { book } = bookOf(...names);
