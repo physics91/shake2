@@ -466,7 +466,8 @@ export class Gate {
       }
       case "login": {
         const account = await accounts.authenticate(message.id, message.password);
-        if (!this.connections.has(connection.peer.id)) return;
+        // Gone, or gone into a channel while the password was checked: no game server's connection logs in.
+        if (!this.connections.has(connection.peer.id) || connection.joined) return;
         if (!account) {
           const now = this.config.now();
           if (now - guard.lastFailureAt >= LOGIN_FAILURES_KEPT_MS) guard.failures = 0;

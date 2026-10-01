@@ -179,6 +179,29 @@ describe("the gate's game servers (C->S 0x47 and 0x0a)", () => {
     expect(t.channels[0].lobby.userCount).toBe(0);
   });
 
+  it("answers no login that was still being checked when its connection went into a channel", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    const reply = await t.login(1, "tester");
+    if (!reply?.ok) throw new Error("login failed");
+    t.connect(2, "203.0.113.2");
+    t.gate.handle(2, { type: "login", id: "other", password: PASSWORD });
+    t.gate.handle(2, { type: "version", version: PROTOCOL_VERSION, channel: 0 });
+    t.gate.handle(2, { type: "hello", token: reply.token });
+    expect(t.gate.onlineCount).toBe(1);
+    // An address's checks run in turn: once another connection's is answered, the login has been checked too.
+    t.connect(4, "203.0.113.2");
+    expect(await t.ask(4, { type: "check-id", id: "newbie" }, "checked")).toBeDefined();
+    expect(t.all(2, "login")).toEqual([]);
+    // The account that went in is the one that comes out.
+    t.gate.disconnect(2);
+    expect(t.gate.onlineCount).toBe(0);
+    t.connect(3, "203.0.113.3");
+    await t.enter(3, "tester");
+    expect(t.last(3, "refused")).toBeUndefined();
+    expect(t.last(3, "welcome")?.account).toMatchObject({ id: "tester" });
+  });
+
   it("refuses an unknown or stale session (0), an account already in (2), and a level the row does not take (3)", async () => {
     const t = await makeGate(["tester", "other"], [{}, { levels: [1, 3] }]);
     t.connect(1);
