@@ -135,8 +135,8 @@ def test_map_objects_draw_from_the_sheet_their_unknown_a_names(synthetic_tree, t
 
 
 def test_map_objects_off_the_screen_draw_as_the_game_draws_them(synthetic_tree, tmp_path):
-    # 0x462d92: a top-left left of the screen moves to 0; one far past the right edge shows nothing
-    # and does not stop the export (Pillow cannot take a box out there).
+    # 0x462d92: a top-left left of the screen moves to 0. One far past the right edge comes in at
+    # 780 (0x462b9d), still past this narrow picture, and does not stop the export.
     object_dir = synthetic_tree / "spr_data" / "object"
     object_dir.mkdir()
     rows = [[MAGENTA_BGR] + [(0, 255, 0)] * 4] * 4
@@ -151,6 +151,26 @@ def test_map_objects_off_the_screen_draw_as_the_game_draws_them(synthetic_tree, 
     assert index["summary"]["errors"] == 0
     preview = Image.open(dst / "map_data" / "stage02.preview.png").convert("RGBA")
     assert preview.getpixel((1, 11)) == (0, 255, 0, 255)
+
+
+def test_map_objects_past_x_795_draw_at_780_as_the_game_draws_them(synthetic_tree, tmp_path):
+    # The keyed draw (0x462b90) puts a point past x 795 at 780 before drawing (0x462b9d-0x462ba5).
+    (synthetic_tree / "map_data" / "stage.shk").write_bytes(build_shk(800, 600, [0x0000] * (800 * 600)))
+    object_dir = synthetic_tree / "spr_data" / "object"
+    object_dir.mkdir()
+    rows = [[MAGENTA_BGR] + [(0, 255, 0)] * 4] * 4
+    (object_dir / "object_a.spr").write_bytes(build_spr(rows, [build_anim("o", 5, [(1, 1, 1, 0, 5, 4)])]))
+    objects = [(0, 1, 0, 796, 100, 800, 104, 0, 0, 0), (3, 1, 0, 900, 200, 904, 204, 0, 0, 0)]
+    (synthetic_tree / "map_data" / "stage02.map").write_bytes(
+        build_map(background="stage", title="02오브젝트", sprites=("b1.spr",), objects=objects)
+    )
+    dst = tmp_path / "out"
+    export_tree(synthetic_tree, dst)
+
+    preview = Image.open(dst / "map_data" / "stage02.preview.png").convert("RGBA")
+    assert preview.getpixel((781, 101)) == (0, 255, 0, 255)
+    assert preview.getpixel((781, 201)) == (0, 255, 0, 255)
+    assert preview.getpixel((797, 101)) == (0, 0, 0, 255)
 
 
 def test_guild_is_keyed_on_its_top_left_pixel(synthetic_tree, tmp_path):

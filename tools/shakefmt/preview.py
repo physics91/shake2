@@ -23,9 +23,16 @@ def render_level_preview(
         _draw_first_frame(canvas, brick_sheets[level.sprites[brick.sprite]], 0, *_cell_origin(level, brick.cell))
     for obj in level.objects:
         # object rects are the editor's draw positions: frame 0 goes at (left, top) on every sheet
-        _draw_first_frame(canvas, object_sheets[obj.unknown_a], obj.anim, obj.left, obj.top, use_anchor=False)
+        x, y = _keyed_point(obj.left, obj.top)
+        _draw_first_frame(canvas, object_sheets[obj.unknown_a], obj.anim, x, y, use_anchor=False)
 
     return np.asarray(canvas)
+
+
+def _keyed_point(x: int, y: int) -> tuple[int, int]:
+    """The keyed draw objects go through (0x462b90) first moves x past 795 to 780 and y past 600
+    to 600 (0x462b9d-0x462bb6)."""
+    return (780 if x > 795 else x), min(y, 600)
 
 
 def _cell_origin(level: Level, cell: int) -> tuple[int, int]:
