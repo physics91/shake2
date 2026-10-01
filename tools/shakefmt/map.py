@@ -174,6 +174,14 @@ def _validate(level: Level) -> None:
     for index, obj in enumerate(level.objects):
         if not 0 <= obj.cell < cell_count or level.cells[obj.cell].object_index != index:
             raise MapFormatError(f"object {index} at cell {obj.cell} not marked in grid")
+    # And the other way: a cell names only a record that sits in it.
+    for index, cell in enumerate(level.cells):
+        obj = cell.object_index
+        if obj >= 0 and (obj >= len(level.objects) or level.objects[obj].cell != index):
+            raise MapFormatError(f"cell {index} names object {obj}, which is not there")
+        brick = cell.brick_index
+        if cell.kind == CellKind.BRICK and not (0 <= brick < len(level.bricks) and level.bricks[brick].cell == index):
+            raise MapFormatError(f"brick cell {index} names brick {brick}, which is not there")
 
 
 def _check_ref(level: Level, sprite: int, cell: int, what: str) -> None:

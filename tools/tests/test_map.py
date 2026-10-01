@@ -46,6 +46,17 @@ def cells_with(kind_of_cell0):
     return cells
 
 
+def cells_naming(*edits):
+    """Blank cells with (cell, slot, value) set: slot 1 the brick, 2 the object, 4 the kind."""
+    cells = cells_with(0)
+    for cell, slot, value in edits:
+        cells[cell][slot] = value
+    return cells
+
+
+OBJECT_AT_3 = (3, 1, 0, 90, 81, 130, 112, 1, 13, 0)
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -55,6 +66,11 @@ def cells_with(kind_of_cell0):
         pytest.param(build_map(fixed=[(0, 0)], cells=cells_with(0)), id="fixed-cell-not-marked"),
         pytest.param(build_map(cells=cells_with(3)), id="unknown-cell-kind"),
         pytest.param(build_map(bricks=[(0, 0, 0)], cells=cells_with(2)), id="brick-index-mismatch"),
+        pytest.param(build_map(cells=cells_naming((0, 2, 0))), id="cell-names-a-missing-object"),
+        pytest.param(
+            build_map(objects=[OBJECT_AT_3], cells=cells_naming((3, 2, 0), (1, 2, 0))), id="cell-names-an-object-elsewhere"
+        ),
+        pytest.param(build_map(cells=cells_naming((1, 4, 2), (1, 1, 0))), id="brick-cell-without-its-brick"),
         pytest.param(build_map(fixed=[(5, 0)]), id="unknown-sprite"),
         pytest.param(build_map(fixed=[(0, 9)], cells=cells_with(0)), id="cell-out-of-grid"),
         pytest.param(build_map(area=(50, 49, 131, 113)), id="area-not-divisible"),
