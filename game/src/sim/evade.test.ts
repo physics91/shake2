@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { nowMs } from "./constants.ts";
 import { BURROW_MS } from "./evade.ts";
+import { playerCell } from "./grid.ts";
 import { applyPickup } from "./pickup.ts";
 import { addBomb, cellAt, IDLE, playingMatch, run, runUntil, VERSUS } from "./testing.ts";
 import type { InputFrame, MatchState, PlayerState } from "./types.ts";
@@ -211,6 +212,46 @@ describe("teleport (item 14)", () => {
     expect(player.flight).toBeNull();
     expect(player.inv.teleport).toBe(1);
     expect(player.actionLatch).toBe(true);
+  });
+
+  describe("landing on a bomb: +0x184 still holds the cell before the flight (0x452a93 skips 0x452b93)", () => {
+    // A 15x15 room like the shipped ones: the lander at column 0 row 1, the bomb layer at column 2 row 2.
+    const ROWS = Array.from({ length: 15 }, (_, row) => (row === 1 ? "1" + ".".repeat(14) : row === 2 ? "..2" + ".".repeat(12) : ".".repeat(15)));
+    const SPACE: InputFrame = { dir: null, bomb: true };
+    const BOMB_CELL = 2 * 15 + 2;
+
+    function landOnBomb(kick: boolean): MatchState {
+      const state = playingMatch(ROWS, 2, VERSUS);
+      const [lander] = state.players;
+      lander.inv.teleport = 1;
+      lander.inv.kick = kick;
+      run(state, 1, { 1: kick ? IDLE : SPACE, 2: SPACE });
+      run(state, 1);
+      run(state, 1, { 1: Z });
+      runUntil(state, () => lander.flight === null, 50);
+      expect(playerCell(state, lander)).toBe(BOMB_CELL);
+      return state;
+    }
+
+    it("kicks the bomb under the lander on the first update, as one in another cell (0x450791)", () => {
+      const state = landOnBomb(true);
+      const [lander] = state.players;
+      run(state, 1);
+      expect(lander.anim).toBe(Anim.Kick + Dir.Down);
+      expect(state.bombs.find((b) => b.cell === BOMB_CELL)?.motion).toBe(Dir.Down + 1);
+    });
+
+    it("without the kick shoe blocks the first move and clears the pass flag (0x450cdd)", () => {
+      const state = landOnBomb(false);
+      const [lander] = state.players;
+      expect(lander.bombPass).toBe(true);
+      const landed = { x: lander.x, y: lander.y };
+      run(state, 1, { 1: walk(Dir.Down) });
+      expect(lander.bombPass).toBe(false);
+      expect({ x: lander.x, y: lander.y }).toEqual(landed);
+      run(state, 5, { 1: walk(Dir.Down) });
+      expect(playerCell(state, lander)).toBe(BOMB_CELL);
+    });
   });
 });
 

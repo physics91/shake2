@@ -157,6 +157,11 @@ export interface PlayerState {
   actionLatch: boolean;
   /** Set on placing a bomb: may move inside and out of a bomb's cell (+0x1b4). */
   bombPass: boolean;
+  /**
+   * +0x184: the cell after the last move with collision (0x452b93), each walk, stand or jump
+   * update; a teleport flight, a kick, a throw or death leaves it. The spawn cell as a round starts.
+   */
+  lastCell: number;
   /** Special items held (pickup 0x451100). */
   inv: Inventory;
   /** Timed states, by the tick-time (ms) they began; null when off. */

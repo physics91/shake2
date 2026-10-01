@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { playerCell } from "./grid.ts";
 import { movePlayer, probes } from "./movement.ts";
 import { addBomb, cellAt, IDLE, playingMatch, run } from "./testing.ts";
 import type { MatchState, PlayerState } from "./types.ts";
@@ -9,6 +10,7 @@ function walker(rows: string[], x: number, y: number, dir: Dir): { state: MatchS
   const state = playingMatch(rows);
   const player = state.players[0];
   Object.assign(player, { x, y, dir, anim: Anim.Walk + dir });
+  player.lastCell = playerCell(state, player) ?? -1;
   return { state, player };
 }
 

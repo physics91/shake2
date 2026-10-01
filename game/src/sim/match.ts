@@ -93,6 +93,7 @@ export function createMatch(layout: LevelLayout, setups: PlayerSetup[], rules: R
       medals: 0,
       actionLatch: false,
       bombPass: false,
+      lastCell: 0,
       inv: emptyInventory(),
       status: noStatus(),
       savedSpeed: START_SPEED,
@@ -436,6 +437,7 @@ function updatePlayer(state: MatchState, player: PlayerState, now: number): void
   if (walked) step = player.speed;
   else if (jumped && advanced) step = dir === Dir.Down || dir === Dir.Up ? JUMP_STEP_ALONG : JUMP_STEP_ACROSS;
   movePlayer(state, player, step);
+  player.lastCell = playerCell(state, player) ?? -1;
   noteLocalCell(state, player);
 }
 
@@ -691,6 +693,8 @@ function resetPlayer(state: MatchState, player: PlayerState): void {
   const spawn = cellTopLeft(state, spawns[rollSpawns ? state.spawnPoints[player.slot] : player.slot]);
   player.x = spawn.x + SPAWN_DX;
   player.y = spawn.y + (state.rules.practice ? PRACTICE_SPAWN_DY : SPAWN_DY);
+  // The sim does not update players before play starts; they have stood on their spawns (I).
+  player.lastCell = playerCell(state, player) ?? -1;
   player.dir = Dir.Down;
   player.anim = Anim.Stand + Dir.Down;
   player.frame = 0;

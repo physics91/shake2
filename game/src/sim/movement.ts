@@ -106,6 +106,8 @@ function slide(state: MatchState, player: PlayerState, dir: Dir, p0Free: boolean
 
 /**
  * Bombs block by the centre cell (0x4506c9), except during jump, kick and throw animations.
+ * "Another" cell is one other than +0x184 (PlayerState.lastCell), the cell after the last move
+ * with collision: just after a teleport landing that is still the cell before the flight.
  * Heading into another bomb cell sets off its mines, whoever laid them; only the client's own
  * player does this (0x4506f9-0x450759), so never a practice dummy. With the kick shoe the bomb is
  * kicked instead (0x450769). Entering another bomb cell is never allowed and clears the pass
@@ -116,7 +118,7 @@ function bombAllows(state: MatchState, player: PlayerState, dir: Dir, nx: number
   if (player.anim >= Anim.Jump) return true;
   const target = cellAtPixel(state, nx, ny);
   if (!hasBomb(state, target) || target === null) return true;
-  const current = playerCell(state, player);
+  const current = player.lastCell;
   if (target !== current && !player.dummy) {
     for (const bomb of state.bombs) if (bomb.cell === target && bomb.kind === BombKind.Mine) bomb.triggered = true;
   }

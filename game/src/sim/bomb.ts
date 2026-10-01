@@ -202,7 +202,7 @@ export function attackAction(state: MatchState, player: PlayerState): boolean {
  * last kicker is among them); in the player's own cell a rolling bomb is turned. A kick never
  * moves the player; with no bomb to kick the player walks in.
  */
-export function kickBomb(state: MatchState, player: PlayerState, target: number, current: number | null): boolean {
+export function kickBomb(state: MatchState, player: PlayerState, target: number, current: number): boolean {
   const dir = facing(player);
   const ownCell = target === current;
   const bomb = state.bombs.find(
