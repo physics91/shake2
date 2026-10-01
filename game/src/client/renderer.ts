@@ -23,6 +23,7 @@ import {
   HURRY_MS,
   HURRY_POS,
   candyCountX,
+  candyWord,
   countBlits,
   itemGrid,
   itemIconRect,
@@ -247,7 +248,7 @@ export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, 
     return;
   }
   // [0x49285e] is a word: the login's count, then one more a pickup (0x410827).
-  drawCandy(ctx, assets, ((view.candyBase ?? 0) + (locals[0]?.candy ?? 0)) & 0xffff);
+  drawCandy(ctx, assets, candyWord((view.candyBase ?? 0) + (locals[0]?.candy ?? 0)));
   drawEffects(ctx, assets, state);
   drawPanel(ctx, assets, state, view.bars, view.people);
   // The panel's last part (0x40fb81): the others' names while the own chat line is open.
@@ -598,8 +599,7 @@ function drawEffects(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: 
  */
 function drawCandy(ctx: CanvasRenderingContext2D, assets: SceneAssets, count: number): void {
   blitBlended(ctx, assets.hud.candy, CANDY_POS.x, CANDY_POS.y, CANDY_WEIGHT);
-  const text = String(count);
-  outlinedText(ctx, text, candyCountX(text.length), CANDY_COUNT.y, YELLOW, FONT_COURIER_15);
+  outlinedText(ctx, String(count), candyCountX(count), CANDY_COUNT.y, YELLOW, FONT_COURIER_15);
 }
 
 /** Right panel (0x40f9a0) per room slot: SP label, two bars, medals, guild, rank and name. */

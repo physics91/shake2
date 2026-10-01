@@ -10,6 +10,7 @@ import {
   teamColor,
   bombColor,
   candyCountX,
+  candyWord,
   characterIndex,
   countdownBlit,
   finalRowTop,
@@ -70,8 +71,13 @@ describe("in-game HUD", () => {
     expect(itemGrid(player)).toHaveLength(3);
   });
 
-  it("right-aligns the candy count: 1 to 4 digits start at x 753, 745, 737, 729", () => {
-    expect([1, 2, 3, 4].map(candyCountX)).toEqual([753, 745, 737, 729]);
+  it("places the candy count by its value (0x40bcec): 1, 10, 100 and 1000 up start at x 753, 745, 737, 729", () => {
+    expect([7, 10, 999, 1000, 32767].map(candyCountX)).toEqual([753, 745, 737, 729, 729]);
+    expect([-1, -32768].map(candyCountX)).toEqual([753, 753]);
+  });
+
+  it("reads the candy total as a signed word, as movsx does (0x40bcd4)", () => {
+    expect([7, 32767, 32768, 65535, 65536 + 5].map(candyWord)).toEqual([7, 32767, -32768, -1, 5]);
   });
 
   it("draws no count at 0 or below, ∞ for the power bomb and the units of a two-digit count", () => {

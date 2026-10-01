@@ -193,11 +193,17 @@ export function smallDigitRect(n: number): Rect {
 }
 
 export const CANDY_POS = { x: 685, y: 557 };
-/** One-digit count position; 2, 3 and 4 digits start at x 745, 737 and 729. */
+/** One-digit count position; a count of 10, 100 and 1000 up starts at x 745, 737 and 729. */
 export const CANDY_COUNT = { x: 753, y: 565 };
 
-export function candyCountX(digits: number): number {
-  return CANDY_COUNT.x - 8 * (Math.min(4, Math.max(1, digits)) - 1);
+/** Chosen by the value, not the text (0x40bcec): a negative count starts at 753. */
+export function candyCountX(count: number): number {
+  return CANDY_COUNT.x - 8 * (count >= 1000 ? 3 : count >= 100 ? 2 : count >= 10 ? 1 : 0);
+}
+
+/** [0x49285e] as the count reads it: a signed word (movsx, 0x40bcd4), so 32768 up shows negative. */
+export function candyWord(total: number): number {
+  return (total << 16) >> 16;
 }
 export const TEXTBOX_POS = { x: 43, y: 557 };
 /** Practice's help text (0x4557f0): title at (49,560), description lines at x 140 from y 560, 15 apart. */
