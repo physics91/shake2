@@ -1941,8 +1941,8 @@ class OnlineGame {
   private toScreen(event: PointerEvent): { x: number; y: number } {
     const rect = this.screen.canvas.getBoundingClientRect();
     return {
-      x: ((event.clientX - rect.left) * SCREEN_W) / rect.width,
-      y: ((event.clientY - rect.top) * SCREEN_H) / rect.height,
+      x: Math.floor(((event.clientX - rect.left) * SCREEN_W) / rect.width),
+      y: Math.floor(((event.clientY - rect.top) * SCREEN_H) / rect.height),
     };
   }
 

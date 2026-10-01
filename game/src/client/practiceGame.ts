@@ -219,8 +219,8 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   const toScreen = (event: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
     return {
-      x: ((event.clientX - rect.left) * SCREEN_W) / rect.width,
-      y: ((event.clientY - rect.top) * SCREEN_H) / rect.height,
+      x: Math.floor(((event.clientX - rect.left) * SCREEN_W) / rect.width),
+      y: Math.floor(((event.clientY - rect.top) * SCREEN_H) / rect.height),
     };
   };
   const onMove = (event: PointerEvent) => {
