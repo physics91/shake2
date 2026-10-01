@@ -11,7 +11,7 @@ import type { Sheet } from "./assets.ts";
 import { loadCp949, loadImage, loadImageSheet } from "./assets.ts";
 import { drawBadge, guildLines, guildName, levelTitle } from "./badge.ts";
 import type { SoundBank } from "./audio.ts";
-import { CaretBlink, chatRecall, commandCycle, lobbyKeyOpensChat } from "./chat.ts";
+import { CaretBlink, chatRecall, commandCycle, keepRecall, lobbyKeyOpensChat } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
 import type { LobbyState } from "./lobbyView.ts";
@@ -1357,10 +1357,8 @@ export class LobbyScreen {
     if (this.chat.isOpen) {
       const text = this.chat.close();
       this.chat.open();
-      if (sendableChat(text) !== null) {
-        chatRecall.line = text;
-        this.options.say(text);
-      }
+      keepRecall(text);
+      if (sendableChat(text) !== null) this.options.say(text);
     } else if (this.popup === "create") {
       this.submitCreate();
     } else if (this.popup === "password") {

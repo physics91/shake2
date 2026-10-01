@@ -119,6 +119,11 @@ export const commandCycle = new CommandCycle();
  */
 export const chatRecall = { line: "" };
 
+/** Enter on an open line (0x45fb56-0x45fb60): any text but an empty one, blanks too, before 0x446200 drops a blank line. */
+export function keepRecall(text: string): void {
+  if (text) chatRecall.line = text;
+}
+
 /**
  * Up in a match or practice: the recall line, cut to the 36 bytes the game's editor holds. The
  * original copies it whole (0x4600d9 → 0x403db0): a lobby or room line of up to 39 bytes goes out

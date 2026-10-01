@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bubbleLines, CaretBlink, chatRecall, chatView, CommandCycle, cp949Bytes, fitsChat, gameRecall, lobbyKeyOpensChat, trimChat, typeable } from "./chat.ts";
+import { bubbleLines, CaretBlink, chatRecall, chatView, CommandCycle, cp949Bytes, fitsChat, gameRecall, keepRecall, lobbyKeyOpensChat, trimChat, typeable } from "./chat.ts";
 
 describe("practice chat line (editor 0x4714f8)", () => {
   it("counts cp949 bytes: one for ASCII, two for Hangul and the other double-byte characters", () => {
@@ -75,6 +75,17 @@ describe("the Down key's command cycle (0x460161, list 0x470924, place [0x497f24
     cycle.next();
     expect([cycle.current(), cycle.current()]).toEqual(["/w", "/w"]);
     expect(cycle.next()).toBe("/n");
+  });
+});
+
+describe("Enter on an open line keeps the recall line (0x45fb56-0x45fb60)", () => {
+  it("takes a blank line as typed, though nothing is sent, and leaves the line on an empty one", () => {
+    keepRecall("hello");
+    keepRecall("   ");
+    expect(chatRecall.line).toBe("   ");
+    keepRecall("");
+    expect(chatRecall.line).toBe("   ");
+    chatRecall.line = "";
   });
 });
 

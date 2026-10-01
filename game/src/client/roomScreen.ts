@@ -11,7 +11,7 @@ import type { GameMode } from "../sim/types.ts";
 import type { Sheet } from "./assets.ts";
 import { loadImage, loadImageSheet } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
-import { CaretBlink, chatRecall, commandCycle } from "./chat.ts";
+import { CaretBlink, chatRecall, commandCycle, keepRecall } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { drawBadge } from "./badge.ts";
 import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
@@ -516,10 +516,8 @@ export class RoomScreen {
       const text = this.chat.close();
       // Over the list the line stays closed until the list closes and opens it (0x45fb7e, 0x4286d0).
       if (!dropdown) this.chat.open();
-      if (sendableChat(text) !== null) {
-        chatRecall.line = text;
-        this.options.say(text);
-      }
+      keepRecall(text);
+      if (sendableChat(text) !== null) this.options.say(text);
       return;
     }
     if (event.key === "ArrowUp" && active === this.chat.element) {

@@ -21,7 +21,7 @@ import type { MusicTrack } from "./audio.ts";
 import { loadImage } from "./assets.ts";
 import type { AuthState } from "./authLink.ts";
 import { AuthLink } from "./authLink.ts";
-import { CaretBlink, chatRecall, gameRecall } from "./chat.ts";
+import { CaretBlink, chatRecall, gameRecall, keepRecall } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView } from "./gameView.ts";
 import { Balloons, closesExitBox, countdownEnd, enterOpensChat, helpAllowed, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
@@ -1861,7 +1861,7 @@ class OnlineGame {
 
   /** 0x446200: the recall buffer takes the line as typed; a blank line, or one on the wait and result screens, goes nowhere. */
   private say(raw: string): void {
-    if (raw) chatRecall.line = raw;
+    keepRecall(raw);
     const state = this.state;
     const text = gameChatLine(raw);
     if (!text || !state || !sendsChat(state.phase)) return;

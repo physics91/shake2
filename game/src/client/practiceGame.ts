@@ -5,7 +5,7 @@ import { createPractice } from "../sim/practice.ts";
 import type { MatchState, PlayerSetup } from "../sim/types.ts";
 import { loadImage } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
-import { BUBBLE_MS, CaretBlink, chatRecall, gameRecall, trimChat } from "./chat.ts";
+import { BUBBLE_MS, CaretBlink, gameRecall, keepRecall, trimChat } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView, runFixedLoop } from "./gameView.ts";
 import { connectedPad, padFrame } from "./gamepad.ts";
@@ -146,7 +146,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   }
   /** 0x446200: the trimmed line becomes the bubble; nothing is sent. The recall line takes it as typed. */
   function say(text: string): void {
-    if (text) chatRecall.line = text;
+    keepRecall(text);
     const line = trimChat(text);
     if (!line) return;
     bubble = { text: line, since: performance.now() };
