@@ -143,11 +143,14 @@ export class Lobby {
   /**
    * The account changed by a save over the auth connection (the greeting popup's, scene 5's): the
    * lists show the new card from their next send, as the original's did from its next page (0x16).
+   * The record (전적, 셀, 순위, 레벨) stays as at login, which a match's result changes only from the
+   * next one (FIDELITY 경기 결과: 반영 시점).
    */
   accountChanged(peerId: number, account: OwnAccount): void {
     const profile = this.profiles.get(peerId);
     if (!profile) return;
-    Object.assign(profile, { nick: account.nick, useId: account.useId, card: userCard(account) });
+    const { nick, greeting, guild } = userCard(account);
+    Object.assign(profile, { nick, useId: account.useId, card: { ...profile.card, nick, greeting, guild } });
     this.dirty = true;
     this.roomOf.get(peerId)?.profileChanged();
   }

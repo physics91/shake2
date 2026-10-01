@@ -445,6 +445,18 @@ describe("the gate's saves over the auth connection (scene 5)", () => {
     expect(t.last(2, "lobby")?.users[0]?.card.greeting).toBe("로비에서 인사");
   });
 
+  it("keeps the lobby card's record as at login when it shows a save: results show from the next login", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    t.connect(2, "203.0.113.2");
+    await t.enter(2, "tester");
+    await t.login(1, "tester");
+    t.accounts.recordMatch("tester", { cell: -200, won: false, lost: true, candy: 0 });
+    t.gate.handle(1, { type: "set-greeting", greeting: "진 뒤에" });
+    t.channels[0].lobby.tick();
+    expect(t.last(2, "lobby")?.users[0]?.card).toMatchObject({ greeting: "진 뒤에", wins: 0, losses: 0, cell: 0, rank: 0, level: 12 });
+  });
+
   it("takes the lobby's nickname popup (C->S 0x57) as set-status on the lobby connection, and shows the nick", async () => {
     const t = await makeGate();
     t.connect(1);

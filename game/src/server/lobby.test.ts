@@ -944,11 +944,12 @@ describe("Lobby (scene 4)", () => {
     t.connect(2, "둘");
     t.lobby.handle(1, { type: "create-room", title: "" });
     expect(t.room(1)?.players[0]).toMatchObject({ name: "하나", nick: "하나", useId: true, hue: 0, wins: 0, cell: 0, badge: { guild: -1, level: 12 } });
-    // A save over the auth connection: the others see it from the next list and room message.
+    // A save over the auth connection: the others see it from the next list and room message. The
+    // record stays as at login: a match's result shows from the next login.
     t.lobby.accountChanged(1, { ...testAccount("하나"), nick: "첫째", useId: false, greeting: "안녕", guild: 7, wins: 3 });
     t.lobby.accountChanged(2, { ...testAccount("둘"), greeting: "반가워" });
     t.lobby.tick();
-    expect(t.room(1)?.players[0]).toMatchObject({ nick: "첫째", useId: false, wins: 3, badge: { guild: 7, level: 12 } });
+    expect(t.room(1)?.players[0]).toMatchObject({ nick: "첫째", useId: false, wins: 0, badge: { guild: 7, level: 12 } });
     expect(t.lobbyOf(2)?.users).toEqual([{ id: 2, name: "둘", card: { ...cardOf("둘"), greeting: "반가워" } }]);
     t.lobby.accountChanged(9, testAccount("없음"));
   });
