@@ -373,7 +373,8 @@ export class RoomScreen {
     }
     this.scroll.release();
     const me = this.me;
-    const slot = slotAt(x, y, me?.slot ?? -1);
+    // The 2인 대전 room picks either seated player's character, 1P's own slot too (R).
+    const slot = slotAt(x, y, this.options.pickCharacter ? -1 : (me?.slot ?? -1));
     if (slot >= 0) {
       if (this.isHost && !this.playerAt(slot)) {
         send({ type: "set-slot", slot, open: this.room.closed[slot] });
