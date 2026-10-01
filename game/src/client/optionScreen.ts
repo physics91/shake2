@@ -80,8 +80,8 @@ export class OptionScreen {
   private readonly macroLine: ChatLine;
   private readonly idLine: ChatLine;
   private readonly caret = new CaretBlink();
-  /** The popup's O was sent and its answer has not come. */
-  private asked = false;
+  /** The popup's O sent this many times and not yet answered: each answer is shown (0x44c050). */
+  private asked = 0;
   /** Set while the window saves, so its own save leaves its marks alone (초기화's 1P mark). */
   private saving = false;
   private readonly stopListening: () => void;
@@ -156,8 +156,8 @@ export class OptionScreen {
 
   /** S->C 0x64 or 0x65 to this window's popup: it closes, the wait ends, and a change asks for the list again. */
   friendReplied(reply: FriendReply): void {
-    if (!this.asked) return;
-    this.asked = false;
+    if (this.asked === 0) return;
+    this.asked--;
     this.window.friendAnswered();
     if (reply.message) this.host.message(reply.message);
     if (reply.askAgain) this.requestFriends();
@@ -198,13 +198,13 @@ export class OptionScreen {
 
   /** C->S 0x64 (0x44bff0); the window waits for the answer (friendReplied). */
   private addFriend(name: string): void {
-    this.asked = true;
+    this.asked++;
     this.host.send({ type: "add-friend", name });
   }
 
   /** C->S 0x65 (0x44c1c0). */
   private deleteFriend(name: string): void {
-    this.asked = true;
+    this.asked++;
     this.host.send({ type: "delete-friend", name });
   }
 
