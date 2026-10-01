@@ -1,5 +1,6 @@
 import {
   animDue,
+  LONG_AGO_MS,
   nowMs,
   START_BOMBS,
   START_FIRE,
@@ -93,7 +94,7 @@ export function startBreaking(state: MatchState, cell: number): void {
   state.grid[cell] = CellKind.Empty;
   const anim = state.layout.breakAnims[cell] ?? { frames: 5, fps: 5 };
   // The per-brick timer starts zeroed (0x41111e), so frame 2 follows on the next update.
-  state.breaking.push({ cell, frame: 1, frames: anim.frames, fps: anim.fps, lastMs: -Infinity, item: state.hidden[cell] });
+  state.breaking.push({ cell, frame: 1, frames: anim.frames, fps: anim.fps, lastMs: LONG_AGO_MS, item: state.hidden[cell] });
   state.events.push({ type: "brick-broken", cell });
 }
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_MESSAGE_BYTES, parseClientMessage, roomTitle, sanitizeName } from "./protocol.ts";
+import { createMatch } from "../sim/match.ts";
+import { addBomb, layoutFromAscii, playingMatch, run, setups, VERSUS } from "../sim/testing.ts";
+import { MAX_MESSAGE_BYTES, parseClientMessage, roomTitle, sanitizeName, toWireState } from "./protocol.ts";
 
 describe("parseClientMessage", () => {
   it("accepts well-formed messages", () => {
@@ -220,6 +222,21 @@ describe("parseClientMessage", () => {
     ["oversized", JSON.stringify({ type: "hello", version: 1, name: "x".repeat(MAX_MESSAGE_BYTES), character: "bobo" })],
   ])("rejects %s", (_label, raw) => {
     expect(parseClientMessage(raw)).toBeNull();
+  });
+});
+
+describe("toWireState", () => {
+  const overTheWire = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+  it("keeps the timer fields numbers through JSON, at a round's start and on a crumbling brick", () => {
+    const fresh = overTheWire(toWireState(createMatch(layoutFromAscii(["1.2"]), setups(2), VERSUS, 1)));
+    expect(typeof fresh.timerMs).toBe("number");
+    expect(typeof fresh.suddenDeath.lastMs).toBe("number");
+    const state = playingMatch(["1.B"], 1);
+    addBomb(state, 1, { power: 1, placedMs: -10_000 });
+    run(state, 1);
+    expect(state.breaking).toHaveLength(1);
+    expect(typeof overTheWire(toWireState(state)).breaking[0].lastMs).toBe("number");
   });
 });
 

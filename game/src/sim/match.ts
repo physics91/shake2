@@ -4,6 +4,7 @@ import {
   DEATH_FPS,
   FADE_OUT_FRAMES,
   HURRY_SECONDS,
+  LONG_AGO_MS,
   MATCH_RESULT_MS,
   MAX_PLAYERS,
   nowMs,
@@ -116,9 +117,9 @@ export function createMatch(layout: LevelLayout, setups: PlayerSetup[], rules: R
     itemBitCleared: [],
     objects: [],
     timerSeconds: rules.roundSeconds,
-    timerMs: -Infinity,
+    timerMs: LONG_AGO_MS,
     hurried: false,
-    suddenDeath: { placed: 0, active: false, lastMs: -Infinity },
+    suddenDeath: { placed: 0, active: false, lastMs: LONG_AGO_MS },
     rng: seed >>> 0,
     clockMs,
     nextBombId: 1,
@@ -669,9 +670,9 @@ function startRound(state: MatchState, round: number): void {
   if (!state.rules.practice) srandTime(state, nowMs(state.tick));
   if (state.layout.rollSpawns) drawSpawns(state);
   state.timerSeconds = state.rules.roundSeconds;
-  state.timerMs = -Infinity;
+  state.timerMs = LONG_AGO_MS;
   state.hurried = false;
-  state.suddenDeath = { placed: 0, active: false, lastMs: -Infinity };
+  state.suddenDeath = { placed: 0, active: false, lastMs: LONG_AGO_MS };
   if (!state.rules.practice) srandTime(state, nowMs(state.tick));
   rollHiddenItems(state);
   for (const player of state.players) resetPlayer(state, player);
