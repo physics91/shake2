@@ -276,6 +276,10 @@ class OnlineSession {
         exit: () => {
           sounds.stopMusic();
           this.auth.dispose();
+          // A row's connection under way goes with the program.
+          this.dropSocket();
+          this.welcome = null;
+          this.lobby = null;
           this.account = null;
           this.token = null;
           this.channels = [];
@@ -702,6 +706,7 @@ class OnlineSession {
       this.send({ type: "version", version: PROTOCOL_VERSION, channel });
     });
     socket.addEventListener("message", (event) => {
+      if (this.socket !== socket) return;
       try {
         this.receive(JSON.parse(String(event.data)) as ServerMessage);
       } catch (error) {
