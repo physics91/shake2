@@ -1302,6 +1302,8 @@ class RoomView {
     this.code = room.code;
     this.send = (message) => {
       if (!this.screen?.dropsClicks) send(message);
+      // The browser has already moved the radio of a pick the canvas drops: back to the room's value.
+      else if (this.room) this.syncChoices(this.room);
     };
     this.errorLine = h("p", { class: "error", role: "alert" });
     this.readyButton.addEventListener("click", () => this.send({ type: "set-ready", ready: !this.ready }));
