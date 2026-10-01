@@ -190,8 +190,13 @@ class OnlineSession {
   private localGame: { stop(): void } | null = null;
   /** The ranking's list, scene 5's and the lobby window's. */
   private readonly ranking = new RankingBoard();
-  /** The lobby's nickname popup waits for its save's answer, which comes as the greeting's does; a new connection waits for none. */
-  private lobbySaving: "nick" | null = null;
+  /**
+   * The lobby's saves on their way, oldest first. The greeting's (0x58) and the nickname's (0x57)
+   * both come back as saved, one answer each in turn; a new connection waits for none.
+   */
+  private lobbySaves: ("greeting" | "nick")[] = [];
+  /** The text of the greeting save on its way, which a nickname save carries in place of the old one. */
+  private greetingSent: string | null = null;
   /** [0x4927c8]: the ID a slot's whisper icon or the lobby's ID popup chose; only an empty ID popup clears it. */
   private whisperTarget = "";
   /** [0x4927dc]: the one notice line the lobby, the room and the match draw. */
@@ -564,11 +569,16 @@ class OnlineSession {
       profile: this.profile,
       account: () => this.account,
       saveCharacter: (character, hue, useId) => this.send({ type: "set-character", character, hue, useId }),
-      saveGreeting: (greeting) => this.send({ type: "set-greeting", greeting }),
-      // C->S 0x57's place: scene 5's save with the greeting and the ID check as saved, so only the nick changes (R).
+      saveGreeting: (greeting) => {
+        this.lobbySaves.push("greeting");
+        this.greetingSent = greeting;
+        this.send({ type: "set-greeting", greeting });
+      },
+      // C->S 0x57's place: scene 5's save with the greeting (the one on its way, if any) and the ID
+      // check as saved, so only the nick changes (R).
       saveNick: (nick) => {
-        this.lobbySaving = "nick";
-        this.send({ type: "set-status", nick, greeting: this.profile.greeting, useId: this.profile.useId });
+        this.lobbySaves.push("nick");
+        this.send({ type: "set-status", nick, greeting: this.greetingSent ?? this.profile.greeting, useId: this.profile.useId });
       },
       whisperTo: (id) => {
         this.whisperTarget = id;
@@ -598,7 +608,7 @@ class OnlineSession {
     const socket = this.socket;
     this.socket = null;
     this.ranking.drop();
-    this.lobbySaving = null;
+    this.dropLobbySaves();
     this.welcome = null;
     this.lobby = null;
     this.room = null;
@@ -753,7 +763,7 @@ class OnlineSession {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.ranking.drop();
-      this.lobbySaving = null;
+      this.dropLobbySaves();
       const full = this.awaitingVersion;
       this.awaitingVersion = false;
       this.socket = null;
@@ -874,13 +884,12 @@ class OnlineSession {
         this.account = takeSaved(this.account, message.account);
         this.profile.greeting = message.account.greeting;
         this.profile.nick = message.account.nick;
-        if (this.lobbySaving === "nick") this.lobbyView?.nickSaved();
+        if (this.lobbySaveAnswered() === "nick") this.lobbyView?.nickSaved();
         else this.lobbyView?.greetingSaved();
-        this.lobbySaving = null;
         break;
       case "nick-refused":
         // 0x44b080: the message box, and the popup stays.
-        this.lobbySaving = null;
+        this.lobbySaveAnswered();
         this.lobbyView?.showMessage(nickRefusal(message.code));
         break;
       case "room":
@@ -946,12 +955,24 @@ class OnlineSession {
     }
   }
 
+  /** The oldest lobby save on its way has its answer. */
+  private lobbySaveAnswered(): "greeting" | "nick" | undefined {
+    const saving = this.lobbySaves.shift();
+    if (!this.lobbySaves.includes("greeting")) this.greetingSent = null;
+    return saving;
+  }
+
+  private dropLobbySaves(): void {
+    this.lobbySaves = [];
+    this.greetingSent = null;
+  }
+
   /** The game socket let go of by the page, so its close is not a lost connection. */
   private dropSocket(): void {
     const socket = this.socket;
     this.socket = null;
     this.ranking.drop();
-    this.lobbySaving = null;
+    this.dropLobbySaves();
     this.awaitingVersion = false;
     socket?.close();
   }
