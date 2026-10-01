@@ -476,7 +476,8 @@ export class LobbyView {
     this.characterSelect.value = this.actions.profile.character;
     this.showHue();
     this.errorLine.textContent = "수정 되었습니다.";
-    this.screen?.profileSaved();
+    if (this.screen) this.screen.profileSaved();
+    else this.pendingMessage = "수정 되었습니다.";
   }
 
   /** The hue field holds the account's hue, and takes a new one only with the colour item, as the icon does. */
