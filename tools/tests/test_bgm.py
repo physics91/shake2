@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from dls_builders import build_dls, build_midi, instrument, region, sine, wave, wsmp
-from shakefmt.bgm import RATE, export_bgm, original_tracks, pcm16
+from shakefmt.bgm import RATE, clipped_count, export_bgm, original_tracks, pcm16
 from shakefmt.dls import decode_dls
 from shakefmt.midi import parse_midi
 from shakefmt.reverb import Reverb
@@ -83,6 +83,13 @@ def test_keeps_the_synthesizer_output_bit_for_bit(game_tree):
 
 def test_output_is_the_doubled_half_scale_mix():
     assert pcm16(np.array([[0.30001, -0.5], [1.2, -1.2]])).tolist() == [[9830, -16384], [32767, -32768]]
+
+
+def test_counts_the_samples_the_output_clips():
+    audio = np.array([[-1.0, 0.99998], [1.2, -1.00002]])
+    assert pcm16(audio).tolist() == [[-32768, 32767], [32767, -32768]]
+    # -1.0 and -1.00002 land on -32768; 0.99998 and 1.2 go past 32767.
+    assert clipped_count(audio) == 2
 
 
 def test_renders_every_track_with_an_index(game_tree):

@@ -70,13 +70,24 @@ def original_tracks(src: Path) -> list[tuple[Path, str]]:
     return [(p, "game") for p in game] + menus
 
 
+def _output_scale(audio: np.ndarray) -> np.ndarray:
+    """The mix at the synthesizer's 16-bit output scale, before the clip (see pcm16)."""
+    return 2 * np.round(audio * (32768 // 2))
+
+
 def pcm16(audio: np.ndarray) -> np.ndarray:
     """The mix as the synthesizer's 16-bit output: full scale is 32768, clipped at the ends.
 
     The synthesizer mixes (reverb included) at half that scale and doubles it on output, so
     every sample below the clip is even, as in the captures.
     """
-    return np.clip(2 * np.round(audio * (32768 // 2)), -32768, 32767).astype("<i2")
+    return np.clip(_output_scale(audio), -32768, 32767).astype("<i2")
+
+
+def clipped_count(audio: np.ndarray) -> int:
+    """How many samples pcm16 clips: -1.0 lands on -32768, while 0.99998 rounds past 32767."""
+    scaled = _output_scale(audio)
+    return int(np.count_nonzero((scaled > 32767) | (scaled < -32768)))
 
 
 def _encode_flac(audio: np.ndarray, path: Path):
@@ -110,7 +121,7 @@ def export_bgm(tracks: list[tuple[Path, str]], dls_path: Path, dst: Path, reverb
             "seconds": round(len(audio) / RATE, 3),
             "loop_end": round(song.segment_length, 3),
             "peak_dbfs": round(20 * math.log10(peak), 2) if peak > 0 else None,
-            "clipped_samples": int(np.count_nonzero(np.abs(audio) >= 1.0)),
+            "clipped_samples": clipped_count(audio),
         })
 
     index = {
