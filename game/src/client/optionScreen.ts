@@ -82,6 +82,9 @@ export class OptionScreen {
   private readonly caret = new CaretBlink();
   /** The popup's O was sent and its answer has not come. */
   private asked = false;
+  /** Set while the window saves, so its own save leaves its marks alone (초기화's 1P mark). */
+  private saving = false;
+  private readonly stopListening: () => void;
   /** Keys held now, by code, for the key-change poll (DirectInput's GetDeviceState). */
   private readonly held = new Set<string>();
   private readonly detach: () => void;
@@ -94,11 +97,11 @@ export class OptionScreen {
     this.idLine.element.setAttribute("aria-label", "친구 아이디");
     this.window = new OptionWindow({
       current: () => host.settings.current,
-      save: (next) => host.settings.save(next),
+      save: (next) => this.saveQuietly(() => host.settings.save(next)),
       useControl: (control) => {
         // The browser shows a pad only after one of its buttons was pressed on the page.
         if (control === 1 && !connectedPad()) return false;
-        host.settings.setControl(control);
+        this.saveQuietly(() => host.settings.setControl(control));
         return true;
       },
       close: () => host.close(),
@@ -106,6 +109,10 @@ export class OptionScreen {
       edit: (target) => this.edit(target),
       addFriend: (name) => this.addFriend(name),
       deleteFriend: (name) => this.deleteFriend(name),
+    });
+    // The page's option section edits the same object: its save shows in the window.
+    this.stopListening = host.settings.listen(() => {
+      if (!this.saving) this.window.reload();
     });
     this.requestFriends();
     const down = (event: KeyboardEvent) => {
@@ -141,6 +148,7 @@ export class OptionScreen {
   }
 
   dispose(): void {
+    this.stopListening();
     this.macroLine.dispose();
     this.idLine.dispose();
     this.detach();
@@ -153,6 +161,15 @@ export class OptionScreen {
     this.window.friendAnswered();
     if (reply.message) this.host.message(reply.message);
     if (reply.askAgain) this.requestFriends();
+  }
+
+  private saveQuietly(save: () => void): void {
+    this.saving = true;
+    try {
+      save();
+    } finally {
+      this.saving = false;
+    }
   }
 
   /** C->S 0x63: the list, and the wait for it. */

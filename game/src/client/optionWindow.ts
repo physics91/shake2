@@ -194,8 +194,11 @@ export class OptionWindow {
     this.apply();
   }
 
-  /** X and Esc (0x4221b0, 0x422910): back to the option object, device marks from control. */
-  private restoreAndClose(): void {
+  /**
+   * The copies again from the option object, device marks from control, as X takes them. Also when
+   * this remake's option section saves under the open window, so that save shows here (R).
+   */
+  reload(): void {
     const settings = this.host.current();
     this.music = settings.music;
     this.effects = settings.effects;
@@ -203,6 +206,11 @@ export class OptionWindow {
     this.keys = [...settings.keys];
     this.device = settings.control === 0 ? 0 : 1;
     this.macros = [...settings.macros];
+  }
+
+  /** X and Esc (0x4221b0, 0x422910): back to the option object. */
+  private restoreAndClose(): void {
+    this.reload();
     this.close();
   }
 

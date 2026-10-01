@@ -93,6 +93,18 @@ describe("option window (scene 13)", () => {
     expect(again.log).toEqual(["close"]);
   });
 
+  it("reload takes the options as another save left them, so O keeps that save", () => {
+    const { window, host, click, saved } = setup();
+    // The page's option section saves under the open window.
+    host.save({ ...saved(), music: false, control: 1, macros: ["", "hello", "", "", "", "", "", "", "", ""] });
+    window.reload();
+    expect(window.music).toBe(false);
+    expect(window.device).toBe(1);
+    click(AT.ok);
+    expect(saved()).toMatchObject({ music: false, control: 1 });
+    expect(saved().macros[1]).toBe("hello");
+  });
+
   it("초기화 turns everything back on, clears the macros, saves and stays open; the device is not reset", () => {
     const settings = { ...defaultSettings(), music: false, balloons: false, keys: [0x1e, 0x1f, 0x21] as [number, number, number], control: 1 as Control, macros: Array(10).fill("x") };
     const { window, click, log, saved } = setup(settings);
