@@ -5,7 +5,7 @@ import { createPractice } from "../sim/practice.ts";
 import type { MatchState, PlayerSetup } from "../sim/types.ts";
 import { loadImage } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
-import { BUBBLE_MS, CaretBlink, trimChat } from "./chat.ts";
+import { BUBBLE_MS, CaretBlink, chatRecall, trimChat } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView, runFixedLoop } from "./gameView.ts";
 import { connectedPad, padFrame } from "./gamepad.ts";
@@ -144,8 +144,9 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     const pad = joystick ? connectedPad() : null;
     return pad ? padFrame(pad) : keys.sample(binding);
   }
-  /** 0x446200: the trimmed line becomes the bubble; nothing is sent. */
+  /** 0x446200: the trimmed line becomes the bubble; nothing is sent. The recall line takes it as typed. */
   function say(text: string): void {
+    if (text) chatRecall.line = text;
     const line = trimChat(text);
     if (!line) return;
     bubble = { text: line, since: performance.now() };
@@ -192,6 +193,8 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
         chat.open();
         announce("채팅 입력: Enter로 보내기, Esc로 취소");
       }
+    } else if (event.key === "ArrowUp" && chat.isOpen) {
+      chat.text = chatRecall.line; // 0x4600d9
     }
   };
   const toScreen = (event: PointerEvent) => {

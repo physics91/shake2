@@ -11,7 +11,7 @@ import type { Sheet } from "./assets.ts";
 import { loadCp949, loadImage, loadImageSheet } from "./assets.ts";
 import { drawBadge, guildLines, guildName, levelTitle } from "./badge.ts";
 import type { SoundBank } from "./audio.ts";
-import { CaretBlink, commandCycle, lobbyKeyOpensChat } from "./chat.ts";
+import { CaretBlink, chatRecall, commandCycle, lobbyKeyOpensChat } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
 import type { LobbyState } from "./lobbyView.ts";
@@ -341,7 +341,6 @@ export class LobbyScreen {
   private waitingOnly: boolean;
   /** The F1 help screen ([0x492856]). */
   private helpScreen = false;
-  private lastSent = "";
   private frame = 0;
   private stopped = false;
   private fade: Fade | null = null;
@@ -1265,7 +1264,7 @@ export class LobbyScreen {
     if (this.chat.isOpen) {
       if (event.key === "ArrowUp" && active === this.chat.element) {
         event.preventDefault();
-        this.chat.text = this.lastSent;
+        this.chat.text = chatRecall.line;
         return;
       }
       if (event.key === "ArrowDown" && active === this.chat.element) {
@@ -1359,7 +1358,7 @@ export class LobbyScreen {
       const text = this.chat.close();
       this.chat.open();
       if (sendableChat(text) !== null) {
-        this.lastSent = text;
+        chatRecall.line = text;
         this.options.say(text);
       }
     } else if (this.popup === "create") {

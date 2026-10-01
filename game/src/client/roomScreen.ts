@@ -11,7 +11,7 @@ import type { GameMode } from "../sim/types.ts";
 import type { Sheet } from "./assets.ts";
 import { loadImage, loadImageSheet } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
-import { CaretBlink, commandCycle } from "./chat.ts";
+import { CaretBlink, chatRecall, commandCycle } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { drawBadge } from "./badge.ts";
 import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
@@ -161,7 +161,6 @@ export class RoomScreen {
   private helpScreen = false;
   /** The message box with "강퇴 당했습니다." is up; scene 7 never lets it close by itself (0x443786). */
   private kicked = false;
-  private lastSent = "";
   private readonly cursor = new CursorAnim();
   private frame = 0;
   private stopped = false;
@@ -507,7 +506,7 @@ export class RoomScreen {
       // command, and the list stays open.
       event.preventDefault();
       this.chat.open();
-      this.chat.text = event.key === "ArrowUp" ? this.lastSent : commandCycle.current();
+      this.chat.text = event.key === "ArrowUp" ? chatRecall.line : commandCycle.current();
       return;
     }
     // A line opened over the list takes Enter, Up and Down as the open line does (0x45fb47, 0x460161).
@@ -518,14 +517,14 @@ export class RoomScreen {
       // Over the list the line stays closed until the list closes and opens it (0x45fb7e, 0x4286d0).
       if (!dropdown) this.chat.open();
       if (sendableChat(text) !== null) {
-        this.lastSent = text;
+        chatRecall.line = text;
         this.options.say(text);
       }
       return;
     }
     if (event.key === "ArrowUp" && active === this.chat.element) {
       event.preventDefault();
-      this.chat.text = this.lastSent;
+      this.chat.text = chatRecall.line;
       return;
     }
     if (event.key === "ArrowDown" && active === this.chat.element) {

@@ -113,6 +113,13 @@ export class CommandCycle {
 export const commandCycle = new CommandCycle();
 
 /**
+ * [0x497d00]: the program's one recall line. Enter on an open chat line copies its text there in
+ * every scene, lobby, room, match and practice alike (0x45fb60), and nothing empties it; Up on an
+ * open line puts it back (0x4600d9).
+ */
+export const chatRecall = { line: "" };
+
+/**
  * Whether a key opens the lobby's closed chat line (the default case, 0x4602f5). Space, F1-F9, F12,
  * Esc, Up and Down have their own cases; Up and Down open the line in the room only (0x4600ff, 0x4601d1).
  */

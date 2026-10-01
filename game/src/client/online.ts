@@ -21,7 +21,7 @@ import type { MusicTrack } from "./audio.ts";
 import { loadImage } from "./assets.ts";
 import type { AuthState } from "./authLink.ts";
 import { AuthLink } from "./authLink.ts";
-import { CaretBlink } from "./chat.ts";
+import { CaretBlink, chatRecall } from "./chat.ts";
 import { ChatLine } from "./chatLine.ts";
 import { GameView } from "./gameView.ts";
 import { Balloons, closesExitBox, countdownEnd, enterOpensChat, helpAllowed, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
@@ -288,10 +288,12 @@ class OnlineSession {
           this.token = null;
           this.channels = [];
           this.list.rows = [];
-          // The new program's statics: no whisper target, no last line to repeat (0x4927c8, 0x446200),
-          // an empty notice line (0x4927dc), the list's slide as it starts with no row chosen, and scene 5
-          // as the YES leaves it (0x4205e0): no guild chosen, no notices until this login's S->C 0x101.
+          // The new program's statics: no whisper target, no last line to repeat (0x4927c8, 0x446200)
+          // or to recall (0x497d00), an empty notice line (0x4927dc), the list's slide as it starts with
+          // no row chosen, and scene 5 as the YES leaves it (0x4205e0): no guild chosen, no notices
+          // until this login's S->C 0x101.
           this.whisperTarget = "";
+          chatRecall.line = "";
           this.timers = new ChatTimers();
           this.noticeLine = new NoticeLine();
           this.list.slide = newSlide();
@@ -1601,8 +1603,6 @@ class OnlineGame {
   private typingSent = false;
   private readonly blink = new CaretBlink();
   private readonly balloons = new Balloons();
-  /** The last line sent (0x497d00), recalled with the up key. */
-  private recall = "";
   /** The other players whose line is open, from the last snapshot. */
   private typing: readonly number[] = [];
   /** The panel's bars from the last snapshot, and the own frame rate and ping behind them. */
@@ -1832,7 +1832,7 @@ class OnlineGame {
         this.screen.announce("채팅 입력: Enter로 보내기, Esc로 취소");
       }
     } else if (event.key === "ArrowUp" && this.chat.isOpen) {
-      this.chat.text = this.recall; // 0x4600d9
+      this.chat.text = chatRecall.line; // 0x4600d9
     }
     this.syncInput();
   }
@@ -1861,7 +1861,7 @@ class OnlineGame {
 
   /** 0x446200: the recall buffer takes the line as typed; a blank line, or one on the wait and result screens, goes nowhere. */
   private say(raw: string): void {
-    if (raw) this.recall = raw;
+    if (raw) chatRecall.line = raw;
     const state = this.state;
     const text = gameChatLine(raw);
     if (!text || !state || !sendsChat(state.phase)) return;
