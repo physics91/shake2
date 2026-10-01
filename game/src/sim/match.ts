@@ -706,8 +706,10 @@ function resetPlayer(state: MatchState, player: PlayerState): void {
   const spawn = cellTopLeft(state, spawns[rollSpawns ? state.spawnPoints[player.slot] : player.slot]);
   player.x = spawn.x + SPAWN_DX;
   player.y = spawn.y + (state.rules.practice ? PRACTICE_SPAWN_DY : SPAWN_DY);
-  // The sim does not update players before play starts; they have stood on their spawns (I).
-  player.lastCell = playerCell(state, player) ?? -1;
+  // The sim does not update players before play starts. A network game's have stood on their
+  // spawns through the countdown (I); practice builds its players at each start, and the
+  // constructor leaves +0x184 at 0 (0x461f02) until the first update.
+  player.lastCell = state.rules.practice ? 0 : (playerCell(state, player) ?? -1);
   player.dir = Dir.Down;
   player.anim = Anim.Stand + Dir.Down;
   player.frame = 0;

@@ -11,7 +11,7 @@ import { createPractice } from "./practice.ts";
 import { msvcRand } from "./rng.ts";
 import { IDLE } from "./testing.ts";
 import type { MatchState } from "./types.ts";
-import { Anim, ItemKind } from "./types.ts";
+import { Anim, Dir, ItemKind } from "./types.ts";
 
 const MAP = join(import.meta.dirname, "..", "..", "public", "assets", "maps", "practice.json");
 const LOCAL = { id: 1, name: "나", character: "bobo" };
@@ -193,5 +193,19 @@ describe.skipIf(!existsSync(MAP))("practice pre-placed items (0x455000)", () => 
     // Cell 225 lies below the grid; its first neighbour inside is straight up, 210.
     expect(state.items.find((item) => item.kind === ItemKind.Timer)?.cell).toBe(210 + 0);
     expect(state.items.filter((item) => item.kind === ItemKind.Mystery).map((item) => item.sub)).toEqual([37, 38]);
+  });
+});
+
+describe.skipIf(!existsSync(MAP))("practice's first update (+0x184 is 0, 0x461f02)", () => {
+  it("counts the spawn cell as entered: a bomb laid on the first frame clears the pass flag and holds the player", () => {
+    const state = practice();
+    const local = state.players.find((p) => p.id === LOCAL.id)!;
+    expect(local.lastCell).toBe(state.localMark?.lastCell);
+    step(state, { [LOCAL.id]: { dir: null, bomb: true } });
+    expect(state.bombs).toHaveLength(1);
+    expect(local.bombPass).toBe(false);
+    const y = local.y;
+    step(state, { [LOCAL.id]: { dir: Dir.Down, bomb: false } });
+    expect(local.y).toBe(y);
   });
 });
