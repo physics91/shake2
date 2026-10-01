@@ -18,9 +18,10 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-function ringingSounds() {
+function ringingSounds(effects = true) {
   const ringing = new Set<string>();
   const bank = {
+    effects,
     play: (name: string) => ringing.add(name),
     stop: (name: string) => ringing.delete(name),
     playMusic() {},
@@ -30,8 +31,8 @@ function ringingSounds() {
 }
 
 /** A view whose match ended (the other player left in play), so endsig rings. */
-function finalResult() {
-  const sounds = ringingSounds();
+function finalResult(effects = true) {
+  const sounds = ringingSounds(effects);
   const ctx = { canvas: { addEventListener() {}, removeEventListener() {} } } as unknown as CanvasRenderingContext2D;
   const view = new GameView(ctx, {} as never, sounds.bank, { localPlayerIds: [1], hostId: 1, music: null });
   const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
@@ -43,8 +44,8 @@ function finalResult() {
 }
 
 /** A view whose round ended (player 1 burned), so end rings. */
-function roundResult() {
-  const sounds = ringingSounds();
+function roundResult(effects = true) {
+  const sounds = ringingSounds(effects);
   const ctx = { canvas: { addEventListener() {}, removeEventListener() {} } } as unknown as CanvasRenderingContext2D;
   const view = new GameView(ctx, {} as never, sounds.bank, { localPlayerIds: [1], hostId: 1, music: null });
   const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
@@ -55,7 +56,7 @@ function roundResult() {
     view.ingest(state, state.events);
   }
   expect(sounds.ringing.has("end")).toBe(true);
-  return { view, ringing: sounds.ringing };
+  return { view, state, ringing: sounds.ringing };
 }
 
 describe("GameView.dispose", () => {
@@ -74,12 +75,32 @@ describe("GameView.dispose", () => {
       expect(ringing.has("end")).toBe(true);
     }
   });
+
+  it("leaves endsig ringing with the effects switch off: the stop checks it first (0x44f6e2, 0x44f505)", () => {
+    const { view, ringing } = finalResult(false);
+    view.dispose();
+    expect(ringing.has("endsig")).toBe(true);
+  });
+});
+
+describe("GameView.ingest", () => {
+  it("stops end at the next round's wait screen only with the effects switch on (0x41011c, 0x41014e)", () => {
+    for (const effects of [true, false]) {
+      const { view, state, ringing } = roundResult(effects);
+      while (!(state.phase === "waiting" && state.round === 2)) {
+        step(state, {});
+        view.ingest(state, state.events);
+      }
+      expect(ringing.has("end")).toBe(!effects);
+    }
+  });
 });
 
 describe("GameView.catchUp", () => {
   it("follows the snapshots that came before the pictures without sounding their cues, but with their stops", () => {
     const calls: string[] = [];
     const bank = {
+      effects: true,
       play: (name: string) => calls.push(`play:${name}`),
       stop: (name: string) => calls.push(`stop:${name}`),
       playMusic: () => calls.push("playMusic"),

@@ -100,7 +100,7 @@ export class GameView {
 
   ingest(state: MatchState, events: readonly SimEvent[]): void {
     const cues = present(this.presentation, state, events, this.options.localPlayerIds);
-    for (const name of cues.stop) this.sounds.stop(name);
+    for (const name of cues.stop) this.stopCue(name);
     for (const name of cues.play) this.sounds.play(name, MUSIC_GATED.has(name) ? "music" : "effects");
     if (cues.music === "start" && this.options.music) this.sounds.playMusic(this.options.music, GAME_REPEATS, true);
     if (cues.music === "stop") this.sounds.stopMusic();
@@ -121,7 +121,7 @@ export class GameView {
     let music: Cues["music"] = null;
     for (const { state, events } of batches) {
       const cues = present(this.presentation, state, events, this.options.localPlayerIds);
-      for (const name of cues.stop) this.sounds.stop(name);
+      for (const name of cues.stop) this.stopCue(name);
       music = cues.music ?? music;
       this.follow(state, events);
     }
@@ -192,7 +192,15 @@ export class GameView {
   dispose(keepMusic = false): void {
     for (const type of ["pointermove", "pointerdown", "pointerleave"] as const) this.ctx.canvas.removeEventListener(type, this.onPointer);
     if (!this.options.keepMusic && !keepMusic) this.sounds.stopMusic();
-    this.sounds.stop("endsig");
+    this.stopCue("endsig");
+  }
+
+  /**
+   * Each stop checks the effects switch first, though end and endsig play under the music switch
+   * (0x41011c, 0x44f6e2, 0x44f505): with the effects off they ring to their end.
+   */
+  private stopCue(name: string): void {
+    if (this.sounds.effects) this.sounds.stop(name);
   }
 }
 
