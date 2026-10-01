@@ -38,6 +38,8 @@ describe("sign-up rules (0x45f280, Regist_UP_shake2.asp)", () => {
     expect(idProblem("abcdefghijk")).toBe(REGISTER_FAILED);
     expect(idProblem("ab_cd")).toBe(ID_NOT_ALNUM);
     expect(idProblem("한글아이디")).toBe(ID_NOT_ALNUM);
+    expect(idProblem("한글")).toBe(ID_NOT_ALNUM); // 4 cp949 bytes, as the client counts them
+    expect(idProblem("한글한글한글")).toBe(REGISTER_FAILED); // 6 characters, 12 bytes
     expect(idProblem("1abcd")).toBe(ID_DIGIT_FIRST);
     expect(idProblem("Admin")).toBe(ID_UNUSABLE);
     expect(idProblem("sysman")).toBe(ID_UNUSABLE);

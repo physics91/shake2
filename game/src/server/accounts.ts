@@ -39,7 +39,8 @@ const RESERVED = ["shake", "webmaster", "gamemaster", "hanpanthe", "master", "ad
 
 /** 0x45f280 as the server checks it again: null for a good ID, else the rcode the client shows. */
 export function idProblem(id: string): number | null {
-  if (id.length < ID_MIN_BYTES || id.length > ID_MAX_BYTES) return REGISTER_FAILED;
+  const bytes = cp949Bytes(id);
+  if (bytes < ID_MIN_BYTES || bytes > ID_MAX_BYTES) return REGISTER_FAILED;
   if (!/^[0-9A-Za-z]+$/.test(id)) return ID_NOT_ALNUM;
   if (/^[0-9]/.test(id)) return ID_DIGIT_FIRST;
   if (RESERVED.includes(id.toLowerCase()) || id.toLowerCase().startsWith("sys")) return ID_UNUSABLE;
