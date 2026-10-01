@@ -9,16 +9,23 @@ export function cp949Bytes(text: string): number {
 
 let doubleByte: Set<number> | null = null;
 
+/** KS X 1001's user-defined rows: no characters, though Node's decoder gives them as private use. */
+const USER_ROWS = [0xc9, 0xfe];
+/** 0xA2E6 € and 0xA2E7 ®, which the browser's decoder has and Node's lacks. */
+const LATE_SYMBOLS = [0x20ac, 0x00ae];
+
 /**
  * cp949's double-byte characters: KS X 1001 (both bytes 0xa1-0xfe) and every Hangul syllable,
- * the rest of which the UHC extension adds. The browser's euc-kr decoder is cp949, but Node's
- * only knows KS X 1001, so the syllables are taken as a range.
+ * the rest of which the UHC extension adds. The browser's euc-kr decoder is cp949; Node's knows
+ * only KS X 1001, and not quite the browser's, so the syllables are taken as a range and the
+ * two decoders' differences are set here, the server keeping the client's set.
  */
 function cp949DoubleBytes(): Set<number> {
   if (doubleByte) return doubleByte;
-  doubleByte = new Set();
+  doubleByte = new Set(LATE_SYMBOLS);
   const decoder = new TextDecoder("euc-kr");
   for (let lead = 0xa1; lead <= 0xfe; lead++) {
+    if (USER_ROWS.includes(lead)) continue;
     for (let trail = 0xa1; trail <= 0xfe; trail++) {
       const char = decoder.decode(new Uint8Array([lead, trail]));
       if (char.length === 1 && char !== "�") doubleByte.add(char.charCodeAt(0));
