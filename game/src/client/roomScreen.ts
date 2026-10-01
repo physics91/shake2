@@ -490,7 +490,8 @@ export class RoomScreen {
       else if (!overlay) this.openExitBox();
       return;
     }
-    if (overlay?.kind === "dropdown" && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+    const dropdown = overlay?.kind === "dropdown";
+    if (dropdown && !this.chat.isOpen && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       // The room's closed line (0x4600ff, 0x4601d1): Up and Down open it with the last line or the
       // command, and the list stays open.
       event.preventDefault();
@@ -498,11 +499,13 @@ export class RoomScreen {
       this.chat.text = event.key === "ArrowUp" ? this.lastSent : commandCycle.current();
       return;
     }
-    if (overlay) return;
+    // A line opened over the list takes Enter, Up and Down as the open line does (0x45fb47, 0x460161).
+    if (overlay && !(dropdown && this.chat.isOpen)) return;
     if (event.key === "Enter" && active === this.chat.element) {
       event.preventDefault();
       const text = this.chat.close();
-      this.chat.open();
+      // Over the list the line stays closed until the list closes and opens it (0x45fb7e, 0x4286d0).
+      if (!dropdown) this.chat.open();
       if (sendableChat(text) !== null) {
         this.lastSent = text;
         this.options.say(text);
