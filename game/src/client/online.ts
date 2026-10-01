@@ -367,6 +367,8 @@ class OnlineSession {
         if (this.enterAfterLogin) {
           this.enterAfterLogin = false;
           this.enter(0);
+          // The login's answer ended the busy cursor; the form goes on to a row's connection, which keeps it.
+          if (this.socket) this.startView?.connecting();
         }
         return;
       case "server-info":
