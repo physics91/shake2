@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -6,7 +7,7 @@ from PIL import Image
 
 from builders import build_anim, build_map, build_shk, build_spr
 from shakefmt import export
-from shakefmt.export import BORROWED, DEFAULT_SRC, export_borrowed, export_tree
+from shakefmt.export import BORROWED, DEFAULT_SRC, export_borrowed, export_tree, main
 
 RED_BGR = (0, 0, 255)
 MAGENTA_BGR = (255, 0, 255)
@@ -151,6 +152,19 @@ def test_records_a_map_object_naming_a_missing_sheet(synthetic_tree, tmp_path):
 
     assert entry_for(index, "map_data/stage02.map")["error"]
     assert index["summary"]["errors"] == 1
+
+
+def test_the_default_src_spelled_relatively_still_exports_the_borrowed_pictures(
+    synthetic_tree, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(export, "DEFAULT_SRC", synthetic_tree)
+    borrowed = []
+    monkeypatch.setattr(export, "export_borrowed", lambda root, dst: borrowed.append(dst) or [])
+    monkeypatch.chdir(synthetic_tree.parent)
+
+    main(["export", os.path.relpath(synthetic_tree), str(tmp_path / "out")])
+
+    assert borrowed == [tmp_path / "out"]
 
 
 def test_lists_other_files_without_converting(synthetic_tree, tmp_path):

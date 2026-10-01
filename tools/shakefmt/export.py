@@ -270,7 +270,7 @@ def main(argv: list[str]) -> int:
     src = Path(argv[1]) if len(argv) > 1 else DEFAULT_SRC
     dst = Path(argv[2]) if len(argv) > 2 else DEFAULT_DST
     index = export_tree(src, dst)
-    if src == DEFAULT_SRC:
+    if src.resolve() == DEFAULT_SRC.resolve():
         index["borrowed"] = export_borrowed(EXTRACTED_ROOT, dst)
         _write_json(dst / "index.json", index)
     summary = index["summary"]
