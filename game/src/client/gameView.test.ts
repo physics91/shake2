@@ -41,12 +41,36 @@ function finalResult() {
   return { view, ringing: sounds.ringing };
 }
 
+/** A view whose round ended (player 1 burned), so end rings. */
+function roundResult() {
+  const sounds = ringingSounds();
+  const ctx = { canvas: { addEventListener() {}, removeEventListener() {} } } as unknown as CanvasRenderingContext2D;
+  const view = new GameView(ctx, {} as never, sounds.bank, { localPlayerIds: [1], hostId: 1, music: null });
+  const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
+  while (state.phase !== "playing") step(state, {});
+  state.flame[0] = 1;
+  while (state.phase === "playing") {
+    step(state, {});
+    view.ingest(state, state.events);
+  }
+  expect(sounds.ringing.has("end")).toBe(true);
+  return { view, ringing: sounds.ringing };
+}
+
 describe("GameView.dispose", () => {
   it("stops endsig on the way out, the tune kept or not (EXITGAME 0x44f6f1, 0x44f4e0)", () => {
     for (const keepMusic of [false, true]) {
       const { view, ringing } = finalResult();
       view.dispose(keepMusic);
       expect(ringing.has("endsig")).toBe(false);
+    }
+  });
+
+  it("leaves end ringing: only the next round's preparation stops it (0x41014e)", () => {
+    for (const keepMusic of [false, true]) {
+      const { view, ringing } = roundResult();
+      view.dispose(keepMusic);
+      expect(ringing.has("end")).toBe(true);
     }
   });
 });

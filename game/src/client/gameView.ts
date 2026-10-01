@@ -162,13 +162,13 @@ export class GameView {
   }
 
   /**
-   * Leaving the game: the music stops unless the way out keeps the tune; the result cues stop
-   * either way (endsig: EXITGAME 0x44f6f1, the cleanup 0x44f4e0).
+   * Leaving the game: the music stops unless the way out keeps the tune; endsig stops either way
+   * (EXITGAME 0x44f6f1, the cleanup 0x44f4e0). A round's end rings on: the original stops it only
+   * as the next round is prepared (0x41014e).
    */
   dispose(keepMusic = false): void {
     for (const type of ["pointermove", "pointerdown", "pointerleave"] as const) this.ctx.canvas.removeEventListener(type, this.onPointer);
     if (!this.options.keepMusic && !keepMusic) this.sounds.stopMusic();
-    this.sounds.stop("end");
     this.sounds.stop("endsig");
   }
 }
