@@ -156,7 +156,7 @@ export class LobbyView {
     });
     const create = (event: Event) => {
       event.preventDefault();
-      if (this.screen?.busy) return;
+      if (this.screen?.dropsClicks) return;
       // The create popup's OK (0x4300d0): a leading space asks for a title; an empty one does nothing there.
       const result = createTitle(title.value);
       if (result === null || "message" in result) {
@@ -178,7 +178,7 @@ export class LobbyView {
     });
     const join = (event: Event) => {
       event.preventDefault();
-      if (this.screen?.busy) return;
+      if (this.screen?.dropsClicks) return;
       const value = code.value.trim().toUpperCase();
       if (value.length !== ROOM_CODE_LENGTH) {
         this.errorLine.textContent = `방 코드 ${ROOM_CODE_LENGTH}자리를 입력하세요.`;
@@ -198,13 +198,19 @@ export class LobbyView {
     this.whisperButton.disabled = locked;
     const setWhisper = (event: Event) => {
       event.preventDefault();
-      // The popup's OK takes the ID as typed; empty clears the target.
+      // The popup's OK takes the ID as typed; empty clears the target. The remote's 귓말 opens it only
+      // when the lobby takes clicks.
+      if (this.screen?.dropsClicks) return;
       if (this.screen) this.screen.setWhisper(this.whisperInput.value);
       else whisperTo(this.whisperInput.value);
     };
+    // EXIT's release, dropped as the canvas drops it under the help or a wait.
+    const leave = () => {
+      if (!this.screen?.dropsClicks) exit(true);
+    };
     const saveMyInfo = (event: Event) => {
       event.preventDefault();
-      if (this.screen?.busy) return;
+      if (this.screen?.dropsClicks) return;
       // The window's O: nothing changed closes without asking the server (0x43e110).
       const hue = this.hueInput.disabled ? profile.hue : Math.max(-180, Math.min(180, Math.trunc(Number(this.hueInput.value) || 0)));
       if (this.characterSelect.value === profile.character && hue === profile.hue) return;
@@ -212,7 +218,7 @@ export class LobbyView {
     };
     const saveNickname = (event: Event) => {
       event.preventDefault();
-      if (this.screen?.busy) return;
+      if (this.screen?.dropsClicks) return;
       // The nickname popup's O (0x44aff0): trailing blanks cut, empty or all blank sends nothing.
       const nick = trimChat(this.nickInput.value);
       if (!nick.trim() || nick === profile.nick) return;
@@ -225,7 +231,7 @@ export class LobbyView {
         send(message);
       },
       message: (text) => this.showMessage(text),
-      busy: () => this.screen?.busy ?? false,
+      busy: () => this.screen?.dropsClicks ?? false,
     });
     const submitChat = (event: Event) => {
       event.preventDefault();
@@ -239,7 +245,7 @@ export class LobbyView {
       h(
         "header",
         { class: "toolbar" },
-        h("button", { class: "btn small", type: "button", onclick: () => exit(true) }, "← 나가기"),
+        h("button", { class: "btn small", type: "button", onclick: leave }, "← 나가기"),
         h("h1", { tabindex: "-1" }, this.heading),
       ),
       this.stage,
@@ -390,8 +396,8 @@ export class LobbyView {
                   type: "button",
                   "aria-label": `${roomNumberText(room.number)}번 방 정보`,
                   onclick: () => {
-                    // What a right release on the room does, dropped as it is while the canvas waits.
-                    if (this.screen?.busy) return;
+                    // What a right release on the room does, dropped as it is under the help or a wait.
+                    if (this.screen?.dropsClicks) return;
                     this.infoAsked = room.code;
                     this.actions.send({ type: "room-info", code: room.code });
                   },

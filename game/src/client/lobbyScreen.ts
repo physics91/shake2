@@ -450,8 +450,8 @@ export class LobbyScreen {
 
   /** A room's line (0x459e06): a playing room says so, a secret one asks for its password, any other is joined. */
   joinRoom(room: RoomSummary): void {
-    // The page's mirror too: while a create, a join or a save waits, the click is dropped (0x458794).
-    if (this.busy) return;
+    // The page's mirror too: under the help or while a create, a join or a save waits, the click is dropped.
+    if (this.dropsClicks) return;
     if (room.playing) this.showMessage("이미 시작 되었습니다.");
     else if (room.secret) this.askPassword(room.code);
     else this.options.send({ type: "join-room", code: room.code });
@@ -462,7 +462,7 @@ export class LobbyScreen {
    * as for the click. True when the window opened.
    */
   showUser(id: number): boolean {
-    if (this.helpScreen || this.busy || !this.clear) return false;
+    if (this.dropsClicks || !this.clear) return false;
     const user = this.state.users.find((u) => u.id === id);
     if (user) this.openUserInfo(user.name, user.card);
     return Boolean(user);
@@ -514,6 +514,11 @@ export class LobbyScreen {
   /** Waiting for a reply ([0x496ca0]): the mouse and Esc are dropped, the busy cursor shows. */
   get busy(): boolean {
     return this.roomAsked || (this.myInfo?.busy ?? false) || (this.option?.window.busy ?? false) || (this.rankingWindow?.busy ?? false);
+  }
+
+  /** The help screen or a wait: the lobby's clicks are dropped (0x458750, 0x458794), and so are the page's mirrors of them. */
+  get dropsClicks(): boolean {
+    return this.helpScreen || this.busy;
   }
 
   /** Nothing over the lobby: its own hover, held and balloon art show (the "no popup" gate). */
