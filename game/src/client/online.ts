@@ -194,7 +194,7 @@ class OnlineSession {
   /** [0x4927c8]: the ID a slot's whisper icon or the lobby's ID popup chose; only an empty ID popup clears it. */
   private whisperTarget = "";
   /** [0x4927dc]: the one notice line the lobby, the room and the match draw. */
-  private readonly noticeLine = new NoticeLine();
+  private noticeLine = new NoticeLine();
 
   constructor(manifest: Manifest) {
     this.manifest = manifest;
@@ -288,9 +288,15 @@ class OnlineSession {
           this.token = null;
           this.channels = [];
           this.list.rows = [];
-          // The new program's statics: no whisper target, no last line to repeat (0x4927c8, 0x446200).
+          // The new program's statics: no whisper target, no last line to repeat (0x4927c8, 0x446200),
+          // an empty notice line (0x4927dc), the list's slide as it starts with no row chosen, and scene 5
+          // as the YES leaves it (0x4205e0): no guild chosen, no notices until this login's S->C 0x101.
           this.whisperTarget = "";
           this.timers = new ChatTimers();
+          this.noticeLine = new NoticeLine();
+          this.list.slide = newSlide();
+          this.list.selected = -1;
+          Object.assign(this.status, newStatusState(readPreference("p1")));
           this.showStart({ begin: "logo" });
         },
       },
