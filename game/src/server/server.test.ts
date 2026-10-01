@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import type { AddressInfo } from "node:net";
-import { createServer as createNetServer } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -457,6 +457,23 @@ describe.skipIf(!HAS_ASSETS)("shutting down", () => {
 
     expect(atClose).toBe(before);
     expect(readFileSync(accountsFile, "utf8")).toBe(before);
+  }, 20_000);
+
+  it("resolves close() past a TCP client that sent nothing or half a request", async () => {
+    for (const data of ["", "GET /health HTTP/1.1\r\nHost: x\r\n"]) {
+      const server = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5 });
+      const socket = await new Promise<Socket>((resolve) => {
+        const opened = connect(server.port, "127.0.0.1", () => resolve(opened));
+      });
+      socket.on("error", () => undefined);
+      if (data) socket.write(data);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const closing = server.close();
+      const settled = await Promise.race([closing.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000))]);
+      socket.destroy();
+      await closing;
+      expect(settled).toBe(true);
+    }
   }, 20_000);
 
   it("saves a sign-up still being hashed before close() resolves, and nothing after", async () => {

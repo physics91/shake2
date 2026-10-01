@@ -388,6 +388,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
                 friendFile?.flush();
                 accountFile?.flush();
                 http.close(() => done());
+                // close() waits for every connection, and Node's request timeouts stop with it: a
+                // client that sent nothing or half a request would hold the exit. The sockets are gone.
+                http.closeAllConnections();
               });
             });
           }),
