@@ -436,11 +436,15 @@ export class Gate {
     const now = this.config.now();
     while (!guard.busy && guard.queue.length > 0) {
       const next = guard.queue[0];
+      const connection = this.connections.get(next.connectionId);
+      // A gone connection's request goes without its turn, as the lobby's secret-room guard drops one.
+      if (!connection) {
+        guard.queue.shift();
+        continue;
+      }
       const readyAt = next.message.type === "register" ? Math.max(guard.readyAt, guard.lastSignUpAt + SIGN_UP_INTERVAL_MS) : guard.readyAt;
       if (now < readyAt) return;
       guard.queue.shift();
-      const connection = this.connections.get(next.connectionId);
-      if (!connection) continue;
       guard.busy = true;
       const answer = this.answer(guard, connection, next.message).finally(() => {
         this.answering.delete(answer);

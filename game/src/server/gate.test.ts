@@ -161,6 +161,18 @@ describe("the gate's login (the auth server, C->S / S->C 0x0a)", () => {
     t.gate.tick();
     expect(t.last(1, "checked")).toEqual({ type: "checked", kind: "nick", rcode: 0 });
   });
+
+  it("drops a gone connection's waiting sign-up, so the address's next login has no interval to wait out", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    expect(await t.ask(1, { type: "register", id: "newbie", nick: "새내기", password: PASSWORD }, "registered")).toMatchObject({ rcode: REGISTERED });
+    t.gate.handle(1, { type: "register", id: "newbie2", nick: "둘째", password: PASSWORD });
+    // The page reloads: the waiting sign-up's connection goes, and a new one logs in.
+    t.gate.disconnect(1);
+    t.connect(2);
+    expect(await t.login(2, "tester")).toMatchObject({ ok: true });
+    expect(t.accounts.get("newbie2")).toBeUndefined();
+  });
 });
 
 describe("the gate's game servers (C->S 0x47 and 0x0a)", () => {
