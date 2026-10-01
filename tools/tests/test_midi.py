@@ -113,6 +113,21 @@ def test_rejects_what_has_no_timing_or_a_status_byte_for_data(data):
         parse_midi(data)
 
 
+@pytest.mark.parametrize("cut", [4, 8])
+def test_rejects_a_track_running_past_the_end_of_the_file(cut):
+    # Cut between events (before the end of track, before the note off): what is left still parses.
+    data = build_midi([(0, b"\x90\x3c\x64"), (96, b"\x80\x3c\x00")])
+    with pytest.raises(MidiFormatError):
+        parse_midi(data[:-cut])
+
+
+def test_rejects_a_header_running_past_the_end_of_the_file():
+    data = bytearray(build_midi([(0, b"\x90\x3c\x64"), (96, b"\x80\x3c\x00")]))
+    data[4:8] = (0x10000).to_bytes(4, "big")  # the MThd would swallow the track
+    with pytest.raises(MidiFormatError):
+        parse_midi(bytes(data))
+
+
 def test_rejects_a_variable_length_value_past_four_bytes():
     # SMF 1.0: a delta time or a length is at most four bytes (0x0FFFFFFF).
     with pytest.raises(MidiFormatError):

@@ -96,6 +96,8 @@ def _chunks(data: bytes):
     pos = 0
     while pos + 8 <= len(data):
         cid, size = data[pos : pos + 4], struct.unpack_from(">I", data, pos + 4)[0]
+        if pos + 8 + size > len(data):
+            raise MidiFormatError(f"chunk {cid!r} at {pos} runs past the end of the file")
         yield cid, data[pos + 8 : pos + 8 + size]
         pos += 8 + size
 
