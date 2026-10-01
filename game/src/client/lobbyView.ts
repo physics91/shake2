@@ -123,6 +123,8 @@ export class LobbyView {
   private readonly whisperButton = h("button", { class: "btn", type: "submit" }, "귓말 대상 정하기");
   private readonly optionPanel: OptionPanel;
   private screen: LobbyScreen | null = null;
+  /** A message box asked for before the canvas screen came up: it shows once the screen is there. */
+  private pendingMessage: string | null = null;
   private state: LobbyState;
   /** The room whose 정보 button was pressed last. */
   private infoAsked: string | null = null;
@@ -354,6 +356,8 @@ export class LobbyView {
           this.state,
         );
         this.screen.setLog(chatLog);
+        if (this.pendingMessage !== null) this.screen.showMessage(this.pendingMessage);
+        this.pendingMessage = null;
         this.loading.remove();
       },
       (error: Error) => {
@@ -519,7 +523,8 @@ export class LobbyView {
   /** A refusal (a join reply, a bad title): the original's message box, and the page's alert line. */
   showMessage(text: string): void {
     this.errorLine.textContent = text;
-    this.screen?.showMessage(text);
+    if (this.screen) this.screen.showMessage(text);
+    else this.pendingMessage = text;
   }
 
   dispose(): void {
