@@ -250,6 +250,26 @@ describe("the gate's game servers (C->S 0x47 and 0x0a)", () => {
     expect(t.last(3, "welcome")).toBeDefined();
   });
 
+  it("keeps the session of an account in a channel past SESSION_IDLE_MS when its token comes again meanwhile", async () => {
+    const t = await makeGate();
+    t.connect(1);
+    await t.enter(1, "tester");
+    const reply = t.last(1, "login");
+    const token = reply?.ok ? reply.token : "";
+    t.clock.now += SESSION_IDLE_MS + 60 * 60 * 1000;
+    // The client back on a new connection before the old one is dropped: the account is in a channel.
+    t.connect(2);
+    t.gate.handle(2, { type: "version", version: PROTOCOL_VERSION, channel: 0 });
+    t.gate.handle(2, { type: "hello", token });
+    expect(t.last(2, "refused")?.code).toBe(REFUSED_DUPLICATE);
+    t.gate.disconnect(1);
+    t.connect(3);
+    t.gate.handle(3, { type: "version", version: PROTOCOL_VERSION, channel: 0 });
+    t.gate.handle(3, { type: "hello", token });
+    expect(t.last(3, "refused")).toBeUndefined();
+    expect(t.last(3, "welcome")).toBeDefined();
+  });
+
   it("closes on a full row before the version reply, and gives another version its answer but no hello", async () => {
     const t = await makeGate(["tester", "other"], [{ maxUsers: 1 }]);
     t.connect(1);

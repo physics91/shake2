@@ -384,7 +384,8 @@ export class Gate {
   private session(token: string): Session | undefined {
     const session = this.sessions.get(token);
     if (!session) return undefined;
-    if (this.config.now() - session.lastUsed < SESSION_IDLE_MS) return session;
+    // An account in a channel is using its session, as in startSession.
+    if (this.online.has(session.account) || this.config.now() - session.lastUsed < SESSION_IDLE_MS) return session;
     this.sessions.delete(token);
     if (this.tokenOf.get(session.account) === token) this.tokenOf.delete(session.account);
     return undefined;
