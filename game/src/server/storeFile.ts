@@ -23,8 +23,9 @@ export interface StoreKind<D, B> {
 }
 
 /**
- * The book kept in `path`. A missing file starts empty; one that cannot be read is moved aside
- * (`<path>.broken-<time>`) and the book starts empty.
+ * The book kept in `path`. A missing file starts empty; one whose text is not a book is moved aside
+ * (`<path>.broken-<time>`) and the book starts empty. Any other read error (no permission, say)
+ * is thrown, so the server does not start over a file it could not look at.
  */
 export function openStoreFile<D, B>(
   path: string,
