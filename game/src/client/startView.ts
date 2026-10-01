@@ -171,7 +171,23 @@ export class StartView {
         "div",
         { class: "actions", role: "group", "aria-label": "내 정보 화면 버튼" },
         ...STATUS_MIRRORS.map(([command, label]) =>
-          h("button", { class: "btn", type: "button", onclick: () => this.withScreen((screen) => screen.statusCommand(command)) }, label),
+          h(
+            "button",
+            {
+              class: "btn",
+              type: "button",
+              // The screen drops keys typed on the page's buttons, so the focus leaves the button for
+              // the page when what the click brings is answered by keys only (the quit box, the memo).
+              onclick: (event: Event) => {
+                const button = event.currentTarget as HTMLElement;
+                this.withScreen((screen) => {
+                  screen.statusCommand(command);
+                  if (screen.awaitsKeys) button.blur();
+                });
+              },
+            },
+            label,
+          ),
         ),
       ),
       h(

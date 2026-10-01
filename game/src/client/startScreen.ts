@@ -395,6 +395,11 @@ export class StartScreen {
     return this.scene === "servers" && !this.dropsClicks && !this.busy && this.options.list.slide.open;
   }
 
+  /** The quit box, or a fade out (Go game's ends on the list's memo): keys answer what comes, the page's buttons do not. */
+  get awaitsKeys(): boolean {
+    return this.quitBox !== null || this.frozen !== null;
+  }
+
   /** The load query's answer, already in the list (thread 0x448410): read out. */
   serverInfo(row: ServerRow): void {
     this.announce(`${row.name} 서버: 부하 ${percentText(row.load).trim()}, 응답 ${row.ping < 0 ? "없음" : `${row.ping} ms`}`);
