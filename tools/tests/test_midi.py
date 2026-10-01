@@ -89,12 +89,28 @@ def test_rejects_smpte_division_and_non_midi():
         pytest.param(b"\x00\x90\x3c\x64\x10", id="delta-without-event"),
         pytest.param(b"\x00\x90\x3c", id="cut-channel-event"),
         pytest.param(b"\x00\xff", id="cut-meta-event"),
+        pytest.param(b"\x00\xff\x51\x03\x07", id="cut-meta-data"),
+        pytest.param(b"\x00\xf0\x05\x7e\x7f", id="cut-sysex-data"),
     ],
 )
 def test_rejects_a_track_cut_mid_event(track):
     header = b"MThd" + (6).to_bytes(4, "big") + bytes([0, 0, 0, 1, 0, 120])
     with pytest.raises(MidiFormatError):
         parse_midi(header + b"MTrk" + len(track).to_bytes(4, "big") + track)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(b"MThd" + (2).to_bytes(4, "big") + bytes(2), id="short-header"),
+        pytest.param(build_midi([(0, b"\x90\x3c\x64")], division=0), id="no-ticks-a-beat"),
+        pytest.param(build_midi([(0, b"\xff\x58\x04\x00\x02\x18\x08"), (0, b"\x90\x3c\x64")]), id="no-beats-a-bar"),
+        pytest.param(build_midi([(0, b"\xb0\x07\x90"), (0, b"\x90\x3c\x64")]), id="status-byte-as-data"),
+    ],
+)
+def test_rejects_what_has_no_timing_or_a_status_byte_for_data(data):
+    with pytest.raises(MidiFormatError):
+        parse_midi(data)
 
 
 def test_the_segment_lasts_to_the_end_of_the_bar_holding_the_end_of_track():

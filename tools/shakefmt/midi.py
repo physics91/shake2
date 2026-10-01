@@ -67,6 +67,8 @@ def _track_events(data: bytes):
                 raise MidiFormatError("track ends inside a meta event")
             meta = data[pos]
             size, pos = _varlen(data, pos + 1)
+            if pos + size > len(data):
+                raise MidiFormatError("track ends inside a meta event")
             yield tick, 0xFF, (meta, data[pos : pos + size])
             pos += size
             status = 0
@@ -74,12 +76,16 @@ def _track_events(data: bytes):
                 return
         elif status in (0xF0, 0xF7):
             size, pos = _varlen(data, pos)
+            if pos + size > len(data):
+                raise MidiFormatError("track ends inside a sysex event")
             pos += size
             status = 0
         else:
             size = 1 if status & 0xF0 in (0xC0, 0xD0) else 2
             if pos + size > len(data):
                 raise MidiFormatError("track ends inside a channel event")
+            if any(byte & 0x80 for byte in data[pos : pos + size]):
+                raise MidiFormatError("status byte inside a channel event")
             yield tick, status, data[pos : pos + size]
             pos += size
 
@@ -111,9 +117,13 @@ def parse_midi(data: bytes) -> Song:
     chunks = list(_chunks(data))
     if not chunks or chunks[0][0] != b"MThd":
         raise MidiFormatError("missing MThd header")
+    if len(chunks[0][1]) < 6:
+        raise MidiFormatError("short MThd header")
     _, _, division = struct.unpack_from(">HHH", chunks[0][1])
     if division & 0x8000:
         raise MidiFormatError("SMPTE time division is not supported")
+    if division == 0:
+        raise MidiFormatError("no ticks a beat")
 
     raw = []  # (tick, order, status, payload)
     for track_no, (cid, body) in enumerate(c for c in chunks[1:] if c[0] == b"MTrk"):
@@ -134,6 +144,8 @@ def parse_midi(data: bytes) -> Song:
             if meta == 0x51 and len(body) == 3:
                 tempo = int.from_bytes(body, "big")
             elif meta == 0x58 and len(body) >= 2:
+                if body[0] == 0:
+                    raise MidiFormatError("time signature of no beats a bar")
                 meter_tick, meter = tick, (body[0], body[1])
             continue
         decoded = _channel_event(status, payload)
