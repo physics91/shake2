@@ -697,7 +697,7 @@ export class StartScreen {
 
   /** The guild list's step from the keyboard, taken only where a click on the list would be. */
   private statusStep(step: 1 | -1): void {
-    if (this.blocked || this.helpScreen || this.message || this.quitBox) return;
+    if (this.busy || this.blocked || this.helpScreen || this.message || this.quitBox) return;
     this.statusPage.stepGuild(step);
   }
 
