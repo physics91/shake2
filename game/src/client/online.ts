@@ -395,8 +395,10 @@ class OnlineSession {
         this.startView?.loggedIn(message.account);
         if (this.enterAfterLogin) {
           this.enterAfterLogin = false;
-          // The form stands for scene 5's Go game too, which saves what scene 5 shows first.
+          // The form stands for scene 5's Go game too, which saves what scene 5 shows first and
+          // makes the list from the login's rows, in place of one made without the auth server.
           this.saveCharacter(CHARACTER_IDS[this.status.character], this.status.hue, this.status.useId);
+          this.listServer();
           this.enter(0);
           // The login's answer ended the busy cursor; the form goes on to a row's connection, which keeps it.
           if (this.socket) this.startView?.connecting();
