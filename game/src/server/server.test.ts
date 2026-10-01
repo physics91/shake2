@@ -541,6 +541,24 @@ describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
     c.socket.close();
   });
 
+  it("resolves close() past a TCP client that sent nothing or half a TLS handshake", async () => {
+    const tls = { certFile: join(dir, "cert.pem"), keyFile: join(dir, "key.pem") };
+    for (const data of [[], [0x16, 0x03, 0x01]]) {
+      const own = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5, tls });
+      const socket = await new Promise<Socket>((resolve) => {
+        const opened = connect(own.port, "127.0.0.1", () => resolve(opened));
+      });
+      socket.on("error", () => undefined);
+      if (data.length) socket.write(Buffer.from(data));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const closing = own.close();
+      const settled = await Promise.race([closing.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000))]);
+      socket.destroy();
+      await closing;
+      expect(settled).toBe(true);
+    }
+  }, 20_000);
+
   it("does not open for plain ws://, nor for a certificate the client does not trust", async () => {
     for (const scheme of ["ws", "wss"]) {
       const socket = new WsClient(`${scheme}://127.0.0.1:${server.port}/ws`);

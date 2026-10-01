@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server as HttpServer } from "node:http";
 import { createServer as createTlsServer } from "node:https";
 import type { Server as HttpsServer } from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { join } from "node:path";
 
 import type { WebSocket } from "ws";
@@ -275,6 +275,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const http: HttpServer | HttpsServer = tls
     ? createTlsServer({ cert: readFileSync(tls.certFile), key: readFileSync(tls.keyFile) }, respond)
     : createServer(respond);
+  // Every TCP socket from its accept on. close() destroys them: on wss:// one still in its TLS
+  // handshake is not among the connections closeAllConnections() knows.
+  const sockets = new Set<Socket>();
+  http.on("connection", (socket: Socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
   const trustedProxies = options.trustedProxies ?? [];
   const wss = new WebSocketServer({
     server: http,
@@ -388,9 +395,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
                 friendFile?.flush();
                 accountFile?.flush();
                 http.close(() => done());
-                // close() waits for every connection, and Node's request timeouts stop with it: a
-                // client that sent nothing or half a request would hold the exit. The sockets are gone.
-                http.closeAllConnections();
+                // close() waits for every connection, and Node's request and TLS handshake timeouts
+                // stop with it: a client that sent nothing or half a request would hold the exit.
+                for (const socket of sockets) socket.destroy();
               });
             });
           }),
