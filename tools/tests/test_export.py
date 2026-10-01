@@ -162,6 +162,18 @@ def test_guild_is_keyed_on_its_top_left_pixel(synthetic_tree, tmp_path):
     assert list(png.getdata()) == [(0, 0, 0, 0), (255, 0, 255, 255)]
 
 
+@pytest.mark.parametrize(
+    ("name", "key"),
+    [("textbox", 0xFFFF), ("ranking", 0xD842)],  # 0x4044aa, 0x41ccf9: rekeyed in 565 mode with 0x414b20
+)
+def test_textbox_and_ranking_take_their_callers_keys_not_magenta(synthetic_tree, tmp_path, name, key):
+    (synthetic_tree / "image" / f"{name}.shk").write_bytes(build_shk(3, 1, [0x0021, key, 0xF81F]))
+    export_tree(synthetic_tree, tmp_path / "out")
+
+    png = Image.open(tmp_path / "out" / "image" / f"{name}.png")
+    assert [pixel[3] for pixel in png.getdata()] == [255, 0, 255]
+
+
 def test_records_a_map_object_naming_a_missing_sheet(synthetic_tree, tmp_path):
     objects = [(0, 1, 0, 10, 10, 14, 14, len(export.OBJECT_SHEETS), 0, 0)]
     (synthetic_tree / "map_data" / "stage02.map").write_bytes(

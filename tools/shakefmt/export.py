@@ -44,6 +44,10 @@ SHK_KEYS: dict[str, int | str | None] = {
     "new_round_e": None,
     "new_game_e": None,
     "new_load": None,
+    # Rekeyed by their loaders in 565 mode (0x4044aa, 0x41ccf9). apple_filter2 gets 0xFFFF too
+    # (0x4043c9), but its one draw, the 0x413620 blend, keys on 0xF81F itself (0x41366f).
+    "textbox": 0xFFFF,
+    "ranking": 0xD842,
 }
 
 
