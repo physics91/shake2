@@ -249,6 +249,9 @@ describe("roomTitle", () => {
     expect(roomTitle("abcdefghijklmnopqrstuvwxyz")).toBe("abcdefghijklmnopqrs");
     expect(roomTitle("방\u0000제목😀")).toBe("방제목");
     expect(roomTitle("  ")).toBe("");
+    // A full-width space (A1 A1) is a character, as the client's create popup takes it.
+    expect(roomTitle("\u3000")).toBe("\u3000");
+    expect(roomTitle(" \u3000방\u3000 ")).toBe("\u3000방\u3000");
   });
 });
 

@@ -3,7 +3,7 @@
 import { MAX_PLAYERS } from "../sim/constants.ts";
 import { isGameMode, TEAM_COUNT } from "../sim/modes.ts";
 import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEvent } from "../sim/types.ts";
-import { cp949Bytes, cutBytes, trimChat, typeable } from "./cp949.ts";
+import { cp949Bytes, cutBytes, trimChat, trimSpaces, typeable } from "./cp949.ts";
 
 /**
  * 15: the notices (notice, status-notice). 14: the ranking (ranking, ranking-search). 13: scene 5's guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
@@ -443,9 +443,9 @@ export function sanitizeName(raw: string): string {
   return cleaned || "플레이어";
 }
 
-/** A room title as the create popup sends it: cp949 text, trimmed, at most 19 bytes. */
+/** A room title as the create popup sends it: cp949 text, spaces trimmed (0x4300d0), at most 19 bytes. */
 export function roomTitle(raw: string): string {
-  return cutBytes(typeable(raw).trim(), ROOM_TITLE_BYTES).trim();
+  return trimSpaces(cutBytes(trimSpaces(typeable(raw)), ROOM_TITLE_BYTES));
 }
 
 /**
