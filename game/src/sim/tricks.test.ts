@@ -278,6 +278,22 @@ describe("7. 폭주: the shield and a bomb set in the last one's flame, again an
     runUntil(state, () => third.exploded, 3);
     expect(player.alive).toBe(true);
   });
+
+  it("frees a burning bomb's cell when another fire over it ends, so the third goes in that cell (0x407392)", () => {
+    const state = rushStart(2, true);
+    const [first] = state.bombs;
+    runUntil(state, () => first.exploded, 80);
+    run(state, 6);
+    tap(state, SPACE);
+    const second = state.bombs[1];
+    runUntil(state, () => second.exploded, 3);
+    expect(first.fireCells).toContain(second.cell);
+
+    runUntil(state, () => !state.bombs.includes(first), 40);
+    expect(state.bombs).toContain(second);
+    tap(state, SPACE);
+    expect(state.bombs.filter((b) => b !== second).map((b) => b.cell)).toEqual([cellAt(state, 1, 0)]);
+  });
 });
 
 describe("8. 맵 반대편 죽이기: a throw across the area's edge", () => {

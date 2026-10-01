@@ -45,11 +45,12 @@ export function rawCellAt(state: MatchState, x: number, y: number): number | nul
 
 /**
  * The cell's bomb bit (tile C & 0x100): set by placing, landing and rolling in, cleared by a
- * throw and by the fire's end on every fire cell. So flying bombs and a TNT that has moved
- * (its new cell never gets the bit, 0x40701a) do not hold a cell.
+ * throw and by the fire's end on every fire cell. So flying bombs, a TNT that has moved (its new
+ * cell never gets the bit, 0x40701a) and a bomb still burning where another fire went out do not
+ * hold a cell.
  */
 export function holdsCell(bomb: BombState): boolean {
-  return bomb.motion < 5 && !(bomb.exploded && bomb.kind === BombKind.Tnt && bomb.tntLeft < TNT_MOVES);
+  return bomb.motion < 5 && !bomb.bitCleared && !(bomb.exploded && bomb.kind === BombKind.Tnt && bomb.tntLeft < TNT_MOVES);
 }
 
 export function hasBomb(state: MatchState, cell: number | null): boolean {

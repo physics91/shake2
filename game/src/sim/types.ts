@@ -268,6 +268,8 @@ export interface BombState {
   tntDir: Dir;
   /** Set by flame, a remote detonation or the bomb switch; it explodes at its next cell centre (+0xa4). */
   triggered: boolean;
+  /** Another fire's end took the bomb bit off its cell (0x407392); it holds a cell again once it rolls into one or lands. */
+  bitCleared: boolean;
   exploded: boolean;
   explodedTick: number;
   /** Cells the fire covers, in the order the fire draw writes them. */

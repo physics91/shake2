@@ -176,13 +176,17 @@ function moveTnt(state: MatchState, bomb: BombState): boolean {
 
 /**
  * Fire end (0x407277): the flame of every covered cell but walls goes out, even where another fire
- * burns. Each arm cell (not the centre) also loses the owner's occupancy bit until the player
- * loop; a nuke's loop indexes the tiles by its counter, so it clears cells 0..k-1 instead of its
- * own (0x407604, the same in 0x40a472 and 0x40e8a0).
+ * burns, and so does the bomb bit (0x40733c, 0x407392; a nuke's real cells 0x407660), even under
+ * a bomb still burning there. Each arm cell (not the centre) also loses the owner's occupancy bit
+ * until the player loop; a nuke's loop indexes the tiles by its counter, so it clears cells
+ * 0..k-1 instead of its own (0x407604, the same in 0x40a472 and 0x40e8a0).
  */
 function clearFire(state: MatchState, bomb: BombState): void {
   for (const cell of bomb.fireCells) {
     if (state.grid[cell] !== CellKind.Fixed) state.flame[cell] = 0;
+  }
+  for (const other of state.bombs) {
+    if (bomb.fireCells.includes(other.cell)) other.bitCleared = true;
   }
   const hidden = bomb.kind === BombKind.Nuke ? bomb.fireCells.map((_, i) => i) : bomb.fireCells.slice(1);
   for (const cell of hidden) state.hiddenOwners.push({ cell, playerId: bomb.owner });

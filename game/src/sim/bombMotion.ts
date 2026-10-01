@@ -67,7 +67,9 @@ function shift(state: MatchState, bomb: BombState, dx: number, dy: number): bool
   const from = cellAtPixel(state, bomb.x, bomb.y);
   bomb.x += dx;
   bomb.y += dy;
-  return cellAtPixel(state, bomb.x, bomb.y) !== from;
+  const moved = cellAtPixel(state, bomb.x, bomb.y) !== from;
+  if (moved) bomb.bitCleared = false;
+  return moved;
 }
 
 /** Blocked off-centre (0x415ac5-0x415c4e): past its cell's centre it snaps back to it, otherwise it steps on. */
@@ -215,6 +217,7 @@ function flyAcross(state: MatchState, bomb: BombState): number {
 function land(state: MatchState, bomb: BombState, cell: number | null, bounce: number): void {
   if (cell !== null && isFree(state, cell)) {
     bomb.motion = 0;
+    bomb.bitCleared = false;
   } else {
     bomb.flightLeft = bounce;
   }

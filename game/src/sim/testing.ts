@@ -131,6 +131,7 @@ export function addBomb(state: MatchState, cell: number, fields: Partial<BombSta
     tntLeft: 0,
     tntDir: Dir.Down,
     triggered: false,
+    bitCleared: false,
     exploded: false,
     explodedTick: 0,
     fireCells: [],
