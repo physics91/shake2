@@ -420,6 +420,9 @@ export class LobbyScreen {
 
   /** SEND_create, SEND_join (0x448790, 0x448800): the lock and the busy cursor until the answer; a room's answer ends the lobby. */
   waitForRoom(): void {
+    // The page's create or join stands for a popup's OK, which closes it as the request goes
+    // (0x4300d0, 0x42fe60): an Enter during the wait has no popup left to send again.
+    if (this.popup === "create" || this.popup === "password") this.closePopup(true);
     this.roomAsked = true;
   }
 
