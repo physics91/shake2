@@ -1058,7 +1058,8 @@ class OnlineSession {
     if (!local || line === null) return;
     const submit = chatSubmit(line, true);
     if (submit.kind === "clear") {
-      local.log = [];
+      // In place: the room's screen takes this array once its art is in.
+      local.log.length = 0;
       this.roomView?.clearChat();
       return;
     }
