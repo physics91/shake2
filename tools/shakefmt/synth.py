@@ -29,11 +29,13 @@ voice.cpp, control.cpp, csynth.cpp, instr.cpp, midi.cpp):
   expression and bend (volume and pan too when it has a value) and lets the pedal go;
   RPN 0's data entry MSB sets the bend range in semitones (LSB ignored, NRPN deselects),
   and a bend already held takes a new range at once (midi.cpp keeps no time-stamped range).
+- Regions are chosen by key alone, and an instrument without a region for the key is
+  passed over (instr.cpp).
 - Bank select is ignored: shake.exe sets GUID_StandardMIDIFile (the same GUID as
   GUID_IgnoreBankSelectForGM) on every segment, and a variation bank that gm.dls
-  has still plays bank 0 on the real synthesizer. A drum kit gm.dls lacks plays the
-  standard kit, which the lobby tracks shake.exe downloads at start keep on the port
-  (alone, kit 1 is silent).
+  has still plays bank 0 on the real synthesizer. A drum kit gm.dls lacks, or one
+  without the key, plays the standard kit, which the lobby tracks shake.exe downloads
+  at start keep on the port (alone, kit 1 is silent).
 
 Measured on this PC's dmsynth.dll against the published sample (shakefmt.bgm,
 shakefmt.dmvoice and original/FIDELITY.md): a voice at unity reaches full scale, twice
@@ -348,8 +350,8 @@ class Scheduler:
     def note_on(self, t: float, channel: int, key: int, velocity: int):
         ch = self.channels[channel]
         drums = channel == DRUM_CHANNEL
-        inst = find_instrument(self.col, bank=0, program=ch.program, drums=drums)  # bank select ignored
-        reg = find_region(inst, key, velocity) if inst else None
+        inst = find_instrument(self.col, bank=0, program=ch.program, drums=drums, key=key)  # bank select ignored
+        reg = find_region(inst, key) if inst else None
         if reg is None:
             return
         program = (inst.bank, inst.program, inst.drums)

@@ -245,6 +245,35 @@ def test_channel_10_uses_the_drum_kit_and_key_groups_choke_each_other():
     assert at(882) > 100 * at(441)
 
 
+def test_a_drum_key_the_kit_lacks_plays_from_the_standard_kit():
+    # control.cpp: with no region for the key in the kit, the note-on retries with
+    # F_INSTRUMENT_DRUMS alone, the standard kit (gm.dls's SFX kit 56 covers keys 39-84 only).
+    looped = wsmp(unity=36, loop=(0, 2200))
+    standard = instrument(0, [region(key=(27, 87), wave=0, sample=looped)], drums=True, articulation=envelope(release=tc(0.01)))
+    sfx = instrument(56, [region(key=(39, 84), wave=0, sample=looped)], drums=True, articulation=envelope(release=tc(0.01)))
+    col = decode_dls(build_dls([standard, sfx], [wave(sine(441, 2200 / RATE))]))
+    out = render(song((0.0, "program", 9, (56,)), (0.0, "on", 9, (36, 127)), (0.5, "off", 9, (36, 0))), col, RATE)
+
+    assert rms_db(window(out, 0.1, 0.4)) > -20
+
+
+def test_regions_are_chosen_by_key_alone():
+    # instr.cpp CInstrument::ScanForRegion: the first region whose key range holds the note.
+    looped = wsmp(unity=69, loop=(0, 2200))
+    split = instrument(
+        0,
+        [
+            region(key=(0, 127), vel=(0, 63), wave=0, sample=looped),
+            region(key=(0, 127), vel=(64, 127), wave=1, sample=looped),
+        ],
+        articulation=envelope(release=tc(0.01)),
+    )
+    col = decode_dls(build_dls([split], [wave(sine(441, 2200 / RATE)), wave(sine(882, 2200 / RATE))]))
+    out = render(song((0.0, "on", 0, (69, 100)), (0.5, "off", 0, (69, 0))), col, RATE)
+
+    assert peak_hz(window(out, 0.05, 0.45)) == pytest.approx(441, rel=0.01)
+
+
 def test_bank_select_is_ignored_even_when_the_bank_exists():
     # shake.exe sets GUID_StandardMIDIFile (= GUID_IgnoreBankSelectForGM) on every segment (0x43f92c).
     looped = wsmp(unity=69, loop=(0, 2200))

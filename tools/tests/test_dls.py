@@ -63,11 +63,12 @@ def test_region_sample_falls_back_to_wave_sample():
 def test_lookup_prefers_exact_bank_and_falls_back_to_bank_zero():
     col = decode_dls(small_collection())
 
-    assert find_instrument(col, bank=0, program=0, drums=False).name == "Piano"
-    assert find_instrument(col, bank=8 << 7, program=0, drums=False).name == "Piano"
-    assert find_instrument(col, bank=0, program=5, drums=True).name == "Standard"
-    assert find_instrument(col, bank=0, program=99, drums=False) is None
-    assert find_region(col.instruments[0], key=72, velocity=100).wave_index == 1
+    assert find_instrument(col, bank=0, program=0, drums=False, key=60).name == "Piano"
+    assert find_instrument(col, bank=8 << 7, program=0, drums=False, key=60).name == "Piano"
+    assert find_instrument(col, bank=0, program=5, drums=True, key=35).name == "Standard"
+    assert find_instrument(col, bank=0, program=0, drums=True, key=40) is None  # no kit has key 40
+    assert find_instrument(col, bank=0, program=99, drums=False, key=60) is None
+    assert find_region(col.instruments[0], key=72).wave_index == 1
 
 
 def test_rejects_non_dls_data():

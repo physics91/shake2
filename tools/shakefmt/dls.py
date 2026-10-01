@@ -251,25 +251,32 @@ def _check_loop(sample: Sample | None, wave: Wave) -> None:
         raise DlsFormatError(f"loop {sample.loop} runs past a wave of {len(wave.pcm)} samples")
 
 
-def find_instrument(col: Collection, bank: int, program: int, drums: bool) -> Instrument | None:
-    """Exact bank/program first, then a fallback.
+def find_instrument(col: Collection, bank: int, program: int, drums: bool, key: int) -> Instrument | None:
+    """Exact bank/program first, then a fallback; only an instrument with a region for the key counts.
 
-    Drum kits fall back to the standard kit, bank 0 program 0: the Microsoft synth
-    retries with F_INSTRUMENT_DRUMS alone, and shake.exe's lobby tracks keep that kit
-    downloaded (measured: kit 1 alone is silent). Melodic programs fall back to bank 0.
-    The synthesizer model asks for bank 0 anyway, as shake.exe's segments ignore bank
-    select (shakefmt.synth).
+    The Microsoft synth passes over an instrument whose regions miss the key
+    (CInstManager::GetInstrument). Drum kits then fall back to the standard kit, bank 0
+    program 0: the synth retries with F_INSTRUMENT_DRUMS alone, a kit that lacks the key
+    included, and shake.exe's lobby tracks keep that kit downloaded (measured: kit 1
+    alone is silent). Melodic programs fall back to bank 0. The synthesizer model asks
+    for bank 0 anyway, as shake.exe's segments ignore bank select (shakefmt.synth).
     """
     candidates = [(bank, program), (0, 0) if drums else (0, program)]
     for want_bank, want_program in candidates:
         for inst in col.instruments:
-            if inst.drums == drums and inst.bank == want_bank and inst.program == want_program:
+            if (
+                inst.drums == drums
+                and inst.bank == want_bank
+                and inst.program == want_program
+                and find_region(inst, key) is not None
+            ):
                 return inst
     return None
 
 
-def find_region(inst: Instrument, key: int, velocity: int) -> Region | None:
+def find_region(inst: Instrument, key: int) -> Region | None:
+    """The first region holding the key: DLS Level 1 regions are chosen by key alone (CInstrument::ScanForRegion)."""
     for region in inst.regions:
-        if region.key_lo <= key <= region.key_hi and region.vel_lo <= velocity <= region.vel_hi:
+        if region.key_lo <= key <= region.key_hi:
             return region
     return None
