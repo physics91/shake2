@@ -157,6 +157,15 @@ describe("round start", () => {
 
     expect(hurries).toEqual([70]);
   });
+
+  it("takes no keys on the wait and countdown screens: Space held through them places a bomb at once (0x45aea1)", () => {
+    const state = createMatch(layoutFromAscii(ARENA), setups(2), VERSUS, 1);
+    const space: InputFrame = { dir: null, bomb: true };
+    runUntil(state, () => state.phase === "playing", TO_PLAY + 10, { 1: space });
+    expect(state.players[0].actionLatch).toBe(false);
+    step(state, { 1: space });
+    expect(state.bombs.filter((b) => b.owner === 1)).toHaveLength(1);
+  });
 });
 
 describe("round end", () => {

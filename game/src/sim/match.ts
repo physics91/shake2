@@ -156,13 +156,13 @@ export function step(state: MatchState, inputs: InputMap): void {
   state.tick += 1;
   const elapsed = phaseElapsedMs(state);
 
+  // The wait and countdown screens take no keys: the input poll returns before the players
+  // (0x45aea1-0x45aec2), so a key held there leaves the action latch as it was.
   switch (state.phase) {
     case "waiting":
-      trackButtons(state, inputs);
       if (elapsed >= WAIT_MS) setPhase(state, "countdown");
       break;
     case "countdown":
-      trackButtons(state, inputs);
       // The countdown starts under a fade (0x460950): the field stands still while it darkens,
       // the switch's own frame being the first of the darkening.
       if (state.tick - state.phaseTick >= FADE_OUT_FRAMES) animateObjects(state);
@@ -279,13 +279,6 @@ function runAction(state: MatchState, player: PlayerState, action: Action): void
   else if (action === Action.Attack) handled = attackAction(state, player);
   else if (action === Action.Evade) handled = evadeAction(state, player);
   if (handled) player.actionLatch = true;
-}
-
-function trackButtons(state: MatchState, inputs: InputMap): void {
-  for (const player of state.players) {
-    const pressed = inputs[player.id];
-    if (pressed !== null) player.actionLatch = actionOf(pressed) !== Action.None;
-  }
 }
 
 function isWalking(player: PlayerState): boolean {
