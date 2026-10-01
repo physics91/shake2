@@ -124,7 +124,10 @@ const DROP_OFFSETS: [number, number][] = [
   [-1, 1],
 ];
 
-/** After the death animation (0x453270): one of each raised stat goes to the first free neighbour (0x410920). */
+/**
+ * After the death animation (0x453270): one of each raised stat, then 손, 발 and 점프 if held
+ * (0x4534f4, 0x45357c, 0x453604), each to the first free neighbour (0x410920).
+ */
 export function scatterItems(state: MatchState, player: PlayerState): void {
   const cell = playerCell(state, player);
   if (cell === null) return;
@@ -132,6 +135,9 @@ export function scatterItems(state: MatchState, player: PlayerState): void {
   if (player.bombCapacity > START_BOMBS) kinds.push(0);
   if (player.firePower > START_FIRE) kinds.push(1);
   if (player.speed > START_SPEED) kinds.push(2);
+  if (player.inv.glove) kinds.push(ItemKind.Glove);
+  if (player.inv.kick) kinds.push(ItemKind.Kick);
+  if (player.inv.jump !== 0) kinds.push(ItemKind.Jump);
   for (const kind of kinds) {
     const target = freeNeighbour(state, cell);
     if (target === null) continue;

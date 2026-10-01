@@ -266,6 +266,23 @@ describe("death drops", () => {
       [cellAt(state, 1, 0), ItemKind.Speed],
     ]);
   });
+
+  it("drops 손, 발 and 점프 after the stats (0x4534f4, 0x45357c, 0x453604)", () => {
+    const state = playingMatch(["....", ".1..", "...."]);
+    const player = state.players[0];
+    Object.assign(player, { speed: 7 });
+    Object.assign(player.inv, { glove: true, kick: true, jump: 1 });
+    state.flame[cellAt(state, 1, 1)] = 1;
+
+    runUntil(state, () => player.gone);
+
+    expect(state.items.map((i) => [i.cell, i.kind])).toEqual([
+      [cellAt(state, 0, 1), ItemKind.Speed],
+      [cellAt(state, 0, 0), ItemKind.Glove],
+      [cellAt(state, 1, 0), ItemKind.Kick],
+      [cellAt(state, 2, 0), ItemKind.Jump],
+    ]);
+  });
 });
 
 describe("sudden death", () => {
