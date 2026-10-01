@@ -237,6 +237,14 @@ def test_records_an_empty_picture_instead_of_stopping(synthetic_tree, tmp_path):
     assert Path(tmp_path / "out" / "image" / "Logo.png").exists()
 
 
+def test_records_a_map_on_an_empty_background_leaving_no_metadata(synthetic_tree, tmp_path):
+    (synthetic_tree / "map_data" / "stage.shk").write_bytes(build_shk(0, 120, []))
+    index = export_tree(synthetic_tree, tmp_path / "out")
+
+    assert entry_for(index, "map_data/stage01.map")["error"]
+    assert not (tmp_path / "out" / "map_data" / "stage01.json").exists()
+
+
 @pytest.mark.skipif(not DEFAULT_SRC.is_dir(), reason="original Shake0311 files not extracted")
 def test_real_shake0311_tree_exports_without_errors(tmp_path):
     index = export_tree(DEFAULT_SRC, tmp_path)

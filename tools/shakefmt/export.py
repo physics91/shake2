@@ -150,8 +150,9 @@ def _export_map(src: Path, rel: Path, dst: Path) -> dict:
         raise MapFormatError("a block, brick or object draws an animation its sheet lacks")
     metadata = rel.with_suffix(".json")
     preview = rel.with_suffix(".preview.png")
-    _write_json(dst / metadata, _level_metadata(level, rel, preview))
+    # The preview first: a map whose picture cannot be saved leaves no metadata behind.
     _save_png(render_level_preview(level, background.rgba, brick_sheets, object_sheets), dst / preview)
+    _write_json(dst / metadata, _level_metadata(level, rel, preview))
     return {
         "source": rel.as_posix(),
         "kind": "map",
