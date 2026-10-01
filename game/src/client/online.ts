@@ -189,7 +189,7 @@ class OnlineSession {
   private localGame: { stop(): void } | null = null;
   /** The ranking's list, scene 5's and the lobby window's. */
   private readonly ranking = new RankingBoard();
-  /** The lobby's nickname popup waits for its save's answer, which comes as the greeting's does. */
+  /** The lobby's nickname popup waits for its save's answer, which comes as the greeting's does; a new connection waits for none. */
   private lobbySaving: "nick" | null = null;
   /** [0x4927c8]: the ID a slot's whisper icon or the lobby's ID popup chose; only an empty ID popup clears it. */
   private whisperTarget = "";
@@ -554,6 +554,7 @@ class OnlineSession {
     const socket = this.socket;
     this.socket = null;
     this.ranking.drop();
+    this.lobbySaving = null;
     this.welcome = null;
     this.lobby = null;
     this.room = null;
@@ -707,6 +708,7 @@ class OnlineSession {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.ranking.drop();
+      this.lobbySaving = null;
       const full = this.awaitingVersion;
       this.awaitingVersion = false;
       this.socket = null;
@@ -904,6 +906,7 @@ class OnlineSession {
     const socket = this.socket;
     this.socket = null;
     this.ranking.drop();
+    this.lobbySaving = null;
     this.awaitingVersion = false;
     socket?.close();
   }
