@@ -385,6 +385,11 @@ export class StartScreen {
     return this.scene;
   }
 
+  /** A fade, the help screen, a message box, the quit box or the memo: the list's rows take no click (0x459041, 0x4591fb). */
+  get dropsClicks(): boolean {
+    return this.blocked || this.helpScreen || this.message !== null || this.quitBox !== null || this.memo;
+  }
+
   /** The load query's answer, already in the list (thread 0x448410): read out. */
   serverInfo(row: ServerRow): void {
     this.announce(`${row.name} 서버: 부하 ${percentText(row.load).trim()}, 응답 ${row.ping < 0 ? "없음" : `${row.ping} ms`}`);
