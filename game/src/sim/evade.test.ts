@@ -123,6 +123,20 @@ describe("burrow (item 17)", () => {
     expect(player.inv.burrow).toBe(false);
   });
 
+  it("comes up facing up when the arrow was let go as it went down: the stop takes the update's start direction (0x4528a8)", () => {
+    const state = playingMatch([".......", "...1...", "......."]);
+    const player = state.players[0];
+    player.inv.burrow = true;
+    run(state, 3, { 1: walk(Dir.Right) });
+    run(state, 1, { 1: Z });
+    expect(player).toMatchObject({ anim: Anim.Burrow, stopRequested: true });
+
+    runUntil(state, () => player.anim === Anim.Emerge);
+    runUntil(state, () => player.anim !== Anim.Emerge);
+
+    expect(player).toMatchObject({ anim: Anim.Stand + Dir.Up, stopRequested: false });
+  });
+
   it("shows the dust's 9 frames two updates each, the first also in the update it appears", () => {
     const state = playingMatch(["1......"]);
     const player = state.players[0];

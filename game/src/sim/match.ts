@@ -450,13 +450,15 @@ const JUMP_STEP_ACROSS = 6;
  * 0x4525c0: walking frames speed up with speed; a finished walk cycle is a footstep; a finished
  * jump, kick or throw returns to standing in its direction (0x4527fd). Underground holds the
  * last frame; coming up ends facing down. A stop request takes effect here once the player is in
- * a walk or stand state (0x452897). Returns whether the frame advanced.
+ * a walk or stand state (0x452897), standing in the direction the update started with (0x4528a8):
+ * up when coming up ends it (0x16 & 3). Returns whether the frame advanced.
  */
 function advanceAnimation(state: MatchState, player: PlayerState, now: number, slowFps: number | null): boolean {
   const walking = isWalking(player);
   const [timingFps, frames] = animTiming(player);
   const fps = slowFps ?? timingFps;
   if (!animDue(now, player.animMs, fps)) return false;
+  const startDir = player.anim % 4;
   player.animMs = now;
   player.frame += 1;
   if (player.frame >= frames) {
@@ -473,7 +475,7 @@ function advanceAnimation(state: MatchState, player: PlayerState, now: number, s
   }
   if (player.stopRequested && player.anim < Anim.Jump) {
     player.stopRequested = false;
-    player.anim = Anim.Stand + (player.anim % 4);
+    player.anim = Anim.Stand + startDir;
     player.frame = 0;
   }
   return true;
