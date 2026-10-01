@@ -490,7 +490,8 @@ export class RoomScreen {
       event.preventDefault();
       this.helpScreen = false;
       const result = boxKey(overlay.box, event.key);
-      overlay.hover = boxKeyCursor(overlay.box);
+      // Only ← and → put the cursor on a button (0x40394f, 0x4039dd).
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") overlay.hover = boxKeyCursor(overlay.box);
       if (result) this.answerBox(result === "exit");
       return;
     }
