@@ -57,6 +57,7 @@ def cells_with(kind_of_cell0):
         pytest.param(build_map(fixed=[(5, 0)]), id="unknown-sprite"),
         pytest.param(build_map(fixed=[(0, 9)], cells=cells_with(0)), id="cell-out-of-grid"),
         pytest.param(build_map(area=(50, 49, 131, 113)), id="area-not-divisible"),
+        pytest.param(build_map(grid=(0, 0), cells=[]), id="empty-grid"),
     ],
 )
 def test_rejects_malformed_or_inconsistent_maps(data):

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from shakefmt.map import Level, decode_map
+from shakefmt.map import Level, MapFormatError, decode_map
 from shakefmt.preview import render_level_preview
 from shakefmt.shk import TOP_LEFT, decode_shk
 from shakefmt.spr import SprSheet, decode_spr
@@ -133,6 +133,8 @@ def _export_spr(src: Path, rel: Path, dst: Path) -> dict:
 
 def _export_map(src: Path, rel: Path, dst: Path) -> dict:
     level = decode_map((src / rel).read_bytes())
+    if any(o.unknown_a >= len(OBJECT_SHEETS) for o in level.objects):
+        raise MapFormatError(f"object sheet beyond the {len(OBJECT_SHEETS)} shake.exe loads")
     background = decode_shk((src / rel.parent / f"{level.background}.shk").read_bytes())
     brick_sheets = {
         name: decode_spr((src / "spr_data" / "brick" / name).read_bytes()) for name in set(level.sprites)

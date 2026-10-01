@@ -55,12 +55,16 @@ def _track_events(data: bytes):
     while pos < len(data):
         delta, pos = _varlen(data, pos)
         tick += delta
+        if pos >= len(data):
+            raise MidiFormatError("track ends inside an event")
         if data[pos] & 0x80:
             status = data[pos]
             pos += 1
         elif not status:
             raise MidiFormatError("running status without a previous status byte")
         if status == 0xFF:
+            if pos >= len(data):
+                raise MidiFormatError("track ends inside a meta event")
             meta = data[pos]
             size, pos = _varlen(data, pos + 1)
             yield tick, 0xFF, (meta, data[pos : pos + size])
@@ -74,6 +78,8 @@ def _track_events(data: bytes):
             status = 0
         else:
             size = 1 if status & 0xF0 in (0xC0, 0xD0) else 2
+            if pos + size > len(data):
+                raise MidiFormatError("track ends inside a channel event")
             yield tick, status, data[pos : pos + size]
             pos += size
 

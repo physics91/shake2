@@ -5,6 +5,7 @@ import pytest
 from PIL import Image
 
 from builders import build_anim, build_map, build_shk, build_spr
+from shakefmt import export
 from shakefmt.export import BORROWED, DEFAULT_SRC, export_borrowed, export_tree
 
 RED_BGR = (0, 0, 255)
@@ -139,6 +140,17 @@ def test_guild_is_keyed_on_its_top_left_pixel(synthetic_tree, tmp_path):
 
     png = Image.open(tmp_path / "out" / "image" / "guild.png")
     assert list(png.getdata()) == [(0, 0, 0, 0), (255, 0, 255, 255)]
+
+
+def test_records_a_map_object_naming_a_missing_sheet(synthetic_tree, tmp_path):
+    objects = [(0, 1, 0, 10, 10, 14, 14, len(export.OBJECT_SHEETS), 0, 0)]
+    (synthetic_tree / "map_data" / "stage02.map").write_bytes(
+        build_map(background="stage", title="02오브젝트", sprites=("b1.spr",), objects=objects)
+    )
+    index = export_tree(synthetic_tree, tmp_path / "out")
+
+    assert entry_for(index, "map_data/stage02.map")["error"]
+    assert index["summary"]["errors"] == 1
 
 
 def test_lists_other_files_without_converting(synthetic_tree, tmp_path):

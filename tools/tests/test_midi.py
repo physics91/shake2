@@ -83,6 +83,20 @@ def test_rejects_smpte_division_and_non_midi():
         parse_midi(build_midi([], division=0xE728))
 
 
+@pytest.mark.parametrize(
+    "track",
+    [
+        pytest.param(b"\x00\x90\x3c\x64\x10", id="delta-without-event"),
+        pytest.param(b"\x00\x90\x3c", id="cut-channel-event"),
+        pytest.param(b"\x00\xff", id="cut-meta-event"),
+    ],
+)
+def test_rejects_a_track_cut_mid_event(track):
+    header = b"MThd" + (6).to_bytes(4, "big") + bytes([0, 0, 0, 1, 0, 120])
+    with pytest.raises(MidiFormatError):
+        parse_midi(header + b"MTrk" + len(track).to_bytes(4, "big") + track)
+
+
 def test_the_segment_lasts_to_the_end_of_the_bar_holding_the_end_of_track():
     # DirectMusic's segment for a MIDI file (GetLength on all 16 tracks) and so the loop period.
     four_four = (0, b"\xff\x58\x04\x04\x02\x18\x08")

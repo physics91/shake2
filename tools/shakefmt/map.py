@@ -152,6 +152,8 @@ def decode_map(data: bytes) -> Level:
 
 def _validate(level: Level) -> None:
     left, top, right, bottom = level.area
+    if not level.grid_width or not level.grid_height:
+        raise MapFormatError(f"empty grid {level.grid_width}x{level.grid_height}")
     if (right - left) % level.grid_width or (bottom - top) % level.grid_height:
         raise MapFormatError(f"play area {level.area} not divisible by grid {level.grid_width}x{level.grid_height}")
 
