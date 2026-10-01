@@ -277,9 +277,11 @@ class OnlineSession {
         exit: () => {
           sounds.stopMusic();
           this.auth.dispose();
-          // A connection under way goes with the program, and so does the form's wait for one.
+          // A connection under way goes with the program, and so do the form's wait for one and the
+          // fade out toward the lobby or the local room, whose screen goes too.
           this.dropSocket();
           this.enterAfterLogin = false;
+          this.leavingStart = false;
           this.welcome = null;
           this.lobby = null;
           this.account = null;
