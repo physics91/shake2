@@ -357,8 +357,10 @@ export class StartScreen {
       assets: { window: options.assets.signUp, button: options.assets.button, button2: options.assets.button2 },
       announce: (text) => this.announce(text),
       message: (text) => this.showMessage(text),
-      register: (request) => options.register(request),
-      check: (kind, text) => options.check(kind, text),
+      // The auth connection takes one request at a time and drops the rest unanswered: while the
+      // login waits, a check or a sign-up fails at once as a send that cannot go, not a window locked.
+      register: (request) => !this.busy && options.register(request),
+      check: (kind, text) => !this.busy && options.check(kind, text),
     });
     this.scene = options.begin;
     const now = performance.now();
