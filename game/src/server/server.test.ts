@@ -420,6 +420,15 @@ describe.skipIf(!HAS_ASSETS)("starting up", () => {
       holder.close();
     }
   });
+
+  it("rejects a port listen() refuses at once (out of range, not a number), and leaves no timer running", async () => {
+    const timers = () => process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
+    for (const port of [70_000, Number.NaN]) {
+      const before = timers();
+      await expect(startServer({ host: "127.0.0.1", port, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5 })).rejects.toMatchObject({ code: "ERR_SOCKET_BAD_PORT" });
+      expect(timers()).toBe(before);
+    }
+  });
 });
 
 describe.skipIf(!HAS_ASSETS)("shutting down", () => {

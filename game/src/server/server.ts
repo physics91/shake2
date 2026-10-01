@@ -357,7 +357,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   return new Promise((resolve, reject) => {
     // A port that cannot be had: wss passes the error on (with no listener of its own it would throw
-    // past http's), and the timers go, so nothing is left running.
+    // past http's), and the timers go, so nothing is left running. A port listen() refuses at once
+    // (out of range, not a number) is thrown instead of emitted.
     const failed = (error: Error) => {
       clearInterval(clock);
       clearInterval(heartbeat);
@@ -365,7 +366,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     };
     http.once("error", failed);
     wss.once("error", failed);
-    http.listen(options.port, options.host, () => {
+    const listening = () => {
       http.off("error", failed);
       wss.off("error", failed);
       const port = (http.address() as AddressInfo).port;
@@ -391,6 +392,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             });
           }),
       });
-    });
+    };
+    try {
+      http.listen(options.port, options.host, listening);
+    } catch (error) {
+      failed(error as Error);
+    }
   });
 }
