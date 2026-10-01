@@ -145,6 +145,10 @@ describe("phaseFades (findings_fades C)", () => {
     expect(phaseFades("countdown", "match-over")).toBe(true);
   });
 
+  it("fades into the final result when a leave ends the match on the round result (0x44f341 -> 0x44eb1c)", () => {
+    expect(phaseFades("round-over", "match-over")).toBe(true);
+  });
+
   it("cuts to play and from the round result to the next wait screen", () => {
     expect(phaseFades("countdown", "playing")).toBe(false);
     expect(phaseFades("round-over", "waiting")).toBe(false);
