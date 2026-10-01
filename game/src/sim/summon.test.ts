@@ -100,6 +100,22 @@ describe("summon capsule pickup (0x40b2ac, 0x453d00)", () => {
     expect(cell).toBe(2);
   });
 
+  it("lets the one brought back act on a key held through the death: the dead read no key (0x4021bb), so their latch goes (0x45b5d7)", () => {
+    const state = summonMatch([1, 1, 2, 2]);
+    const space = { dir: null, bomb: true };
+    const dead = byId(state, 2);
+    state.flame[2] = 1;
+    step(state, {});
+    state.flame[2] = 0;
+    expect(dead.alive).toBe(false);
+    runUntil(state, () => dead.gone, 200, { 2: space });
+    runUntil(state, () => dead.alive, 100, { 1: { dir: Dir.Right, bomb: false }, 2: space });
+    expect(dead.actionLatch).toBe(false);
+
+    step(state, { 2: space });
+    expect(state.bombs.filter((b) => b.owner === 2)).toHaveLength(1);
+  });
+
   it("brings back a dead member of the picker's team, whoever dropped the capsule", () => {
     const state = summonMatch([1, 1, 2, 2]);
     goneOut(byId(state, 4));

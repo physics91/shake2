@@ -235,8 +235,10 @@ function applyInputs(state: MatchState, inputs: InputMap): void {
   for (const player of state.players) {
     const pressed = inputs[player.id];
     if (pressed === null) continue;
+    // The dead read no key (0x4021bb: the death state is past the walk, stand and kick groups), so
+    // the action is none and the latch goes (0x45b5d7).
     if (!player.alive) {
-      player.actionLatch = actionOf(pressed) !== Action.None;
+      player.actionLatch = false;
       continue;
     }
     if (player.flight !== null || player.anim >= Anim.Burrow || player.status.frozen !== null) continue;
