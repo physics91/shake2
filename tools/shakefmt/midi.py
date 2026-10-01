@@ -82,6 +82,8 @@ def _track_events(data: bytes):
                 raise MidiFormatError("track ends inside a sysex event")
             pos += size
             status = 0
+        elif status >= 0xF0:
+            raise MidiFormatError(f"system message 0x{status:02X} in a track")
         else:
             size = 1 if status & 0xF0 in (0xC0, 0xD0) else 2
             if pos + size > len(data):

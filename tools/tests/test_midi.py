@@ -106,6 +106,11 @@ def test_rejects_a_track_cut_mid_event(track):
         pytest.param(build_midi([(0, b"\x90\x3c\x64")], division=0), id="no-ticks-a-beat"),
         pytest.param(build_midi([(0, b"\xff\x58\x04\x00\x02\x18\x08"), (0, b"\x90\x3c\x64")]), id="no-beats-a-bar"),
         pytest.param(build_midi([(0, b"\xb0\x07\x90"), (0, b"\x90\x3c\x64")]), id="status-byte-as-data"),
+        # A track event is a channel message, a sysex (F0/F7) or a meta event (FF): nothing else.
+        *(
+            pytest.param(build_midi([(0, b"\xc0\x05"), (0, bytes([status])), (120, b"\x06")]), id=f"system-status-{status:x}")
+            for status in (0xF1, 0xF6, 0xF8, 0xFE)
+        ),
     ],
 )
 def test_rejects_what_has_no_timing_or_a_status_byte_for_data(data):
