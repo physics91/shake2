@@ -59,14 +59,16 @@ function burnCell(state: MatchState, bomb: BombState, cell: number): Burn {
 /**
  * 0x417170: works out the cells at once, burning bricks and items; flame kinds are only
  * written by the fire draw from the next update on (blast zones set theirs at once). On a
- * 폭발증폭 cell the power becomes the map width (0x41720a). The fire's frame restarts at 0 and
- * its timer is left as it was.
+ * 폭발증폭 cell the power becomes the map width (0x41720a); X and nuke bombs branch off before
+ * that test (0x4171bf-0x4171dd) and keep theirs. The fire's frame restarts at 0 and its timer is
+ * left as it was.
  */
 export function explode(state: MatchState, bomb: BombState): void {
   bomb.exploded = true;
   bomb.explodedTick = state.tick;
   bomb.fireFrame = 0;
-  if (tileB(state, bomb.cell) & BOOST) bomb.power = state.layout.width;
+  const cross = bomb.kind !== BombKind.X && bomb.kind !== BombKind.Nuke;
+  if (cross && tileB(state, bomb.cell) & BOOST) bomb.power = state.layout.width;
   bomb.fireCells = bomb.kind === BombKind.Nuke ? nukeCells(state, bomb) : rayCells(state, bomb);
   state.events.push({ type: "explode", cell: bomb.cell });
 }

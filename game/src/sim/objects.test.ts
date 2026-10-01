@@ -9,7 +9,7 @@ import { addBomb, burning, cellAt, IDLE, layoutFromAscii, playingMatch, run, run
 import { msvcRand } from "./rng.ts";
 import { objectIndex, PAD_BITS, tileB, WARP_BITS } from "./tiles.ts";
 import type { InputFrame, MatchState } from "./types.ts";
-import { Anim, Dir, ItemKind } from "./types.ts";
+import { Anim, BombKind, Dir, ItemKind } from "./types.ts";
 import { applySuddenDeath } from "./world.ts";
 
 const DOWN: InputFrame = { dir: Dir.Down, bomb: false };
@@ -179,6 +179,15 @@ describe("폭발증폭 (0x41720a, 0x457bdc)", () => {
     explode(state, bomb);
     expect(bomb.power).toBe(8);
     expect(bomb.fireCells).toContain(cellAt(state, 6, 0));
+  });
+
+  it("leaves an X bomb's diagonals at 2: X and nuke branch off before the test (0x4171bf)", () => {
+    const state = playingMatch([".......", ".......", ".......", "...p...", ".......", ".......", "1......"]);
+    const bomb = addBomb(state, cellAt(state, 3, 3), { kind: BombKind.X, anim: BombKind.X, power: 2 });
+    explode(state, bomb);
+    expect(bomb.power).toBe(2);
+    expect(bomb.fireCells).toHaveLength(1 + 4 * 2);
+    expect(bomb.fireCells).not.toContain(cellAt(state, 0, 0));
   });
 
   it("gives a bomb placed there the map width", () => {
