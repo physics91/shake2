@@ -51,7 +51,8 @@ const server = await startServer({
   allowedOrigins: list(process.env.ALLOWED_ORIGINS),
   maxRooms: count(process.env.MAX_ROOMS, "MAX_ROOMS") ?? 50,
   maxUsers: count(process.env.MAX_USERS, "MAX_USERS"),
-  channels: process.env.CHANNELS
+  // A blank CHANNELS= line is unset too, so CHANNEL still names the one row.
+  channels: process.env.CHANNELS?.trim()
     ? parseChannels(process.env.CHANNELS)
     : process.env.CHANNEL
       ? [{ name: channelName(process.env.CHANNEL), colour: "#ffffff" }]
