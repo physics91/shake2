@@ -139,6 +139,34 @@ def test_a_stolen_voice_is_silent_from_the_start_of_the_buffer_whose_queue_takes
     assert not out[silent_from:].any()
 
 
+def test_a_note_on_at_a_buffer_end_leaves_last_mix_at_that_buffer_start():
+    # Buffer [0, 441) takes the note and mixes none of it, leaving m_stLastMix = 0; in [441, 882)
+    # the stop cap 641 - 0 reaches past the buffer end, so only the attack's end splits it.
+    col = decode_dls(build_dls(
+        [instrument(0, [region(wave=0, sample=wsmp(unity=69, loop=(0, 2205)))],
+                    articulation=art1((0, 0, 0x206, 0, TC_ZERO), (0, 0, 0x209, 0, 0)))],
+        [wave(np.full(2205, 0.5))],
+    ))
+    spans = []
+
+    class Recording(MixVoice):
+        def _mix(self, out, first, length, vrel, prel):
+            if out is not None and length:
+                spans.append((first, length))
+            return super()._mix(out, first, length, vrel, prel)
+
+    for start in (441, 442):
+        spans.clear()
+        song = Song(events=(Event(start / RATE, "on", 0, (69, 127)), Event((start + 200) / RATE, "off", 0, (69, 0))), length=1.0)
+        voices, channels = schedule(song, col)
+        voice = Recording(voices[0], ChannelControls.of(channels[0], RATE), RATE)
+        voice.mix_into(np.zeros((RATE, 2), np.int64), 441)
+        if start == 441:
+            assert spans[:2] == [(441, 22), (463, 882 - 463)]
+        else:  # in its own buffer, StartVoice's start - 1 holds: the cap is stop - start + 1
+            assert spans[:2] == [(442, 22), (464, 201)]
+
+
 def test_a_quick_stop_at_the_buffer_end_acts_before_that_buffer_mixes():
     released = [(1000, "stop")]
     at_end = mixed_alone(events=released + [(2205, "quick")])

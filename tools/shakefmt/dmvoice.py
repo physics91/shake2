@@ -340,8 +340,12 @@ class MixVoice:
             self.length = n << 12
 
     def mix_into(self, out: np.ndarray, buffer: int):
-        """Mix the voice into `out` (int64, stereo) in render buffers of `buffer` samples."""
-        first = self.start // buffer * buffer
+        """Mix the voice into `out` (int64, stereo) in render buffers of `buffer` samples.
+
+        The first is the buffer whose queue takes the note: QueueNotes(stEndTime) takes one at its
+        end too, which that buffer then mixes nothing of.
+        """
+        first = max(self.start - 1, 0) // buffer * buffer
         for begin in range(first, len(out), buffer):
             self._mix_buffer(out, begin, min(begin + buffer, len(out)))
             if not self.in_use:
@@ -370,7 +374,8 @@ class MixVoice:
         self._apply_events(end)
         span_start = max(self.start, begin, self.last_mix)
         in_use, full = True, True
-        span_end = span_start
+        # CVoice::Mix: stEndMix = stStart, so a buffer that mixes nothing leaves last_mix at its start.
+        span_end = begin
         while span_start < end and in_use:
             span_end = min(span_start + self.mix_time, end)
             self.mix_time = self.max_span
