@@ -166,6 +166,8 @@ describe("parseChannels and parseIndexList", () => {
     expect(parseIndexList("2, 3,3", 30, [12], "DEFAULT_ITEMS")).toEqual([2, 3]);
     expect(() => parseIndexList("30", 30, [12], "DEFAULT_ITEMS")).toThrow("0..29");
     expect(() => parseIndexList("x", 10, [0], "DEFAULT_PAIRS")).toThrow("DEFAULT_PAIRS");
+    expect(() => parseIndexList("2,", 30, [12], "DEFAULT_ITEMS")).toThrow("0..29");
+    expect(() => parseIndexList("5,,6", 10, [0], "DEFAULT_PAIRS")).toThrow("0..9");
   });
 });
 

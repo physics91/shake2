@@ -158,8 +158,9 @@ export function statusNoticeText(raw: string): string | undefined {
 /** DEFAULT_ITEMS / DEFAULT_PAIRS: comma-separated numbers below `count`; the fallback when unset. */
 export function parseIndexList(raw: string | undefined, count: number, fallback: readonly number[], what: string): number[] {
   if (raw === undefined || raw.trim() === "") return [...fallback];
-  const list = raw.split(",").map((part) => Number(part.trim()));
-  if (!list.every((n) => Number.isInteger(n) && n >= 0 && n < count)) throw new Error(`${what} takes numbers 0..${count - 1}`);
+  const parts = raw.split(",").map((part) => part.trim());
+  const list = parts.map(Number);
+  if (!parts.every((part, i) => /^\d+$/.test(part) && list[i] < count)) throw new Error(`${what} takes numbers 0..${count - 1}`);
   return [...new Set(list)];
 }
 
