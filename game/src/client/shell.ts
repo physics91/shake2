@@ -94,7 +94,11 @@ export function gameScreen(title: string, keys: string, onExit: () => void): Gam
     canvas,
     announce: (text) => (live.textContent = text),
     loaded: () => loading.remove(),
-    failed: (message) => (loading.textContent = message),
+    // A load that fails after the start (practice starting over) brings the notice back.
+    failed: (message) => {
+      loading.textContent = message;
+      stage.append(loading);
+    },
   };
 }
 

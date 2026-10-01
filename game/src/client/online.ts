@@ -971,7 +971,7 @@ class OnlineSession {
    * server list (0x458bc5) and its time limit to scene 5 (0x406235), each with the fade.
    */
   private startPractice(character: string, hue: number): void {
-    this.runLocal("혼자 연습", practiceKeysHelp(), this.shownPicture(), () => this.backToList(), (screen, finish) =>
+    this.runLocal("혼자 연습", practiceKeysHelp(), this.shownPicture(), () => this.backToList(), (screen, finish, _cancelled, failed) =>
       startPracticeGame({
         canvas: screen.canvas,
         local: { id: 1, name: readPreference("online.name") || "1P", character },
@@ -981,6 +981,7 @@ class OnlineSession {
         announce: screen.announce,
         onExit: () => finish(() => this.backToList()),
         onTimeUp: () => finish(() => this.backToStatus()),
+        onFailed: failed,
         badge: this.account ? badgeOf(this.account) : undefined,
       }),
     );
@@ -1110,15 +1111,20 @@ class OnlineSession {
 
   /**
    * A game screen for a match on this PC, faded in from `from`. `start` runs it and calls `finish`
-   * with what comes next when it ends; the page's hidden exit button finishes it with `leave`, and
-   * `cancelled` tells a start still loading that it was.
+   * with what comes next when it ends; the page's hidden exit button finishes it with `leave`,
+   * `cancelled` tells a start still loading that it was, and `failed` tells a load that failed later.
    */
   private runLocal(
     title: string,
     keys: string,
     from: HTMLCanvasElement | null,
     leave: () => void,
-    start: (screen: GameScreen, finish: (then: () => void) => void, cancelled: () => boolean) => Promise<() => void>,
+    start: (
+      screen: GameScreen,
+      finish: (then: () => void) => void,
+      cancelled: () => boolean,
+      failed: (error: unknown) => void,
+    ) => Promise<() => void>,
   ): void {
     this.stopGame();
     this.startView?.dispose();
@@ -1138,7 +1144,8 @@ class OnlineSession {
     this.errorLine = null;
     mount(screen.root);
     this.fadeTo(screen.root, from);
-    start(screen, finish, () => over).then(
+    const failed = (error: unknown) => screen.failed(`시작하지 못했습니다: ${(error as Error).message}`);
+    start(screen, finish, () => over, failed).then(
       (stop) => {
         if (over) stop();
         else {
@@ -1146,7 +1153,7 @@ class OnlineSession {
           screen.loaded();
         }
       },
-      (error: unknown) => screen.failed(`시작하지 못했습니다: ${(error as Error).message}`),
+      failed,
     );
   }
 

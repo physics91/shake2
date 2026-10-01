@@ -34,6 +34,8 @@ export interface PracticeGameOptions {
   onExit: () => void;
   /** Time-over: straight to the my-info screen (scene 5), here the practice setup. */
   onTimeUp: () => void;
+  /** A start over whose pictures fail to load: the practice has stopped, told as a failed first start is. */
+  onFailed: (error: unknown) => void;
   /** The account's guild and level on the player's panel row and result rows; none without an account. */
   badge?: Badge;
 }
@@ -126,7 +128,11 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     state = null;
     view?.dispose();
     view = null;
-    void begin(picture);
+    begin(picture).catch((error: unknown) => {
+      if (stopped) return;
+      stop();
+      options.onFailed(error);
+    });
   }
 
   const binding = soloKeys(options.settings.keys);
