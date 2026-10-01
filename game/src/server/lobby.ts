@@ -3,7 +3,7 @@ import type { MatchRecord } from "./accounts.ts";
 import { compareIgnoreCase } from "./cp949.ts";
 import type { FriendBook } from "./friends.ts";
 import type { Badge, ClientMessage, OwnAccount, ServerMessage } from "./protocol.ts";
-import { CHAT_INTERVAL_MS, roomTitle, shownName, userCard } from "./protocol.ts";
+import { roomTitle, shownName, userCard } from "./protocol.ts";
 import type { ChatSent, Peer, Profile, RoomDeps } from "./room.ts";
 import { chatAllowed, Room } from "./room.ts";
 
@@ -77,8 +77,6 @@ export class Lobby {
   private readonly rooms = new Map<string, Room>();
   /** Each player's last chat line, the lobby's or the room's: the client keeps one ([0x4937bc]). */
   private readonly lastChat = new Map<number, ChatSent>();
-  /** When each player's last whisper went on (the client's 2000 ms, kept here too). */
-  private readonly whispered = new Map<number, number>();
   /** Players who turned whispers off with /wno. */
   private readonly noWhispers = new Set<number>();
   /** Secret-room password checks by address key. */
@@ -161,7 +159,6 @@ export class Lobby {
     this.peers.delete(peerId);
     this.profiles.delete(peerId);
     this.lastChat.delete(peerId);
-    this.whispered.delete(peerId);
     this.noWhispers.delete(peerId);
     this.dirty = true;
     this.flushLobby();
@@ -273,7 +270,7 @@ export class Lobby {
         peer.send({ type: "friend-deleted", result: this.config.friends.remove(profile.name, this.loginId(message.name)), name: message.name });
         break;
       case "whisper":
-        this.whisper(peerId, profile.name, this.loginId(message.to), message.text);
+        this.whisper(profile.name, this.loginId(message.to), message.text);
         break;
       case "users":
         // The original's count is its server's (R): here, everyone who said hello.
@@ -466,13 +463,11 @@ export class Lobby {
   /**
    * /w (C->S 0x07 → S->C 0x07). The original server's rules are its own (R): the first player
    * connected under that name gets it, unless whispers are off there; nobody hears of a miss, and
-   * the sender gets no copy. A sender whispers no oftener than its client lets it.
+   * the sender gets no copy. No interval here: the client paces /w with its chat timer, but sends the
+   * whisper target's copy of every line without one (0x4468f6), so only the connection's message
+   * cap bounds it.
    */
-  private whisper(peerId: number, from: string, to: string, text: string): void {
-    const now = this.config.now();
-    const last = this.whispered.get(peerId);
-    if (last !== undefined && now - last < CHAT_INTERVAL_MS) return;
-    this.whispered.set(peerId, now);
+  private whisper(from: string, to: string, text: string): void {
     for (const [id, profile] of this.profiles) {
       if (profile.name !== to) continue;
       const target = this.peers.get(id);

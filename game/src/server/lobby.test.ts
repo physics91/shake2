@@ -1232,17 +1232,16 @@ describe("chat commands", () => {
     expect(t.count(1, "error")).toBe(0);
   });
 
-  it("reaches a player in a room too, and not within 2000 ms of the sender's last", () => {
+  it("reaches a player in a room too, every line within 2000 ms as well, as the whisper target's copies come (0x4468f6)", () => {
     const t = makeLobby();
     t.connect(1, "하나");
     t.connect(2, "둘");
     t.lobby.handle(2, { type: "create-room", title: "" });
     t.lobby.handle(1, { type: "whisper", to: "둘", text: "하나" });
-    t.clock.now = 1999;
+    t.clock.now = 1000;
     t.lobby.handle(1, { type: "whisper", to: "둘", text: "둘" });
-    t.clock.now = 2000;
     t.lobby.handle(1, { type: "whisper", to: "둘", text: "셋" });
-    expect((t.inbox.get(2) ?? []).filter((m) => m.type === "whisper").map((m) => m.type === "whisper" && m.text)).toEqual(["하나", "셋"]);
+    expect((t.inbox.get(2) ?? []).filter((m) => m.type === "whisper").map((m) => m.type === "whisper" && m.text)).toEqual(["하나", "둘", "셋"]);
   });
 
   it("drops whispers to a player who turned them off with /wno, until /wyes (S->C 0x60)", () => {
