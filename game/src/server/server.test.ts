@@ -404,6 +404,35 @@ describe.skipIf(!HAS_ASSETS)("friends across channels", () => {
   });
 });
 
+describe.skipIf(!HAS_ASSETS)("shutting down", () => {
+  it("records no leave for the matches it cuts short, and leaves nothing to write after close()", async () => {
+    const accountsFile = await accountsFileWith(["alpha", "bravo"]);
+    const server = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5, accountsFile });
+    const url = `ws://127.0.0.1:${server.port}/ws`;
+    const a = new Client(url);
+    const b = new Client(url);
+    await Promise.all([a.opened(), b.opened()]);
+    await enter(a, "alpha");
+    const guest = await enter(b, "bravo");
+    a.send({ type: "create-room", title: "" });
+    const created = await a.waitFor((m): m is Extract<ServerMessage, { type: "room" }> => m.type === "room" && m.room !== null);
+    b.send({ type: "join-room", code: created.room?.code });
+    b.send({ type: "set-ready", ready: true });
+    await a.waitFor((m): m is ServerMessage => m.type === "room" && m.room?.players.find((p) => p.id === guest.playerId)?.ready === true);
+    a.send({ type: "start" });
+    await a.waitFor((m): m is ServerMessage => m.type === "snapshot" && m.state.phase === "playing");
+    const before = readFileSync(accountsFile, "utf8");
+
+    await server.close();
+    const atClose = readFileSync(accountsFile, "utf8");
+    // Past the account file's one-second save: main.ts exits on close(), so nothing may come later.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    expect(atClose).toBe(before);
+    expect(readFileSync(accountsFile, "utf8")).toBe(before);
+  }, 20_000);
+});
+
 describe.skipIf(!HAS_ASSETS || !HAS_OPENSSL)("room server over TLS", () => {
   const logged: string[] = [];
   let server: RunningServer;

@@ -224,6 +224,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   };
   const accountFile = options.accountsFile ? openAccountFile(options.accountsFile, defaults, log) : null;
   const accounts = accountFile?.book ?? new AccountBook(undefined, defaults);
+  // Set by close(): a match the shutdown cuts short is nobody's leave (LEAVE_PENALTY) and nobody's win.
+  let closing = false;
   const specs = options.channels?.length ? options.channels : [{ name: DEFAULT_CHANNEL, colour: DEFAULT_COLOUR }];
   const channels: Channel[] = specs.map((spec) => ({
     row: { name: spec.name, colour: spec.colour },
@@ -238,7 +240,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       channel: spec.name,
       friends,
       saveCharacter: (name, choice) => accounts.update(name, choice),
-      recordMatch: (name, record) => accounts.recordMatch(name, record),
+      recordMatch: (name, record) => {
+        if (!closing) accounts.recordMatch(name, record);
+      },
       badgeOf: (name) => {
         const account = accounts.get(name);
         return account ? { guild: account.guild, level: accounts.standing(account.id).level } : null;
@@ -364,10 +368,14 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           new Promise<void>((done) => {
             clearInterval(clock);
             clearInterval(heartbeat);
-            friendFile?.flush();
-            accountFile?.flush();
+            closing = true;
             for (const socket of wss.clients) socket.terminate();
-            wss.close(() => http.close(() => done()));
+            // wss calls back once every socket's close has run; save after those, so nothing is left to write.
+            wss.close(() => {
+              friendFile?.flush();
+              accountFile?.flush();
+              http.close(() => done());
+            });
           }),
       });
     });
