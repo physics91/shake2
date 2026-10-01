@@ -1,6 +1,8 @@
 const SOUND_BASE = `${import.meta.env.BASE_URL}assets/sound/`;
 const MUSIC_BASE = `${import.meta.env.BASE_URL}assets/bgm/`;
 
+type Gate = "effects" | "music";
+
 export interface MusicTrack {
   file: string;
   /** Seconds until the MIDI segment ends; a repeat starts here while the previous tails ring out. */
@@ -16,7 +18,7 @@ export interface MusicTrack {
 export class SoundBank {
   private context: AudioContext | null = null;
   private buffers = new Map<string, Promise<AudioBuffer | null>>();
-  private voices = new Map<string, AudioBufferSourceNode>();
+  private voices = new Map<string, { source: AudioBufferSourceNode; gate: Gate }>();
   private music: { key: string; sources: AudioBufferSourceNode[]; timer: number } | null = null;
   private musicRequest = 0;
   /** Music asked for before the first user gesture; it starts on unlock. */
@@ -34,7 +36,7 @@ export class SoundBank {
   }
 
   /** `gate` is the option switch the cue obeys: end and endsig follow the music switch. */
-  play(name: string, gate: "effects" | "music" = "effects"): void {
+  play(name: string, gate: Gate = "effects"): void {
     const context = this.context;
     const enabled = () => (gate === "music" ? this.musicOn : this.effects);
     if (!context || !enabled()) return;
@@ -45,24 +47,25 @@ export class SoundBank {
       source.buffer = buffer;
       source.connect(context.destination);
       source.onended = () => {
-        if (this.voices.get(name) === source) this.voices.delete(name);
+        if (this.voices.get(name)?.source === source) this.voices.delete(name);
       };
-      this.voices.set(name, source);
+      this.voices.set(name, { source, gate });
       source.start();
     });
   }
 
   stop(name: string): void {
-    const source = this.voices.get(name);
-    if (!source) return;
+    const voice = this.voices.get(name);
+    if (!voice) return;
     this.voices.delete(name);
-    source.onended = null;
-    source.stop();
+    voice.source.onended = null;
+    voice.source.stop();
   }
 
+  /** Off cuts the effects that are ringing; end and endsig, which follow the music switch, ring on. */
   setEffects(on: boolean): void {
     this.effects = on;
-    if (!on) for (const name of [...this.voices.keys()]) this.stop(name);
+    if (!on) for (const [name, voice] of [...this.voices]) if (voice.gate === "effects") this.stop(name);
   }
 
   setMusic(on: boolean): void {
