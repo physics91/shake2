@@ -267,7 +267,10 @@ class OnlineSession {
           if (row?.local) this.openLocalRoom();
           else this.enter(row?.channel ?? 0);
         },
-        local: () => this.openLocalRoom(),
+        // The row's double click, dropped while a row's connection is under way (the busy cursor).
+        local: () => {
+          if (!this.socket) this.openLocalRoom();
+        },
         enter: ({ id, password }) => this.formEnter(id, password),
         // A page cannot close its window: the program starts over, silent, from its logo, logged out.
         exit: () => {
