@@ -397,11 +397,15 @@ export class StartScreen {
 
   /**
    * The page's entry form stands for the login, scene 5's Go game and the first row in turn: it is
-   * taken on those scenes with nothing over them and no connection under way, not on the logo or
-   * the loading, where the canvas takes no input.
+   * taken on those scenes with nothing over them and no connection under way (the login without its
+   * sign-up window, the list open as for its rows), not on the logo or the loading, where the canvas
+   * takes no input.
    */
   get takesForm(): boolean {
-    return (this.scene === "login" || this.scene === "status" || this.scene === "servers") && !this.dropsClicks && !this.busy;
+    if (this.dropsClicks || this.busy) return false;
+    if (this.scene === "login") return !this.signUp.isOpen;
+    if (this.scene === "servers") return this.options.list.slide.open;
+    return this.scene === "status";
   }
 
   /** The quit box, or a fade out (Go game's ends on the list's memo): keys answer what comes, the page's buttons do not. */
