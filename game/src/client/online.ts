@@ -1465,8 +1465,13 @@ class RoomView {
       p.id !== me && hasItem(this.items(), ITEM_WHISPER)
         ? h("button", { class: "btn small", type: "button", onclick: () => this.screen?.slotIcon(slot, "whisper") }, `${p.name}에게 귓말 (귓말 아이콘)`)
         : null,
+      // The slot's click, dropped where the canvas drops it.
       this.pickCharacter
-        ? h("button", { class: "btn small", type: "button", onclick: () => this.pickCharacter?.(slot) }, `${p.name} 캐릭터 바꾸기 (지금 ${p.character})`)
+        ? h(
+            "button",
+            { class: "btn small", type: "button", onclick: () => !this.screen?.dropsClicks && this.pickCharacter?.(slot) },
+            `${p.name} 캐릭터 바꾸기 (지금 ${p.character})`,
+          )
         : null,
     );
   }
