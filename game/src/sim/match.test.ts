@@ -251,6 +251,24 @@ describe("round end", () => {
     expect([state.phase, state.roundWinnerId]).toEqual(["round-over", 3]);
   });
 
+  it("keeps the latch of a player whose death outlasts the round: the poll skips the hidden (0x45af4a)", () => {
+    const space: InputFrame = { dir: null, bomb: true };
+    const state = createMatch(layoutFromAscii(ARENA), cast(["doomsy", "rookie"]), VERSUS, 1);
+    const [p1] = state.players;
+    run(state, TO_PLAY);
+    step(state, { 1: space });
+    expect(p1.actionLatch).toBe(true);
+    killNow(state, 1, { 1: space });
+    run(state, 1, { 1: space });
+    killNow(state, 2, { 1: space });
+    runUntil(state, () => state.phase !== "playing", 1000, { 1: space });
+    expect(p1.gone).toBe(false);
+    expect(p1.actionLatch).toBe(true);
+    runUntil(state, () => state.round === 2 && state.phase === "playing", 1000, { 1: space });
+    step(state, { 1: space });
+    expect(state.bombs.filter((b) => b.owner === 1)).toHaveLength(0);
+  });
+
   it("ends the match straight away on the third medal", () => {
     const state = createMatch(layoutFromAscii(ARENA), setups(2), VERSUS, 1);
     state.players[1].medals = 2;

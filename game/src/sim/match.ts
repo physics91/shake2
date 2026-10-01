@@ -235,12 +235,14 @@ function applyInputs(state: MatchState, inputs: InputMap): void {
   for (const player of state.players) {
     const pressed = inputs[player.id];
     if (pressed === null) continue;
-    // The dead read no key (0x4021bb: the death state is past the walk, stand and kick groups), so
-    // the action is none and the latch goes (0x45b5d7).
-    if (!player.alive) {
+    // A dying player is hidden (0x462050), so the poll returns before the keys (0x45af4a) and the
+    // latch stays. Once the death has ended the poll reads no key (0x4021bb: the death state is past
+    // the walk, stand and kick groups), so the action is none and the latch goes (0x45b5d7).
+    if (player.gone) {
       player.actionLatch = false;
       continue;
     }
+    if (!player.alive) continue;
     if (player.flight !== null || player.anim >= Anim.Burrow || player.status.frozen !== null) continue;
     const input = keysRead(player) ? pressed : undefined;
     const action = actionOf(actionKeysRead(player) ? pressed : undefined);
