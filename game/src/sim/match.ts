@@ -601,7 +601,9 @@ function finishRound(state: MatchState, matchOver: boolean, winnerId: number | n
 
 /**
  * A player who leaves is out of the match for good. Mid-round the leaver becomes the last player
- * out (0x4408b2) and the round is judged again (0x44f341), so the last one standing wins it. In
+ * out (0x4408b2) and the round is judged again (0x44f341), so the last one standing wins it. On the
+ * wait screen the original only frees the slot (0x44f17f) and the leaver's figure times out 5 s
+ * into play (0x40bf0d); the server has no such figure and judges at once (R). In
  * the countdown and in play the leaver first drops what a death drops, unless its death animation
  * already did (0x44f2d1).
  * On the round's result screen the round is already judged; the match still ends when one player,
