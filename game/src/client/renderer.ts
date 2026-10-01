@@ -594,8 +594,8 @@ function drawEffects(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: 
 /**
  * Candy box (0x40bc82), alpha 70: (dst·70 + src·186) >> 8, and the candy count in "Courier New" 15
  * (굴림 15 by the font mapper) right-aligned by digit count. The original adds the local player's
- * pickups (0x410827) to the account's total; there are no accounts here, so it counts this match's
- * pickups from 0.
+ * pickups (0x410827) to the account's total: online, the caller passes the login's total
+ * (RenderView.candyBase); two players on one keyboard have no account and count from 0.
  */
 function drawCandy(ctx: CanvasRenderingContext2D, assets: SceneAssets, count: number): void {
   blitBlended(ctx, assets.hud.candy, CANDY_POS.x, CANDY_POS.y, CANDY_WEIGHT);
