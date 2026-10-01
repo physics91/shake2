@@ -8,12 +8,13 @@ export const MUSIC_GATED = new Set(["end", "endsig"]);
 
 /**
  * fade(1) inside a match: the countdown's timer (0x460950), a round's end (0x44ebfd, 0x44f157) and
- * the match's (0x44eb1c). The round result goes to the next wait screen with no fade (0x40fde2,
- * 0x40fe40), and play starts under the countdown's last frame.
+ * the match's (0x44eb1c), also when a leave in the countdown ends it (0x44f341 -> 0x44ea40). The
+ * round result goes to the next wait screen with no fade (0x40fde2, 0x40fe40), and play starts
+ * under the countdown's last frame.
  */
 export function phaseFades(from: Phase, to: Phase): boolean {
   if (to === "countdown") return from === "waiting";
-  return from === "playing" && (to === "round-over" || to === "match-over");
+  return (from === "playing" || from === "countdown") && (to === "round-over" || to === "match-over");
 }
 
 export interface Presentation {
