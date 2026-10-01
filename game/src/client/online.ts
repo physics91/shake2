@@ -166,7 +166,7 @@ class OnlineSession {
   /** The room's chat log: kept across a match, cleared on create or join (0x418c60). */
   private chatLog: string[] = [];
   /** One set of send timers for the canvas line and the page's chat form (0x446200). */
-  private readonly timers = new ChatTimers();
+  private timers = new ChatTimers();
   /** The last room request, so a joiner gets the F1 notice (a creator does not, 0x444ddc). */
   private lastAct: ClientMessage["type"] | null = null;
   private game: OnlineGame | null = null;
@@ -286,6 +286,9 @@ class OnlineSession {
           this.token = null;
           this.channels = [];
           this.list.rows = [];
+          // The new program's statics: no whisper target, no last line to repeat (0x4927c8, 0x446200).
+          this.whisperTarget = "";
+          this.timers = new ChatTimers();
           this.showStart({ begin: "logo" });
         },
       },
