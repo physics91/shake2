@@ -17,7 +17,7 @@ import { drawBadge } from "./badge.ts";
 import { INSTALLED_VERSION, VERSION_TEXT } from "./hudLayout.ts";
 import { MESSAGE_BOX, MESSAGE_HELP, messageLines } from "./lobbyLayout.ts";
 import type { BoxImages, PracticeBox } from "./practiceBox.ts";
-import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
+import { boxClick, boxHover, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
 import { macroOpens, macroSlot } from "./macro.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
 import type { SettingsStore } from "./settings.ts";
@@ -450,8 +450,11 @@ export class RoomScreen {
   }
 
   private openExitBox(): void {
-    this.overlay = { kind: "box", box: openBox("esc"), hover: 0 };
-    this.status.textContent = "종료하시겠습니까? Y는 예, N은 아니오. ←·→로 고르고 Enter로 정할 수도 있습니다(처음 선택은 예).";
+    const box = openBox("esc");
+    // Scene 7 draws it through 0x40cabf: a mouse resting on a button selects it.
+    this.overlay = { kind: "box", box, hover: boxHover(box, this.pointer.mouse) };
+    const first = box.selection === 1 ? "예" : "아니오";
+    this.status.textContent = `종료하시겠습니까? Y는 예, N은 아니오. ←·→로 고르고 Enter로 정할 수도 있습니다(처음 선택은 ${first}).`;
   }
 
   private answerBox(leave: boolean): void {

@@ -14,7 +14,7 @@ import { INSTALLED_VERSION, SCREEN_H, SCREEN_W, VERSION_TEXT } from "./hudLayout
 import { MESSAGE_BOX, MESSAGE_HELP, messageLines } from "./lobbyLayout.ts";
 import { characterIndex, nickRefusal } from "./myInfoLayout.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
-import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
+import { boxClick, boxHover, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
 import type { RankingAccess } from "./ranking.ts";
 import { inside } from "./roomLayout.ts";
@@ -847,7 +847,8 @@ export class StartScreen {
 
   private openQuitBox(): void {
     this.quitBox = openBox("esc");
-    this.boxHover = 0;
+    // Scenes 2 and 5 draw it at 0x40cac4: a mouse resting on a button selects it.
+    this.boxHover = boxHover(this.quitBox, this.pointer.mouse);
     this.announce("종료하시겠습니까? 예(Y), 아니오(N)");
   }
 

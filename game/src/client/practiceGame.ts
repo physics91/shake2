@@ -12,7 +12,7 @@ import { connectedPad, padFrame } from "./gamepad.ts";
 import { attachKeyboard, boundCodes, KeyState, soloKeys } from "./input.ts";
 import { macroOpens, macroSlot } from "./macro.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
-import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
+import { boxClick, boxHover, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
 import { freezeCanvas } from "./screenKit.ts";
 import { attachCapture } from "./screenCapture.ts";
@@ -61,6 +61,8 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   let box: PracticeBox | null = null;
   let hover: 0 | 1 | 2 = 0;
   let pressed = false;
+  /** The mouse in screen pixels, which the box reads even when it has not moved. */
+  let mouse = { x: 0, y: 0 };
   /** F1 help ([0x492856]): shown over everything; while it is up the player's keys and box clicks do nothing (0x458750). */
   let help = false;
   /** Chat ([0x48c0e8]) and the own player's last line (+0x204, +0x208 GetTickCount). */
@@ -108,18 +110,19 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   function show(kind: PracticeBox["kind"]): void {
     if (box) return;
     box = openBox(kind);
+    hover = boxHover(box, mouse);
     announcePrompt(box);
   }
 
   /**
    * The practice is over. With no dummy left the box comes up unless one is (0x407b59); the own
    * death's end runs Show (0x443ce0) whatever is up, so a box already up keeps its kind and goes
-   * back to YES (0x4083be).
+   * back to YES (0x4083be), until its draw reads the cursor again.
    */
   function over(ownDeath: boolean): void {
     if (!box || !ownDeath) return show("end");
     box.selection = 1;
-    hover = 0;
+    hover = boxHover(box, mouse);
     announcePrompt(box);
   }
 
@@ -221,9 +224,9 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     };
   };
   const onMove = (event: PointerEvent) => {
+    mouse = toScreen(event);
     if (!box) return;
-    const { x, y } = toScreen(event);
-    hover = boxPointer(box, x, y);
+    hover = boxPointer(box, mouse.x, mouse.y);
     pressed = (event.buttons & 1) !== 0;
   };
   const onDown = () => {

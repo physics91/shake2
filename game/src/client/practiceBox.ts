@@ -8,6 +8,8 @@ export interface PracticeBox {
   kind: BoxKind;
   /** Keyboard selection (+8): 1 YES, 2 NO. Show (0x443ce0) sets it to 1. */
   selection: 1 | 2;
+  /** Where left or right put the cursor (SetCursorPos 0x443d00) until the mouse moves; null: the mouse. */
+  keyCursor: { x: number; y: number } | null;
 }
 
 interface Rect {
@@ -27,7 +29,7 @@ export const BOX_BUTTONS: Record<BoxKind, { yes: Rect; no: Rect }> = {
 };
 
 export function openBox(kind: BoxKind): PracticeBox {
-  return { kind, selection: 1 };
+  return { kind, selection: 1, keyCursor: null };
 }
 
 /** YES and NO by box (0x458a19-0x458b88, 0x461bc0): the end box restarts on YES, the Esc box on NO. */
@@ -49,13 +51,22 @@ function inside(rect: Rect, x: number, y: number): boolean {
 }
 
 /**
- * The mouse moved: the button under it, or 0. Over a button of the Esc box it also becomes the
- * selection (0x443e78, 0x443ea9); the end box's selection only follows the keys.
+ * The button under the cursor, or 0, as the box's draw reads it every frame (0x443c50 → 0x443d60).
+ * Over a button of the Esc box it also becomes the selection (0x443e78, 0x443ea9), so a box shown
+ * under a mouse that has not moved takes the button there; the end box's selection only follows
+ * the keys. The cursor is where left or right put it, else `mouse`.
  */
-export function boxPointer(box: PracticeBox, x: number, y: number): 0 | 1 | 2 {
+export function boxHover(box: PracticeBox, mouse: { x: number; y: number }): 0 | 1 | 2 {
+  const { x, y } = box.keyCursor ?? mouse;
   const button = boxButtonAt(box, x, y);
   if (button !== 0 && box.kind === "esc") box.selection = button;
   return button;
+}
+
+/** The mouse moved: the cursor is the mouse again. */
+export function boxPointer(box: PracticeBox, x: number, y: number): 0 | 1 | 2 {
+  box.keyCursor = null;
+  return boxHover(box, { x, y });
 }
 
 /** A mouse click (0x45891f): a button's result, or null off the buttons. */
@@ -76,8 +87,8 @@ const KEY_CURSOR: Record<BoxKind, Record<1 | 2, { x: number; y: number }>> = {
 };
 
 export function boxKeyCursor(box: PracticeBox): 0 | 1 | 2 {
-  const { x, y } = KEY_CURSOR[box.kind][box.selection];
-  return boxPointer(box, x, y);
+  box.keyCursor = KEY_CURSOR[box.kind][box.selection];
+  return boxHover(box, box.keyCursor);
 }
 
 /**

@@ -28,7 +28,7 @@ import { GameView } from "./gameView.ts";
 import { Balloons, closesExitBox, countdownEnd, enterOpensChat, helpAllowed, hostSilent, matchEscape, sendsChat } from "./matchChat.ts";
 import { FrameRate, PingMeter } from "./panelBars.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
-import { boxClick, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
+import { boxClick, boxHover, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
 import { startPracticeGame } from "./practiceGame.ts";
 import type { ChatDraw } from "./renderer.ts";
 import { addReply, deleteReply } from "./friends.ts";
@@ -1671,6 +1671,8 @@ class OnlineGame {
   private box: PracticeBox | null = null;
   private hover: 0 | 1 | 2 = 0;
   private pressed = false;
+  /** The mouse in screen pixels, which the box reads even when it has not moved. */
+  private mouse = { x: 0, y: 0 };
   private boxImages: BoxImages | null = null;
   /** The last data from the host (+0x25c), and the one call made when it has been silent too long. */
   private lastHeard = performance.now();
@@ -1904,7 +1906,7 @@ class OnlineGame {
         break;
       case "box":
         this.box = openBox("esc");
-        this.hover = 0;
+        this.hover = boxHover(this.box, this.mouse);
         this.screen.announce("종료하시겠습니까? 예(Y), 아니오(N)");
         break;
       case "none":
@@ -1945,9 +1947,9 @@ class OnlineGame {
   }
 
   private onPointer(event: PointerEvent): void {
+    this.mouse = this.toScreen(event);
     if (!this.box) return;
-    const { x, y } = this.toScreen(event);
-    this.hover = boxPointer(this.box, x, y);
+    this.hover = boxPointer(this.box, this.mouse.x, this.mouse.y);
     this.pressed = (event.buttons & 1) !== 0;
   }
 

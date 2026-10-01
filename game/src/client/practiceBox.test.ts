@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { boxClick, boxKey, boxKeyCursor, boxPointer, openBox } from "./practiceBox.ts";
+import { boxClick, boxHover, boxKey, boxKeyCursor, boxPointer, openBox } from "./practiceBox.ts";
 
 describe("practice box (0x484698)", () => {
   it("the end box restarts on YES and leaves on NO; the Esc box the other way round", () => {
@@ -59,5 +59,28 @@ describe("practice box (0x484698)", () => {
     expect(boxKeyCursor(end)).toBe(2);
     boxKey(end, "ArrowLeft");
     expect(boxKeyCursor(end)).toBe(1);
+  });
+
+  it("reads a mouse that has not moved: an Esc box shown over NO is on NO (0x443c50 → 0x443d60 every frame)", () => {
+    const esc = openBox("esc");
+    expect(boxHover(esc, { x: 420, y: 350 })).toBe(2);
+    expect(esc.selection).toBe(2);
+    const end = openBox("end");
+    expect(boxHover(end, { x: 440, y: 320 })).toBe(2);
+    expect(end.selection).toBe(1);
+  });
+
+  it("reads where left or right put the cursor until the mouse moves again (SetCursorPos 0x443d00)", () => {
+    const esc = openBox("esc");
+    const onYes = { x: 330, y: 350 };
+    boxKey(esc, "ArrowRight");
+    boxKeyCursor(esc);
+    esc.selection = 1; // Show (0x443ce0)
+    expect(boxHover(esc, onYes)).toBe(2);
+    expect(esc.selection).toBe(2);
+    boxPointer(esc, onYes.x, onYes.y);
+    esc.selection = 2;
+    expect(boxHover(esc, onYes)).toBe(1);
+    expect(esc.selection).toBe(1);
   });
 });
