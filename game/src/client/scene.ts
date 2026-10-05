@@ -48,7 +48,7 @@ export interface PlayerTint {
 export interface SceneAssets {
   level: LevelAssets;
   characters: Map<string, CharacterAssets>;
-  /** Players whose sheets were read with a hue (0x4633c0), by player id. */
+  /** Each player's sheets read for the match (0x4633c0), by id, including hue 0. */
   tinted: Map<number, CharacterAssets>;
   /** The result, wait and final screens' heads, turned into the slots' work surfaces, by player id. */
   heads: Map<number, WorkSurface>;
@@ -141,12 +141,11 @@ function heads(portraits: HTMLImageElement, tints: readonly PlayerTint[]): Map<n
 
 export async function loadSceneAssets(levelId: string, characterNames: readonly string[], tints: readonly PlayerTint[] = []): Promise<SceneAssets> {
   const unique = [...new Set(characterNames)];
-  const turned = tints.filter((tint) => tint.hue !== 0);
   const [level, characters, tinted, fire, items, objectA, objectB, objectC, digits, clock, hurry, marker, teamMarker, badState, ground, egg, revival, shadow, cursor, hud] = await Promise.all([
     loadLevel(levelId),
     Promise.all(unique.map(async (name) => [name, await loadCharacter(name)] as const)),
     // In the same wait as the rest, so a failed tinted sheet is the one error the caller gets.
-    Promise.all(turned.map(async (tint) => [tint.id, await loadTinted(tint)] as const)),
+    Promise.all(tints.map(async (tint) => [tint.id, await loadTinted(tint)] as const)),
     loadSheet("bomb", "fire"),
     loadSheet("item", "item"),
     loadSheet("object", "object_a"),

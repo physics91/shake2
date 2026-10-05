@@ -18,7 +18,7 @@ import { boxClick, boxHover, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, 
 import { MENU_SOUNDS } from "./presentation.ts";
 import type { RankingAccess } from "./ranking.ts";
 import { inside } from "./roomLayout.ts";
-import { CursorAnim, drawBalloon, drawCaret, drawDarkness, drawHelpScreen, Fade, freezeCanvas, Pointer } from "./screenKit.ts";
+import { CursorAnim, drawBalloon, drawCaret, drawDarkness, drawHelpScreen, Fade, fadeFrame, freezeCanvas, Pointer, registerFadeFrame } from "./screenKit.ts";
 import { attachCapture } from "./screenCapture.ts";
 import type { CheckKind, SignUpTarget } from "./signUpLayout.ts";
 import { SignUpWindow } from "./signUpWindow.ts";
@@ -51,6 +51,8 @@ import {
   rowsShown,
   rowTexts,
   SERVER_BUTTONS,
+  SERVER_ROWS_PER_PAGE,
+  serverPageCount,
   slideBlits,
   START_BANNER,
   stepSlide,
@@ -182,6 +184,8 @@ export type LoginSent = "sent" | "offline" | "wait";
 export interface ServerList {
   slide: ListSlide;
   rows: ServerRow[];
+  /** Overflow uses the original forty positions again. Kept on returning from a lobby (R). */
+  page?: number;
   /** [0x46e994]: the chosen row, −1 for none. */
   selected: number;
 }
@@ -227,6 +231,8 @@ export type SignUpCommand = "open" | Exclude<SignUpTarget, "id" | "nick" | "pass
 
 export interface StartScreenOptions {
   canvas: HTMLCanvasElement;
+  /** The session's cursor.spr, retained when the screen is replaced. */
+  cursor?: CursorAnim;
   stage: HTMLElement;
   assets: StartAssets;
   sounds: SoundBank;
@@ -276,9 +282,11 @@ export interface StartScreenOptions {
 
 export class StartScreen {
   private readonly options: StartScreenOptions;
+  private readonly display: CanvasRenderingContext2D;
+  /** The composition before the gamma fade, which F12 saves (0x413300 → 0x412c00). */
   private readonly ctx: CanvasRenderingContext2D;
   private readonly pointer = new Pointer();
-  private readonly cursor = new CursorAnim();
+  private readonly cursor: CursorAnim;
   private readonly caret = new CaretBlink();
   private readonly status = document.createElement("p");
   private readonly idLine: ChatLine;
@@ -288,6 +296,10 @@ export class StartScreen {
   private readonly signUp: SignUpWindow;
   private scene: StartScene;
   private fade: Fade | null = null;
+  private fadeOutFrame = 0;
+  private fadeInFrame = 0;
+  private darkness = 0;
+  private readonly releaseFrames: (() => void)[];
   /** The picture a fade-out keeps, and what follows it. */
   private frozen: { picture: HTMLCanvasElement; then: () => void } | null = null;
   /** The 30 fps frame clock the slide and the refresh animation step on. */
@@ -315,9 +327,19 @@ export class StartScreen {
 
   constructor(options: StartScreenOptions) {
     this.options = options;
+    this.cursor = options.cursor ?? new CursorAnim();
     const ctx = options.canvas.getContext("2d");
     if (!ctx) throw new Error("canvas 2d context unavailable");
-    this.ctx = ctx;
+    this.display = ctx;
+    const surface = document.createElement("canvas");
+    surface.width = SCREEN_W;
+    surface.height = SCREEN_H;
+    const composition = surface.getContext("2d");
+    if (!composition) throw new Error("canvas 2d context unavailable");
+    this.ctx = composition;
+    const read = () => ({ picture: this.frozen?.picture ?? this.ctx.canvas,
+      outFrame: this.fadeOutFrame, inFrame: this.fadeInFrame, darkness: this.darkness });
+    this.releaseFrames = [registerFadeFrame(options.canvas, read), registerFadeFrame(surface, read)];
     this.status.className = "sr-only";
     this.status.setAttribute("role", "status");
     options.stage.append(this.status);
@@ -397,6 +419,16 @@ export class StartScreen {
     return this.scene === "servers" && !this.dropsClicks && !this.busy && this.options.list.slide.open;
   }
 
+  /** Keyboard mirror of closing and reopening the original refresh, which cycles overflow pages (R). */
+  nextServerPage(): void {
+    const { list } = this.options;
+    if (this.scene !== "servers" || this.dropsClicks || serverPageCount(list.rows.length) === 1) return;
+    const [left, top, right, bottom] = SERVER_BUTTONS.refresh.hit;
+    const x = (left + right) / 2, y = (top + bottom) / 2;
+    if (list.slide.open) this.serversRelease(x, y);
+    this.serversRelease(x, y);
+  }
+
   /**
    * The page's entry form stands for the login, scene 5's Go game and the first row in turn: it is
    * taken on those scenes with nothing over them and no connection under way (the login without its
@@ -423,14 +455,23 @@ export class StartScreen {
   /** The message box over the scene (MSGBOX 0x443700); `closed` runs once it goes, however it goes. */
   showMessage(text: string, closed?: () => void): void {
     this.message = { text, since: performance.now(), closed };
-    this.signUp.box = true;
+    this.syncEditorBoxes();
     this.announce(text.replace("\n", " "));
+  }
+
+  /** Both boxes hold the editor-to-record copy (0x460368, 0x460374). Sign-up locks only MSGBOX. */
+  private syncEditorBoxes(): void {
+    this.signUp.box = this.message !== null;
+    const defer = this.message !== null || this.quitBox !== null;
+    this.idLine.deferChanges(defer);
+    this.pwLine.deferChanges(defer);
+    this.statusPage.deferChanges(defer);
   }
 
   /** The auth connect failed or the connection went (0x46118f): the message box, on the login only. */
   authFailed(): void {
     if (this.scene !== "login") return;
-    this.busy = false;
+    this.setBusy(false);
     // A sign-up request out fails with its own message instead, and the reconnect a failed sign-up
     // send makes (R) does not cover that message when it fails too.
     if (this.signUp.pending) this.signUp.lost();
@@ -442,10 +483,25 @@ export class StartScreen {
     this.signUp.answer(kind, rcode);
   }
 
+  /** A changed server uses the same login canvas and editors, with no old request or popup left. */
+  resetLogin(id: string): void {
+    this.fade = null;
+    this.frozen = null;
+    this.setBusy(false);
+    this.message = null;
+    this.quitBox = null;
+    this.helpScreen = false;
+    this.memo = false;
+    this.signUp.close();
+    this.syncEditorBoxes();
+    this.statusPage.reset();
+    this.enterLogin(cutBytes(typeable(id), LOGIN.limit - 1));
+  }
+
   /** The auth server's answer (S->C 0x0a, 0x448ab0): the login's fields go and scene 5 opens with the account. */
   loggedIn(account: OwnAccount): void {
     if (this.scene !== "login") return;
-    this.busy = false;
+    this.setBusy(false);
     const { status } = this.options;
     status.character = Math.max(0, characterIndex(account.character));
     status.hue = account.hue;
@@ -458,14 +514,14 @@ export class StartScreen {
 
   /** "로그인 실패" (0x448ad4): busy off; closing the box resets the fields. */
   loginFailed(): void {
-    this.busy = false;
+    this.setBusy(false);
     this.showMessage(LOGIN_FAILED);
   }
 
   /** 확인's answer: busy off, the fields hold the server's copy. */
   statusSaved(account: OwnAccount): void {
     if (this.scene !== "status") return;
-    this.busy = false;
+    this.setBusy(false);
     this.statusPage.saved(account.nick, account.greeting);
     this.showMessage(STATUS_TEXT.saved);
   }
@@ -473,51 +529,56 @@ export class StartScreen {
   /** pw ▶'s answer (S->C 0x4a, 0x445464): busy off, the account's guild is the server's now. */
   guildSaved(): void {
     if (this.scene !== "status") return;
-    this.busy = false;
+    this.setBusy(false);
     this.showMessage(STATUS_TEXT.guildSaved);
   }
 
   /** A save refused (S->C 0x57's codes, or the server's text). */
   saveRefused(code: number | string): void {
-    this.busy = false;
+    this.setBusy(false);
     this.showMessage(typeof code === "number" ? nickRefusal(code) : code);
   }
 
   /** The game server closed before its version answer (0x460dde): busy off, the row kept, no fade. */
   serverFull(): void {
-    this.busy = false;
+    this.setBusy(false);
     this.showMessage("사용자가 너무\n많습니다");
   }
 
   /** A connection from the page's form: the busy cursor as for a row's (0x45928b). */
   connecting(): void {
-    this.busy = true;
+    this.setBusy(true);
+  }
+
+  /** S->C 0x0a accepted by the game server (0x444b58): its connection wait ends. */
+  connected(): void {
+    this.setBusy(false);
   }
 
   /** The form's wait for its login ended with the auth connection: its busy cursor goes (scene 5's saves keep theirs). */
   formFailed(): void {
-    this.busy = false;
+    this.setBusy(false);
   }
 
   /** FD_CONNECT failed (0x460edc): busy off and the message; the row stays chosen. */
   connectFailed(): void {
-    this.busy = false;
+    this.setBusy(false);
     this.showMessage("게임 서버에 연결할 수\n없습니다");
   }
 
   /** S->C 0x0a refused (0x444b58): busy off, the message, the row let go. */
   refused(text: string): void {
-    this.busy = false;
+    this.setBusy(false);
     this.options.list.selected = -1;
     this.showMessage(text);
   }
 
   /** FD_CLOSE (0x460dbe): the message, the row let go and a fade back to the list, even from it. */
   disconnected(): void {
-    this.busy = false;
+    this.setBusy(false);
     this.options.list.selected = -1;
     this.showMessage("서버로 부터 접속이\n끊어졌습니다");
-    this.fadeOut(freezeCanvas(this.options.canvas), performance.now(), FRAME_MS, () => this.fadeIn(performance.now(), FRAME_MS));
+    this.fadeOut(freezeCanvas(this.ctx.canvas), performance.now(), FRAME_MS, () => this.fadeIn(performance.now(), FRAME_MS));
   }
 
   /** A hidden control for scene 5: the release a click on that button makes, on scene 5 and its page only. */
@@ -551,10 +612,11 @@ export class StartScreen {
 
   /** 2→4 (0x449172): the list freezes and fades out; then the lobby is shown. */
   leave(then: () => void): void {
-    this.fadeOut(freezeCanvas(this.options.canvas), performance.now(), FRAME_MS, then);
+    this.fadeOut(freezeCanvas(this.ctx.canvas), performance.now(), FRAME_MS, then);
   }
 
   dispose(): void {
+    for (const release of this.releaseFrames) release();
     this.stopped = true;
     cancelAnimationFrame(this.frame);
     this.idLine.dispose();
@@ -572,22 +634,26 @@ export class StartScreen {
   }
 
   private fadeOut(picture: HTMLCanvasElement, now: number, frameMs: number, then: () => void): void {
-    this.fade = new Fade("out", now, frameMs);
+    const carried = fadeFrame(picture);
+    this.fadeOutFrame = carried.outFrame;
+    this.fadeInFrame = carried.inFrame;
+    this.darkness = carried.darkness;
+    this.fade = new Fade("out", now, frameMs, this.fadeOutFrame);
     this.frozen = { picture, then };
   }
 
   private fadeIn(now: number, frameMs: number): void {
-    this.fade = new Fade("in", now, frameMs);
+    this.fade = new Fade("in", now, frameMs, this.fadeInFrame);
     this.frozen = null;
   }
 
   /** 0x41bc00: a saved ID puts the focus on the password; both are cleared otherwise. */
-  private enterLogin(): void {
+  private enterLogin(id = this.savedId): void {
     this.scene = "login";
     this.idLine.open();
     this.pwLine.open();
-    this.idLine.text = this.savedId;
-    this.setFocus(this.savedId ? "pw" : "id");
+    this.idLine.text = id;
+    this.setFocus(id ? "pw" : "id");
     this.announce("로그인 화면. 아이디와 비밀번호를 넣고 Enter. Tab으로 칸을 바꿉니다. 가입은 NEW ID 단추입니다.");
     this.options.authConnect();
   }
@@ -597,9 +663,18 @@ export class StartScreen {
     return cutBytes(typeable(this.options.savedId), LOGIN.limit - 1);
   }
 
-  private setFocus(field: "id" | "pw"): void {
+  private setFocus(field: "id" | "pw", reload = true): void {
+    if (this.focus !== field) (this.focus === "id" ? this.idLine : this.pwLine).discardDeferredChanges();
     this.focus = field;
-    (field === "id" ? this.idLine : this.pwLine).focus();
+    const line = field === "id" ? this.idLine : this.pwLine;
+    if (reload) line.reloadRecord();
+    line.focus();
+  }
+
+  /** Apply waiting settings at the event, like 0x43f0b0, even when that kind is already selected. */
+  private setBusy(busy: boolean): void {
+    this.busy = busy;
+    this.cursor.set(busy);
   }
 
   /**
@@ -613,7 +688,7 @@ export class StartScreen {
     if (this.busy || !id || !password) return;
     const sent = this.options.login(id, password);
     if (sent === "sent") {
-      this.busy = true;
+      this.setBusy(true);
       this.announce("로그인하는 중…");
     } else if (sent === "wait") {
       this.announce("인증 서버에 연결하는 중입니다.");
@@ -640,17 +715,17 @@ export class StartScreen {
       this.showMessage(AUTH_FAILED);
       return;
     }
-    this.busy = true;
+    this.setBusy(true);
     this.announce("저장하는 중…");
   }
 
   /** A ranking fetch holds the busy cursor as 0x447290's blocking socket held the frame (0x43f0b0). */
   private async waitFor(fetch: Promise<boolean>): Promise<boolean> {
-    this.busy = true;
+    this.setBusy(true);
     try {
       return await fetch;
     } finally {
-      this.busy = false;
+      this.setBusy(false);
     }
   }
 
@@ -661,14 +736,14 @@ export class StartScreen {
       this.showMessage(AUTH_FAILED);
       return;
     }
-    this.busy = true;
+    this.setBusy(true);
     this.announce("저장하는 중…");
   }
 
   /** Go game: scene 5 fades out and the server list in, its notice window open, its rows asked for. */
   private goServers(): void {
     this.statusPage.leave();
-    this.fadeOut(freezeCanvas(this.options.canvas), performance.now(), FRAME_MS, () => {
+    this.fadeOut(freezeCanvas(this.ctx.canvas), performance.now(), FRAME_MS, () => {
       this.options.list.selected = -1;
       this.memo = true;
       this.scene = "servers";
@@ -683,7 +758,7 @@ export class StartScreen {
   private attach(): () => void {
     const detachPointer = this.pointer.attach(this.options.canvas, {
       moved: () => this.moved(),
-      released: (x, y) => this.release(x, y),
+      released: (x, y) => this.release(x, y, true),
       pressed: (x, y) => this.press(x, y),
     });
     const onKey = (event: KeyboardEvent) => this.key(event);
@@ -692,7 +767,7 @@ export class StartScreen {
     window.addEventListener("keydown", onKey);
     this.options.canvas.addEventListener("pointerdown", onGesture);
     this.options.canvas.addEventListener("wheel", onWheel, { passive: false });
-    const detachCapture = attachCapture(this.options.canvas, () => this.quitBox !== null);
+    const detachCapture = attachCapture(this.options.canvas, () => this.quitBox !== null, () => this.ctx.canvas);
     return () => {
       detachPointer();
       detachCapture();
@@ -718,11 +793,19 @@ export class StartScreen {
   }
 
   /** Releases (0x459041): nothing on the logo and loading; the message box takes every one. */
-  private release(x: number, y: number): void {
+  private release(x: number, y: number, fromCanvas = false): void {
     if (this.blocked || this.helpScreen) return;
     if (this.scene === "logo" || this.scene === "loading") return;
+    if (this.message && !inside(MESSAGE_BOX.button.hit, x, y)) return;
+    const statusClick = fromCanvas && this.scene === "status" && (!this.busy || this.message !== null);
+    if (this.scene === "servers" || statusClick) {
+      // Return from assistive controls to the canvas keys, including EXIT's Y/N.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body && !this.options.stage.contains(active)) active.blur();
+    }
+    if (statusClick) this.statusPage.refocus();
     if (this.message) {
-      if (inside(MESSAGE_BOX.button.hit, x, y)) this.closeMessage();
+      this.closeMessage();
       return;
     }
     if (this.scene === "login") this.loginRelease(x, y);
@@ -799,7 +882,7 @@ export class StartScreen {
         this.setFocus("pw");
         break;
       default:
-        this.setFocus(this.focus);
+        this.setFocus(this.focus, false);
         break;
     }
   }
@@ -815,6 +898,11 @@ export class StartScreen {
     this.refreshArmed = true;
     if (!this.memo && inside(SERVER_BUTTONS.refresh.hit, x, y)) {
       if (list.slide.open) list.selected = -1;
+      else {
+        const pages = serverPageCount(list.rows.length);
+        list.page = ((list.page ?? 0) + 1) % pages;
+        if (pages > 1) this.announce(`서버 목록 ${list.page + 1}/${pages}쪽. 줄을 두 번 누르면 접속합니다.`);
+      }
       toggleSlide(list.slide);
       return;
     }
@@ -822,13 +910,13 @@ export class StartScreen {
       if (inside(MEMO.close.hit, x, y)) this.closeMemo();
       return;
     }
-    const row = list.slide.open ? rowClickAt(x, y, list.rows.length) : -1;
+    const row = list.slide.open ? rowClickAt(x, y, list.rows.length, list.page ?? 0) : -1;
     if (row >= 0 && list.rows[row].load !== -1) {
       if (row !== list.selected) {
         list.selected = row;
         this.announce(`${list.rows[row].name} 서버를 골랐습니다. 한 번 더 누르면 접속합니다.`);
       } else if (!this.busy) {
-        this.busy = true;
+        this.setBusy(true);
         this.announce("접속하는 중…");
         this.options.connect();
       }
@@ -848,6 +936,7 @@ export class StartScreen {
   /** The mouse rests at `at`: the Exit release's place (a hidden mirror's click leaves the real mouse elsewhere), or the mouse for Esc. */
   private openQuitBox(at: { x: number; y: number } = this.pointer.mouse): void {
     this.quitBox = openBox("esc");
+    this.syncEditorBoxes();
     // Scenes 2 and 5 draw it at 0x40cac4: a mouse resting on a button selects it.
     this.boxHover = boxHover(this.quitBox, at);
     this.announce("종료하시겠습니까? 예(Y), 아니오(N)");
@@ -856,6 +945,7 @@ export class StartScreen {
   /** YES closes the program (0x458a77); NO hides the box. */
   private answer(result: BoxResult): void {
     this.quitBox = null;
+    this.syncEditorBoxes();
     this.boxHover = 0;
     if (result === "exit") this.options.exit();
     else this.announce("");
@@ -878,7 +968,7 @@ export class StartScreen {
   private closeMessage(): void {
     const closed = this.message?.closed;
     this.message = null;
-    this.signUp.box = false;
+    this.syncEditorBoxes();
     closed?.();
     // Over the sign-up window the box only hides: no reset, no reconnect (0x4615d4, 0x45885d).
     if (this.scene === "login" && this.signUp.isOpen) {
@@ -894,7 +984,8 @@ export class StartScreen {
   }
 
   private key(event: KeyboardEvent): void {
-    if (event.isComposing || event.keyCode === 229) return;
+    // Only the browser's IME process key is excluded; real F1, Esc and Tab retain their scene actions.
+    if (event.keyCode === 229) return;
     // Keys typed into the page's own controls are theirs; the heading the shell focuses (shell.ts) is not
     // one, and keeps the focus when the list comes back with no edit box to take it.
     const active = document.activeElement;
@@ -909,14 +1000,12 @@ export class StartScreen {
     if (this.quitBox && (this.scene === "servers" || this.scene === "status")) {
       // 0x460097: while the box is up every key, F1 too, only turns the help screen off.
       this.helpScreen = false;
-      if (event.code === "F1") {
-        event.preventDefault();
-        return;
-      }
+      // Keep its keys out of the status editor. Delete still edits the buffer before the box's
+      // key gate (0x403a97); characters/Backspace and caret arrows do not (0x403b70, 0x40394f).
+      if (event.key !== "Delete") event.preventDefault();
       const result = boxKey(this.quitBox, event.key);
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") this.boxHover = boxKeyCursor(this.quitBox);
       if (result) {
-        event.preventDefault();
         this.answer(result);
       }
       return;
@@ -932,30 +1021,27 @@ export class StartScreen {
       this.escape();
       return;
     }
-    if (this.scene === "status" && event.key === "Tab" && !event.shiftKey) {
-      // WM_CHAR Tab (0x41f110): the next field. Shift+Tab is left to the page's controls.
+    if ((this.scene === "login" || this.scene === "status") && event.key === "Tab" && !event.shiftKey) {
+      // WM_CHAR Tab changes fields before MSGBOX's copy gate and while help is up (0x45ff0c).
+      // Shift+Tab is left to the page's controls.
       event.preventDefault();
-      if (!this.blocked && !this.message && !this.helpScreen) this.statusPage.tab();
+      if (this.blocked) return;
+      if (this.scene === "status") this.statusPage.tab();
+      else if (this.signUp.isOpen) this.signUp.tab();
+      else this.setFocus(this.focus === "id" ? "pw" : "id");
       return;
     }
-    if (this.scene !== "login" || this.blocked || this.message || this.helpScreen) return;
+    // Enter's scene action precedes MSGBOX's copy gate too (0x45fbb3); help does not block it.
+    if (this.scene !== "login" || this.blocked) return;
     if (this.signUp.isOpen) {
-      // Tab and Enter in the sign-up window (0x45ff16, 0x45fbb3); Enter never signs up.
-      if (event.key === "Tab" && !event.shiftKey) {
-        event.preventDefault();
-        this.signUp.tab();
-      } else if (event.key === "Enter") {
+      // Enter in the sign-up window (0x45fbb3) never signs up.
+      if (event.key === "Enter") {
         event.preventDefault();
         this.signUp.enter();
       }
       return;
     }
-    // Tab and Enter on the login (0x45ff0c, 0x45fb06). Shift+Tab is left to the page's controls.
-    if (event.key === "Tab" && !event.shiftKey) {
-      event.preventDefault();
-      this.setFocus(this.focus === "id" ? "pw" : "id");
-      return;
-    }
+    // Enter on the login (0x45fb06).
     if (event.key === "Enter") {
       event.preventDefault();
       if (this.focus === "id") this.setFocus("pw");
@@ -978,24 +1064,35 @@ export class StartScreen {
   private render(now: number): void {
     const { ctx } = this;
     ctx.imageSmoothingEnabled = false;
+    this.display.imageSmoothingEnabled = false;
     this.advance(now);
     const frozen = this.frozen;
     const fade = this.fade;
     if (frozen && fade?.kind === "out") {
       // The scene is not drawn while fading out (0x405e08).
       ctx.drawImage(frozen.picture, 0, 0);
-      drawDarkness(ctx, fade.darkness(now));
+      this.display.drawImage(ctx.canvas, 0, 0);
+      this.darkness = fade.darkness(now);
+      drawDarkness(this.display, this.darkness);
+      this.fadeOutFrame = fade.frame(now) + 1;
       if (fade.done(now)) {
+        // The last step fills the composition with black, rather than changing only its gamma.
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
         this.fade = null;
         this.frozen = null;
+        this.fadeOutFrame = 0;
         frozen.then();
       }
       return;
     }
     this.drawScene(now);
+    this.display.drawImage(ctx.canvas, 0, 0);
+    this.darkness = fade ? fade.darkness(now) : 0;
     if (fade) {
-      drawDarkness(ctx, fade.darkness(now));
-      if (fade.done(now)) this.fade = null;
+      drawDarkness(this.display, this.darkness);
+      this.fadeInFrame = fade.frame(now) + 1;
+      if (fade.done(now)) { this.fade = null; this.fadeInFrame = 0; }
     }
   }
 
@@ -1026,9 +1123,9 @@ export class StartScreen {
     }
   }
 
-  /** Scene 5's key change (0x402090) and held button (0x458e22), the button skipped while a box or the help is up (0x458750). */
+  /** Help skips the key poll (0x458750); boxes also skip scene 5's held buttons (0x458e22). */
   private statusTick(): void {
-    this.statusPage.step();
+    if (!this.helpScreen) this.statusPage.step();
     const held = this.pointer.held;
     if (held && !this.quitBox && !this.message && !this.helpScreen) this.statusPage.hold(held.x, held.y);
   }
@@ -1043,7 +1140,7 @@ export class StartScreen {
     this.scene = "loading";
     this.loading.switchedAt = now;
     this.announce("불러오는 중…");
-    this.fadeOut(freezeCanvas(this.options.canvas), now, FRAME_MS, () => this.fadeIn(performance.now(), LOADING_FRAME_MS));
+    this.fadeOut(freezeCanvas(this.ctx.canvas), now, FRAME_MS, () => this.fadeIn(performance.now(), LOADING_FRAME_MS));
   }
 
   /**
@@ -1074,7 +1171,7 @@ export class StartScreen {
     if (loading.fullAt !== null && now - loading.fullAt >= FULL_BAR_MS && !this.frozen) {
       loading.fullAt = Number.POSITIVE_INFINITY;
       this.options.startMusic();
-      this.fadeOut(freezeCanvas(this.options.canvas), now, FRAME_MS, () => {
+      this.fadeOut(freezeCanvas(this.ctx.canvas), now, FRAME_MS, () => {
         this.enterLogin();
         this.fadeIn(performance.now(), FRAME_MS);
       });
@@ -1200,19 +1297,20 @@ export class StartScreen {
     const { ctx } = this;
     const { assets, list } = this.options;
     const { x, y } = this.pointer.mouse;
-    const hover = this.pointer.inside ? rowHoverAt(x, y, list.rows.length) : -1;
-    list.rows.forEach((row, i) => {
-      const origin = rowOrigin(i);
+    const page = list.page ?? 0, first = page * SERVER_ROWS_PER_PAGE;
+    const hover = this.pointer.inside ? rowHoverAt(x, y, list.rows.length, page) : -1;
+    list.rows.slice(first, first + SERVER_ROWS_PER_PAGE).forEach((row, slot) => {
+      const i = first + slot, origin = rowOrigin(slot);
       let bar: Rect | null = null;
-      if (i === list.selected) bar = rowBar(i, true);
-      else if (i === hover) bar = rowBar(i, this.pointer.held !== null);
+      if (i === list.selected) bar = rowBar(slot, true);
+      else if (i === hover) bar = rowBar(slot, this.pointer.held !== null);
       if (bar) {
         ctx.save();
         ctx.globalCompositeOperation = "lighten";
         blit(ctx, assets.serverOb, bar, origin.x, origin.y);
         ctx.restore();
       }
-      const at = rowTexts(i);
+      const at = rowTexts(slot);
       // The auth server gives each row a colour for its name and load (0x433d85).
       const name = fitText(ctx, row.name, FONT_13, ROW_NAME_WIDTH);
       plainText(ctx, name, at.nameShadow.x, at.nameShadow.y, "#000000", FONT_13);
@@ -1237,7 +1335,10 @@ export class StartScreen {
     if (!message) return;
     if (now - message.since >= MESSAGE_BOX.hideMs) {
       this.message = null;
-      this.signUp.box = false;
+      this.syncEditorBoxes();
+      // A successful sign-up closes its editors. Return the login's editor after the box,
+      // unless the user has already moved to one of the page's assistive controls.
+      if (this.scene === "login" && !this.signUp.isOpen && document.activeElement === document.body) this.setFocus(this.focus);
       message.closed?.();
       return;
     }
@@ -1260,7 +1361,9 @@ export class StartScreen {
 
   /** Scene 5 sets the hand over its banner each frame (0x41f580). */
   private get handCursor(): boolean {
-    return this.scene === "status" && !this.helpScreen && this.statusPage.overBanner(this.pointer.mouse.x, this.pointer.mouse.y);
+    // Help skips the scene's hover handler and draws the current cursor (0x40ca70).
+    if (this.helpScreen) return this.cursor.hand;
+    return this.scene === "status" && this.statusPage.overBanner(this.pointer.mouse.x, this.pointer.mouse.y);
   }
 
   private pressedOver(hit: Rect): boolean {

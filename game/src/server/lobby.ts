@@ -240,7 +240,7 @@ export class Lobby {
         fail(room ? room.start(peerId) : "방에 들어가 있지 않습니다.");
         break;
       case "input":
-        room?.input(peerId, message.dir, { bomb: message.bomb, attack: message.attack, evade: message.evade });
+        room?.input(peerId, message.dir, { bomb: message.bomb, attack: message.attack, evade: message.evade }, message.paused);
         break;
       case "game-chat":
         room?.gameChat(peerId, message.text);

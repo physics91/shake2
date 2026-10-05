@@ -27,6 +27,17 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return element;
 }
 
+/** A server-updated roster keeps the keyboard on the same action, if that target still exists. */
+export function replaceChildrenKeepingFocus(parent: HTMLElement, ...children: Node[]): void {
+  const active = document.activeElement;
+  const key = parent.contains(active) ? active?.getAttribute("data-focus-key") : null;
+  parent.replaceChildren(...children);
+  if (!key) return;
+  const next = [...parent.querySelectorAll<HTMLElement>("[data-focus-key]")]
+    .find((element) => element.getAttribute("data-focus-key") === key);
+  next?.focus({ preventScroll: true });
+}
+
 export function readPreference(key: string): string | null {
   try {
     return localStorage.getItem(`shake2.${key}`);

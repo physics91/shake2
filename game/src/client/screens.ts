@@ -47,7 +47,20 @@ export function renderRoundResult(ctx: CanvasRenderingContext2D, assets: SceneAs
  */
 export function renderWait(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, view: RenderView): void {
   if (state.round > 1) {
-    drawRoundScreen(ctx, assets, state, view, state.round, view.lastRoundDraw, STATUS_TEXT.waiting, STATUS_TEXT.ready);
+    if (!view.waitRetained) {
+      // A late asset load may skip drawing the result; supply its backdrop once in that case.
+      drawRoundScreen(ctx, assets, state, view, state.round, view.lastRoundDraw, STATUS_TEXT.waiting, STATUS_TEXT.ready);
+      return;
+    }
+    for (const player of state.players) {
+      const base = resultRowBase(player.slot);
+      drawIdentity(ctx, assets, state, player, base, view);
+      outlinedText(ctx, statusOf(player, view, STATUS_TEXT.ready), RESULT_ROW.status.x, base + RESULT_ROW.status.dy, YELLOW, FONT_12);
+      for (let k = 0; k < player.medals; k++) {
+        blit(ctx, assets.hud.mark, MEDAL, RESULT_ROW.medal.x + RESULT_ROW.medal.step * k, base + RESULT_ROW.medal.dy);
+      }
+    }
+    if (view.lastRoundDraw) blit(ctx, assets.hud.sd, DRAW_BLIT.src, DRAW_BLIT.x, DRAW_BLIT.y);
     return;
   }
   ctx.drawImage(assets.hud.load, 0, 0);

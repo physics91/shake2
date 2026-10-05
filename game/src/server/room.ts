@@ -6,7 +6,7 @@ import { isTeamMode } from "../sim/modes.ts";
 import type { Buttons, Dir, GameMode, InputFrame, LevelLayout, MatchState, Rules, SimEvent } from "../sim/types.ts";
 import type { MatchRecord } from "./accounts.ts";
 import { PeerButtons } from "./buttons.ts";
-import type { Badge, ChatKind, PanelBar, RoomInfo, RoomStatus, RoomSummary, ServerMessage, UserCard } from "./protocol.ts";
+import type { Badge, ChatKind, PanelBar, RoomChange, RoomInfo, RoomStatus, RoomSummary, ServerMessage, UserCard } from "./protocol.ts";
 import { badgeOf, CHAT_INTERVAL_MS, RANDOM_MAP, shownName, SNAPSHOT_EVERY, START_BARS, toWireState, typingPacketDue } from "./protocol.ts";
 import { cellShares, LEAVE_PENALTY } from "./results.ts";
 
@@ -73,6 +73,8 @@ interface Member {
   slot: number;
   dir: Dir | null;
   buttons: PeerButtons;
+  /** The client returns before its input poll under help, the exit box or chat (0x45aec8). */
+  inputPaused: boolean;
   /** The match's chat line is open ([0x48c0e8]): the keys go unread (0x45aec8) and the "chat" mark shows. */
   typing: boolean;
   /** What the peers last took from this player's state packet (remote +0x2c8, 0x45d300). */
@@ -292,7 +294,7 @@ export class Room {
     if (this.playing) return "게임 중에는 자리를 바꿀 수 없습니다.";
     if (this.bySlot().some((m) => m.slot === slot)) return "빈 자리만 열고 닫을 수 있습니다.";
     this.closed[slot] = !open;
-    this.broadcastRoom();
+    this.broadcastRoom("slot");
     return null;
   }
 
@@ -330,7 +332,7 @@ export class Room {
       return "준비하지 않은 참가자가 있을 때만 방장이 팀을 바꿀 수 있습니다.";
     }
     member.team = team;
-    this.broadcastRoom();
+    this.broadcastRoom("team");
     return null;
   }
 
@@ -373,6 +375,7 @@ export class Room {
     for (const member of this.members.values()) {
       member.dir = null;
       member.buttons.clear();
+      member.inputPaused = false;
       member.typing = false;
     }
     this.resetBars();
@@ -382,11 +385,14 @@ export class Room {
     return null;
   }
 
-  input(peerId: number, dir: Dir | null, buttons: Buttons): void {
+  input(peerId: number, dir: Dir | null, buttons: Buttons, paused = false): void {
     const member = this.members.get(peerId);
     if (!member) return;
     member.dir = dir;
-    member.buttons.set(buttons);
+    member.inputPaused = paused;
+    // A tap made while the poll is skipped must not survive a resume before the next tick.
+    if (paused) member.buttons.clear();
+    else member.buttons.set(buttons);
   }
 
   /**
@@ -447,7 +453,7 @@ export class Room {
     const inputs: Record<number, InputFrame | null> = {};
     for (const member of this.members.values()) {
       const buttons = member.buttons.take();
-      inputs[member.peer.id] = member.typing ? null : { dir: member.dir, ...buttons };
+      inputs[member.peer.id] = member.typing || member.inputPaused ? null : { dir: member.dir, ...buttons };
     }
     return inputs;
   }
@@ -539,6 +545,7 @@ export class Room {
       slot,
       dir: null,
       buttons: new PeerButtons(),
+      inputPaused: false,
       typing: false,
       shownTyping: false,
       typingSentMs: Number.NEGATIVE_INFINITY,
@@ -581,8 +588,8 @@ export class Room {
     if (!this.playing) this.broadcastRoom();
   }
 
-  private broadcastRoom(): void {
-    this.broadcast({ type: "room", room: this.info() });
+  private broadcastRoom(change: RoomChange = "other"): void {
+    this.broadcast({ type: "room", room: this.info(), change });
     this.deps.changed();
   }
 

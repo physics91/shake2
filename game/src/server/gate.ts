@@ -174,7 +174,7 @@ export class Gate {
         this.enqueue(connection, message);
         return;
       case "server-info":
-        this.serverInfo(connection, message.channel);
+        this.serverInfo(connection, message.channel, message.requestId);
         return;
       case "version":
         this.version(connection, message.version, message.channel);
@@ -192,10 +192,10 @@ export class Gate {
         this.setGuild(connection, message.guild);
         return;
       case "ranking":
-        if (connection.account !== null) connection.peer.send({ type: "ranking", page: message.page, rows: this.rankingRows(message.page) });
+        if (connection.account !== null) connection.peer.send({ type: "ranking", page: message.page, rows: this.rankingRows(message.page), requestId: message.requestId });
         return;
       case "ranking-search":
-        if (connection.account !== null) this.searchRanking(connection, message.id);
+        if (connection.account !== null) this.searchRanking(connection, message.id, message.requestId);
         return;
       case "set-character":
         if (!connection.joined) {
@@ -242,11 +242,11 @@ export class Gate {
    * The server list row's load query (C->S 0x4c): users / capacity · 100 (0x448410). The users are
    * the lobby's; the capacity check also counts those between their version and hello.
    */
-  private serverInfo(connection: Connection, index: number): void {
+  private serverInfo(connection: Connection, index: number, requestId: number): void {
     const channel = this.config.channels[index];
     if (!channel) return;
     const load = Math.min(100, Math.trunc((channel.lobby.userCount / Math.max(1, channel.maxUsers)) * 100));
-    connection.peer.send({ type: "server-info", channel: index, name: channel.row.name, load });
+    connection.peer.send({ type: "server-info", channel: index, name: channel.row.name, load, requestId });
   }
 
   /**
@@ -304,10 +304,10 @@ export class Gate {
   }
 
   /** ?search=ID: the page the ID is on and its rows, or "Not Found" for an ID not ranked. */
-  private searchRanking(connection: Connection, id: string): void {
+  private searchRanking(connection: Connection, id: string, requestId: number): void {
     const index = this.config.accounts.rankedIndex(id);
     const page = index < 0 ? null : Math.floor(index / RANKING_PAGE_ROWS) + 1;
-    connection.peer.send({ type: "ranking-search", page, rows: page === null ? [] : this.rankingRows(page) });
+    connection.peer.send({ type: "ranking-search", page, rows: page === null ? [] : this.rankingRows(page), requestId });
   }
 
   /** Scene 5's Go (the old C->S 0x1a) over the auth connection: the character, hue and use-ID flag. */

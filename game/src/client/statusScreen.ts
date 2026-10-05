@@ -200,11 +200,11 @@ export class StatusPage {
     this.detachKeys = this.attachKeys();
   }
 
-  /** The held keys for the key change; text typed into the page's own form outside the canvas is not one. */
+  /** Keys from the canvas and its editors; the page's assistive controls keep their own keys. */
   private attachKeys(): () => void {
     const down = (event: KeyboardEvent) => {
       const active = document.activeElement;
-      if (active instanceof HTMLInputElement && !this.options.stage.contains(active)) return;
+      if (active !== null && active !== document.body && active.tagName !== "H1" && !this.options.stage.contains(active)) return;
       this.held.add(event.code);
       // A key being taken does only that: F5 does not reload, Tab and Enter do not move or press a control.
       const dik = codeToDik(event.code);
@@ -225,6 +225,11 @@ export class StatusPage {
   /** Whether the page's own editors hold the focus (StartScreen's key filter). */
   owns(element: Element | null): boolean {
     return [...this.fields, this.search, this.macroLine].some((line) => line.element === element);
+  }
+
+  /** The scene's message box blocks copying the editor into each field (0x460374). */
+  deferChanges(defer: boolean): void {
+    for (const line of [...this.fields, this.search, this.macroLine]) line.deferChanges(defer);
   }
 
   get pageName(): StatusPageName {
@@ -285,6 +290,12 @@ export class StatusPage {
   leave(): void {
     for (const line of [...this.fields, this.search, this.macroLine]) line.close();
     this.editing = false;
+  }
+
+  /** A different server starts with the main page and none of the previous account's editors open. */
+  reset(): void {
+    this.closePages();
+    this.leave();
   }
 
   dispose(): void {
@@ -370,11 +381,15 @@ export class StatusPage {
     else if (this.page === "main" && this.editing) this.setFocus((this.focus + 1) % this.fields.length);
   }
 
-  /** Keep the keyboard on the line being edited after a click elsewhere; none while a key changes. */
+  /** An accepted click returns to the editor or, during key capture, the game's key poll. */
   refocus(): void {
     if (this.page === "ranking") this.search.focus();
     else if (this.page === "option") {
       if (this.option?.changing === -1) this.macroLine.focus();
+      else if (this.option) {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && active !== document.body) active.blur();
+      }
     } else if (this.editing) this.fields[this.focus].focus();
   }
 
@@ -593,7 +608,9 @@ export class StatusPage {
   }
 
   private setFocus(field: number): void {
+    if (this.focus !== field) this.fields[this.focus].discardDeferredChanges();
     this.focus = field;
+    this.fields[field].reloadRecord();
     this.fields[field].focus();
   }
 
@@ -601,8 +618,9 @@ export class StatusPage {
   private loadPortrait(): void {
     const id = this.character;
     const { hue } = this.options.state;
-    if (this.portrait?.id === id && this.portrait.hue === hue) return;
-    const portrait = { id, hue, sheet: null as Sheet | null, frame: 0, lastMs: Number.NEGATIVE_INFINITY };
+    const previous = this.portrait;
+    const sheet = previous?.id === id && previous.hue === hue ? previous.sheet : null;
+    const portrait = { id, hue, sheet, frame: 0, lastMs: Number.NEGATIVE_INFINITY };
     this.portrait = portrait;
     loadTintedSheet("character", portraitSheetName(id), hue).then(
       (sheet) => {

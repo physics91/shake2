@@ -109,13 +109,22 @@ export function createMatch(layout: LevelLayout, setups: PlayerSetup[], rules: R
     hiddenOwners: [],
     lingering: [],
     localMark: null,
+    blindSprites: null,
+    shadowSprites: null,
+    teamMarkerSprites: null,
+    bodyPlayers: null,
+    aliveDrawPlayers: null,
+    badStatePlayers: null,
     bombSprites: [],
     effects: [],
     effectSprites: [],
     breaking: [],
+    brickSprites: null,
     items: [],
+    itemSprites: null,
     itemBitCleared: [],
     objects: [],
+    objectSprites: null,
     timerSeconds: rules.roundSeconds,
     timerMs: LONG_AGO_MS,
     hurried: false,
@@ -155,6 +164,9 @@ export function step(state: MatchState, inputs: InputMap): void {
   state.events = [];
   state.tick += 1;
   const elapsed = phaseElapsedMs(state);
+  // The background's blind flag and point precede CMM and fire (0x4060e6, 0x408f2c).
+  state.blindSprites = state.players.flatMap((player) => player.status.blind === null
+    ? [] : [{ id: player.id, x: player.x, y: player.y }]);
 
   // The wait and countdown screens take no keys: the input poll returns before the players
   // (0x45aea1-0x45aec2), so a key held there leaves the action latch as it was.
@@ -165,7 +177,11 @@ export function step(state: MatchState, inputs: InputMap): void {
     case "countdown":
       // The countdown starts under a fade (0x460950): the field stands still while it darkens,
       // the switch's own frame being the first of the darkening.
-      if (state.tick - state.phaseTick >= FADE_OUT_FRAMES) animateObjects(state);
+      if (state.tick - state.phaseTick >= FADE_OUT_FRAMES) {
+        animateObjects(state);
+        // Scene 8 runs the body pass before its countdown overlay (0x40b1ce, 0x40c85b).
+        updatePlayers(state);
+      }
       if (countdownAt(state, state.tick) === 0 && countdownAt(state, state.tick - 1) !== 0) {
         state.events.push({ type: "start-shown" });
       }
@@ -187,6 +203,11 @@ export function step(state: MatchState, inputs: InputMap): void {
       }
       updateBricks(state);
       updateObjects(state, 1);
+      // Shadows precede items, bombs and player movement/status changes (0x40914f, 0x406315).
+      state.shadowSprites = state.players.flatMap((player) => player.gone || player.status.invisible !== null
+        ? [] : [{ x: player.x, y: player.y }]);
+      // The item pass precedes burning, pickups and death drops (0x406472, 0x4092ae).
+      state.itemSprites = state.items.map((item) => ({ ...item }));
       updateBombs(state);
       updatePlayers(state);
       updateEffects(state);
@@ -236,9 +257,10 @@ function applyInputs(state: MatchState, inputs: InputMap): void {
     const pressed = inputs[player.id];
     if (pressed === null) continue;
     // A dying player is hidden (0x462050), so the poll returns before the keys (0x45af4a) and the
-    // latch stays. Once the death has ended the poll reads no key (0x4021bb: the death state is past
-    // the walk, stand and kick groups), so the action is none and the latch goes (0x45b5d7).
+    // latch stays. Once the death has ended, 0x45af20 bypasses the alive/frozen guards and reads
+    // no key (0x4021bb). Neutral input clears the stop (0x463450) and latch (0x45b5d7).
     if (player.gone) {
+      player.stopRequested = false;
       player.actionLatch = false;
       continue;
     }
@@ -251,8 +273,9 @@ function applyInputs(state: MatchState, inputs: InputMap): void {
       const dir = player.status.reverse === null ? input.dir : (((input.dir + 2) % 4) as Dir);
       player.dir = dir;
       setAnim(player, (isKicking(player) ? Anim.Kick : Anim.Walk) + dir);
-    } else if (isWalking(player)) {
-      player.stopRequested = true;
+    } else {
+      // 0x463450 sets the request for walking and clears it for every other animation.
+      player.stopRequested = isWalking(player);
     }
     if (action === Action.None) player.actionLatch = false;
     else if (!player.actionLatch) runAction(state, player, action);
@@ -332,20 +355,36 @@ function updateClock(state: MatchState): void {
  */
 function updatePlayers(state: MatchState): void {
   const now = nowMs(state.tick);
+  state.teamMarkerSprites = [];
+  state.bodyPlayers = [];
+  state.aliveDrawPlayers = [];
+  state.badStatePlayers = [];
   state.hiddenOwners = [];
   state.lingering = [];
   clearLocalMark(state);
   for (const player of state.players) {
-    if (state.phase !== "playing") return;
+    if (state.phase !== "playing" && state.phase !== "countdown") return;
     if (player.gone) continue;
+    // 0x40aa3a: draw the teammate arrow before advancing this player's body or movement.
+    const { id, x, y, anim, frame } = player;
+    state.teamMarkerSprites.push({ id, x, y, anim, frame });
     if (!player.alive) {
       advanceDeath(state, player, now);
     } else {
-      updatePlayer(state, player, now);
-      const cell = playerCell(state, player);
-      const kind = cell === null ? 0 : state.flame[cell];
-      if (kind > 0 && !fireproof(player)) burnPlayer(state, player, kind, now);
+      // Each network player's own client checks fire before CMM (0x40af9b, 0x40b1ce).
+      // A death started here still runs CMM's timers and death animation on this tick.
+      if (!state.rules.practice) checkFire(state, player, now);
+      if (player.alive) updatePlayer(state, player, now);
+      else advanceDeath(state, player, now);
+      // Retain the iteration's alive branch for the remote body and typing mark (0x40ab22).
+      state.aliveDrawPlayers.push(player.id);
+      // A later capsule can revive somebody whose branch already ran.
+      if (player.badState !== null) state.badStatePlayers.push(player.id);
+      // Practice checks fire after CMM and the live body draw (0x40807a, 0x408154).
+      if (state.rules.practice) checkFire(state, player, now);
     }
+    // A later capsule pickup can revive a player whose loop already skipped its body.
+    if (!player.gone) state.bodyPlayers.push(player.id);
     placeLocalMark(state, player);
   }
 }
@@ -386,6 +425,12 @@ function noteLocalCell(state: MatchState, player: PlayerState): void {
  * again every update the player stands in them, dummies too. The network game gates the repeat
  * (0x40d379, 0x40d3b9), but only practice has these bombs.
  */
+function checkFire(state: MatchState, player: PlayerState, now: number): void {
+  const cell = playerCell(state, player);
+  const kind = cell === null ? 0 : state.flame[cell];
+  if (kind > 0 && !fireproof(player)) burnPlayer(state, player, kind, now);
+}
+
 function burnPlayer(state: MatchState, player: PlayerState, kind: number, now: number): void {
   switch (kind) {
     case 1:
@@ -490,7 +535,7 @@ function animTiming(player: PlayerState): [fps: number, frames: number] {
 
 function kill(state: MatchState, player: PlayerState): void {
   player.alive = false;
-  player.stopRequested = false;
+  // Death leaves the pending walk-stop bit (+0x171) untouched (0x40821b–0x408304).
   player.anim = Anim.Death;
   player.frame = 0;
   // The local player's death start is the one place practice points the static at it (0x40829c).
@@ -505,6 +550,9 @@ function kill(state: MatchState, player: PlayerState): void {
  * decided (0x407ebe, 0x40d4d0, 0x44ea40).
  */
 function advanceDeath(state: MatchState, player: PlayerState, now: number): void {
+  // Dying characters still run 0x4525c0's state timers before their animation advances.
+  holdSlow(player, now, false);
+  expireStatus(player, now);
   if (!animDue(now, player.animMs, DEATH_FPS)) return;
   player.animMs = now;
   player.frame += 1;
@@ -662,11 +710,19 @@ function startRound(state: MatchState, round: number): void {
   state.hiddenOwners = [];
   state.lingering = [];
   clearLocalMark(state);
+  state.blindSprites = null;
+  state.shadowSprites = null;
+  state.teamMarkerSprites = null;
+  state.bodyPlayers = null;
+  state.aliveDrawPlayers = null;
+  state.badStatePlayers = null;
   state.bombSprites = [];
   state.effects = [];
   state.effectSprites = [];
   state.breaking = [];
+  state.brickSprites = null;
   state.items = [];
+  state.itemSprites = null;
   state.itemBitCleared = [];
   resetObjects(state);
   // The world load reseeds (0x44d77c) before the host draws the spawns and again before the brick
@@ -710,9 +766,8 @@ function resetPlayer(state: MatchState, player: PlayerState): void {
   const spawn = cellTopLeft(state, spawns[rollSpawns ? state.spawnPoints[player.slot] : player.slot]);
   player.x = spawn.x + SPAWN_DX;
   player.y = spawn.y + (state.rules.practice ? PRACTICE_SPAWN_DY : SPAWN_DY);
-  // The sim does not update players before play starts. A network game's have stood on their
-  // spawns through the countdown (I); practice builds its players at each start, and the
-  // constructor leaves +0x184 at 0 (0x461f02) until the first update.
+  // Network actors stand on their spawns during the countdown. Practice builds its players
+  // at each start, and the constructor leaves +0x184 at 0 (0x461f02) until the first update.
   player.lastCell = state.rules.practice ? 0 : (playerCell(state, player) ?? -1);
   player.dir = Dir.Down;
   player.anim = Anim.Stand + Dir.Down;

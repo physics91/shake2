@@ -39,10 +39,13 @@ export function mapChoices(manifest: Manifest): Choice[] {
 
 export function portraitCanvas(character: string, size: number): HTMLCanvasElement {
   const canvas = h("canvas", { width: size, height: size, class: "portrait", "aria-hidden": "true" });
-  void loadSheet("character", portraitSheetName(character)).then((portrait) => {
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    drawFrameFitted(ctx, portrait, portrait.meta.animations[0], 0, { x: 0, y: 0, width: size, height: size });
-  });
+  void loadSheet("character", portraitSheetName(character)).then(
+    (portrait) => {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      drawFrameFitted(ctx, portrait, portrait.meta.animations[0], 0, { x: 0, y: 0, width: size, height: size });
+    },
+    () => undefined,
+  );
   return canvas;
 }

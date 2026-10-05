@@ -73,6 +73,9 @@ export function placePracticeItems(state: MatchState): void {
 
 /** Crumbling bricks advance like the brick sheet's anim 1 and reveal their item when it wraps (0x401890). */
 export function updateBricks(state: MatchState): void {
+  // 0x401890 draws each brick before advancing it, revealing its item or removing it.
+  state.brickSprites = state.grid.map((kind) => kind === CellKind.Brick ? 0 : -1);
+  for (const brick of state.breaking) state.brickSprites[brick.cell] = brick.frame;
   const now = nowMs(state.tick);
   const finished: number[] = [];
   for (const brick of state.breaking) {

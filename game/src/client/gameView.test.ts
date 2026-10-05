@@ -5,12 +5,21 @@ import { layoutFromAscii, setups, VERSUS } from "../sim/testing.ts";
 import type { MatchState, SimEvent } from "../sim/types.ts";
 import type { SoundBank } from "./audio.ts";
 import type { GameView as View } from "./gameView.ts";
+import type { RenderView } from "./renderer.ts";
+
+const { renderScreen } = vi.hoisted(() => ({ renderScreen: vi.fn() }));
+vi.mock("./renderer.ts", async (original) => ({ ...await original<typeof import("./renderer.ts")>(), renderScreen }));
 
 let GameView: typeof View;
 
 beforeAll(async () => {
-  const canvas = () => ({ width: 0, height: 0, getContext: () => ({ fillStyle: "", fillRect() {} }) });
+  const canvas = () => {
+    const element = { width: 0, height: 0, getContext: () => ctx };
+    const ctx = { canvas: element, fillStyle: "", fillRect() {} };
+    return element;
+  };
   vi.stubGlobal("document", { createElement: canvas });
+  vi.stubGlobal("window", new EventTarget());
   ({ GameView } = await import("./gameView.ts"));
 });
 
@@ -33,12 +42,14 @@ function ringingSounds(effects = true) {
 /** A view whose match ended (the other player left in play), so endsig rings. */
 function finalResult(effects = true) {
   const sounds = ringingSounds(effects);
-  const ctx = { canvas: { addEventListener() {}, removeEventListener() {} } } as unknown as CanvasRenderingContext2D;
-  const view = new GameView(ctx, {} as never, sounds.bank, { localPlayerIds: [1], hostId: 1, music: null });
+  const ctx = { canvas: { addEventListener() {}, removeEventListener() {} }, drawImage() {} } as unknown as CanvasRenderingContext2D;
+  const assets = { cursor: { meta: { animations: [{ unknown_u16: 5, frames: [{}] }] } } };
+  const view = new GameView(ctx, assets as never, sounds.bank, { localPlayerIds: [1], hostId: 1, music: null });
   const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
   while (state.phase !== "playing") step(state, {});
   removePlayer(state, 2);
   view.ingest(state, state.events);
+  view.render(state);
   expect(sounds.ringing.has("endsig")).toBe(true);
   return { view, ringing: sounds.ringing };
 }
@@ -46,8 +57,9 @@ function finalResult(effects = true) {
 /** A view whose round ended (player 1 burned), so end rings. */
 function roundResult(effects = true) {
   const sounds = ringingSounds(effects);
-  const ctx = { canvas: { addEventListener() {}, removeEventListener() {} } } as unknown as CanvasRenderingContext2D;
-  const view = new GameView(ctx, {} as never, sounds.bank, { localPlayerIds: [1], hostId: 1, music: null });
+  const ctx = { canvas: { addEventListener() {}, removeEventListener() {} }, drawImage() {} } as unknown as CanvasRenderingContext2D;
+  const assets = { cursor: { meta: { animations: [{ unknown_u16: 5, frames: [{}] }] } } };
+  const view = new GameView(ctx, assets as never, sounds.bank, { localPlayerIds: [1], hostId: 1, music: null });
   const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
   while (state.phase !== "playing") step(state, {});
   state.flame[0] = 1;
@@ -55,6 +67,7 @@ function roundResult(effects = true) {
     step(state, {});
     view.ingest(state, state.events);
   }
+  view.render(state);
   expect(sounds.ringing.has("end")).toBe(true);
   return { view, state, ringing: sounds.ringing };
 }
@@ -125,5 +138,82 @@ describe("GameView.catchUp", () => {
     // Round 2's wait screen still stops the round result cue (0x41014e).
     expect(calls).toEqual(["stop:end"]);
     expect((view as unknown as { lastRoundDraw: boolean }).lastRoundDraw).toBe(true);
+  });
+});
+
+describe("GameView cursor", () => {
+  function cursorView() {
+    const canvas = Object.assign(new EventTarget(), {
+      getBoundingClientRect: () => ({ left: 10, top: 20, width: 400, height: 300 }),
+    });
+    const ctx = { canvas, drawImage() {} } as unknown as CanvasRenderingContext2D;
+    const assets = { cursor: { meta: { animations: [{ unknown_u16: 200, frames: [{}] }] } } };
+    const state = createMatch(layoutFromAscii(["1....", ".....", "....2"]), setups(2), VERSUS, 1);
+    const { bank } = ringingSounds();
+    const view = new GameView(ctx, assets as never, bank, { localPlayerIds: [1], hostId: 1, music: null });
+    const send = (type: string, fields: Partial<PointerEvent> = {}) => canvas.dispatchEvent(Object.assign(new Event(type), {
+      pointerId: 1, isPrimary: true, button: type === "pointermove" ? -1 : 0, buttons: type === "pointerdown" ? 1 : 0,
+      clientX: 60, clientY: 120, ...fields,
+    }));
+    const shown = (): RenderView => {
+      view.render(state);
+      return renderScreen.mock.calls.at(-1)![3];
+    };
+    return { view, send, shown };
+  }
+
+  it.each(["pointerdown", "pointermove"])("keeps a second finger's %s from moving the cursor and hover text", (type) => {
+    const { view, send, shown } = cursorView();
+    try {
+      send("pointerdown");
+      send(type, { pointerId: 2, isPrimary: false, clientX: 310, clientY: 220 });
+      const frame = shown();
+      expect(frame.mouse).toEqual({ x: 100, y: 200 });
+      expect(frame.cursor).toMatchObject({ x: 100, y: 200 });
+    } finally { view.dispose(); }
+  });
+
+  it("keeps the cursor visible when a second finger leaves, then hides it when the primary leaves", () => {
+    const { view, send, shown } = cursorView();
+    try {
+      send("pointerdown");
+      send("pointerleave", { pointerId: 2, isPrimary: false });
+      expect(shown().cursor).toMatchObject({ x: 100, y: 200 });
+      send("pointerleave");
+      expect(shown().cursor).toBeUndefined();
+    } finally { view.dispose(); }
+  });
+
+  it("keeps the cursor hidden on a secondary pointer without a primary touch", () => {
+    const { view, send, shown } = cursorView();
+    try {
+      send("pointermove", { pointerId: 2, isPrimary: false });
+      expect(shown().cursor).toBeUndefined();
+    } finally { view.dispose(); }
+  });
+
+  it.each(["pointerdown", "pointermove", "pointerleave"])("keeps another device's primary %s from taking the held cursor", (type) => {
+    const { view, send, shown } = cursorView();
+    try {
+      send("pointerdown", { pointerType: "touch" });
+      send(type, { pointerId: 2, isPrimary: true, pointerType: "mouse", clientX: 310, clientY: 220 });
+      const frame = shown();
+      expect(frame.mouse).toEqual({ x: 100, y: 200 });
+      expect(frame.cursor).toMatchObject({ x: 100, y: 200 });
+    } finally { view.dispose(); }
+  });
+
+  it.each(["pointerup", "pointercancel", "lostpointercapture", "blur"])("allows a fresh device's movement after the held pointer ends with %s", (type) => {
+    const { view, send, shown } = cursorView();
+    try {
+      send("pointerdown", { pointerType: "touch" });
+      const mouse = { pointerId: 2, isPrimary: true, pointerType: "mouse", clientX: 310, clientY: 220 };
+      send("pointermove", mouse);
+      expect(shown().mouse).toEqual({ x: 100, y: 200 });
+      if (type === "blur") window.dispatchEvent(new Event("blur"));
+      else send(type);
+      send("pointermove", mouse);
+      expect(shown().cursor).toMatchObject({ x: 600, y: 400 });
+    } finally { view.dispose(); }
   });
 });

@@ -14,7 +14,7 @@ export function addEffect(state: MatchState, kind: EffectKind, owner: PlayerStat
 
 /**
  * One pass over the list, once an update after the players: a finished entry is dropped
- * undrawn; the others are drawn (a following one at its owner, while the owner is shown,
+ * undrawn; the others are drawn (a following one at its owner, while the owner is alive,
  * +0x170) and then advance when `now - last > 1000 / fps`. A one-shot entry finishes after its
  * last frame; a timed one loops until `now - start > lifeMs`.
  */
@@ -25,7 +25,7 @@ export function updateEffects(state: MatchState): void {
   for (const effect of state.effects) {
     if (effect.follow) {
       const owner = state.players.find((p) => p.id === effect.owner);
-      if (owner && !owner.gone) {
+      if (owner?.alive && !owner.gone) {
         effect.x = owner.x;
         effect.y = owner.y;
       }

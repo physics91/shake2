@@ -3,7 +3,7 @@
 // and screen reader path. Geometry and rules: roomLayout.ts and original/FIDELITY.md §13.
 import type { Rect } from "../assets/types.ts";
 import { chatLine as sendableChat, RANDOM_MAP, shownName } from "../server/protocol.ts";
-import type { ClientMessage, LobbyPlayer, RoomInfo } from "../server/protocol.ts";
+import type { ClientMessage, LobbyPlayer, RoomChange, RoomInfo } from "../server/protocol.ts";
 import { hasItem, ITEM_KICK, ITEM_MASK, ITEM_WHISPER } from "../server/items.ts";
 import { animDue } from "../sim/constants.ts";
 import { isTeamMode, MODE_NAMES } from "../sim/modes.ts";
@@ -113,6 +113,7 @@ export async function loadRoomAssets(): Promise<RoomScreenAssets> {
 
 export interface RoomScreenOptions {
   canvas: HTMLCanvasElement;
+  cursor?: CursorAnim;
   /** The canvas's positioned parent, for the chat line's hidden input. */
   stage: HTMLElement;
   assets: RoomScreenAssets;
@@ -151,7 +152,8 @@ export class RoomScreen {
   private readonly caret = new CaretBlink();
   private readonly startBlink = new CaretBlink();
   /** The slots' `_p.spr`, by character and hue (portraitKey). */
-  private readonly portraits = new Map<string, Sheet | null>();
+  private readonly portraits = new Map<string, Sheet>();
+  private readonly portraitLoads = new Set<string>();
   private readonly faces = new Map<number, { frame: number; lastMs: number }>();
   private room: RoomInfo;
   private log: string[] = [];
@@ -161,7 +163,7 @@ export class RoomScreen {
   private helpScreen = false;
   /** The message box with "강퇴 당했습니다." is up; scene 7 never lets it close by itself (0x443786). */
   private kicked = false;
-  private readonly cursor = new CursorAnim();
+  private readonly cursor: CursorAnim;
   private frame = 0;
   private stopped = false;
   private readonly detach: () => void;
@@ -170,6 +172,7 @@ export class RoomScreen {
 
   constructor(options: RoomScreenOptions, room: RoomInfo) {
     this.options = options;
+    this.cursor = options.cursor ?? new CursorAnim();
     this.room = room;
     const ctx = options.canvas.getContext("2d");
     if (!ctx) throw new Error("canvas 2d context unavailable");
@@ -191,15 +194,16 @@ export class RoomScreen {
     this.frame = requestAnimationFrame(draw);
   }
 
-  update(room: RoomInfo): void {
-    if (endsBusy(this.room, room)) this.cursor.set(false);
+  update(room: RoomInfo, change?: RoomChange): void {
+    // Tagged replies set the session cursor at receipt; infer only for untagged room adapters.
+    if (change === undefined && endsBusy(this.room, room)) this.cursor.set(false);
     this.room = room;
     this.loadPortraits();
   }
 
-  /** The server turned a request down; for a slot that is the original's failed S->C 0x45, which ends the wait too. */
+  /** S->C 0x44/0x45 reset the cursor even when it is already normal (0x4452e0, 0x4452fb). */
   refused(): void {
-    if (this.cursor.busy) this.cursor.set(false);
+    this.cursor.set(false);
   }
 
   /** /ban went out (0x4465ae): the busy cursor until S->C 0x44. */
@@ -211,6 +215,7 @@ export class RoomScreen {
   showKicked(): void {
     if (this.overlay?.kind === "box") this.overlay = null;
     this.kicked = true;
+    this.chat.deferChanges(true);
     this.status.textContent = `${KICKED_TEXT} 확인 단추나 Esc로 로비에 갑니다.`;
   }
 
@@ -286,12 +291,14 @@ export class RoomScreen {
   private loadPortraits(): void {
     for (const player of this.room.players) {
       const key = portraitKey(player);
-      if (this.portraits.has(key)) continue;
-      this.portraits.set(key, null);
-      loadTintedSheet("character", portraitSheetName(player.character), player.hue).then(
+      const cached = this.portraits.get(key);
+      // A nonzero hue can temporarily use a plain image when its RGB file is unavailable.
+      if (this.portraitLoads.has(key) || (cached && (player.hue === 0 || cached.image instanceof HTMLCanvasElement))) continue;
+      this.portraitLoads.add(key);
+      void loadTintedSheet("character", portraitSheetName(player.character), player.hue).then(
         (sheet) => this.portraits.set(key, sheet),
         () => undefined,
-      );
+      ).finally(() => this.portraitLoads.delete(key));
     }
   }
 
@@ -350,6 +357,8 @@ export class RoomScreen {
       if (inside(MESSAGE_BOX.button.hit, x, y)) this.options.kickedOut();
       return;
     }
+    // A return from the assistive controls gives keys to the open line without reloading its caret.
+    this.chat.focus();
     const count = this.log.length;
     const overlay = this.overlay;
     const { send, sounds } = this.options;
@@ -376,9 +385,10 @@ export class RoomScreen {
     const slot = slotAt(x, y, this.options.pickCharacter ? -1 : (me?.slot ?? -1));
     if (slot >= 0) {
       if (this.isHost && !this.playerAt(slot)) {
-        send({ type: "set-slot", slot, open: this.room.closed[slot] });
         // 0x45a591: the busy cursor until a reply; the mouse and keys still work.
+        // The local room answers inside send(), so the wait must begin before it.
         this.cursor.set(true);
+        send({ type: "set-slot", slot, open: this.room.closed[slot] });
       } else {
         const player = this.playerAt(slot);
         if (!player) return;
@@ -448,6 +458,11 @@ export class RoomScreen {
     this.release(x + Math.floor((from + to) / 2), y + 54);
   }
 
+  /** The hidden EXIT + YES action, also the kick notice's acknowledgement: help drops its clicks. */
+  leaveRoom(): void {
+    if (!this.helpScreen) this.options.leave();
+  }
+
   /** 0x4286d0: the dropdown closes and the chat line opens again, empty. */
   private closeDropdown(): void {
     this.overlay = null;
@@ -458,18 +473,22 @@ export class RoomScreen {
     const box = openBox("esc");
     // Scene 7 draws it through 0x40cabf: a mouse resting on a button selects it.
     this.overlay = { kind: "box", box, hover: boxHover(box, this.pointer.mouse) };
+    this.chat.deferChanges(true);
     const first = box.selection === 1 ? "예" : "아니오";
     this.status.textContent = `종료하시겠습니까? Y는 예, N은 아니오. ←·→로 고르고 Enter로 정할 수도 있습니다(처음 선택은 ${first}).`;
   }
 
   private answerBox(leave: boolean): void {
     this.overlay = null;
+    this.chat.deferChanges(this.kicked);
     this.status.textContent = "";
     if (leave) this.options.leave();
   }
 
   /** Keys (0x45fa70): Enter sends, Esc asks to leave, F1 shows the help screen, Up recalls the last line, Down cycles the commands. */
   private key(event: KeyboardEvent): void {
+    // The IME's process key can report Enter or Esc while it still belongs to the editor.
+    if (event.keyCode === 229) return;
     const active = document.activeElement;
     const ours = active === this.chat.element || active === this.options.canvas || active === document.body || active === null;
     // Tab always moves on to the page's controls, which do everything the canvas does.
@@ -487,7 +506,9 @@ export class RoomScreen {
       if (overlay?.kind !== "box") return;
     }
     if (overlay?.kind === "box") {
-      event.preventDefault();
+      // Delete edits the shared buffer before the box takes the key (0x403a97 → 0x460097).
+      // Characters and Backspace are blocked by the editor's WM_CHAR path (0x403b70).
+      if (event.key !== "Delete") event.preventDefault();
       this.helpScreen = false;
       const result = boxKey(overlay.box, event.key);
       // Only ← and → put the cursor on a button (0x40394f, 0x4039dd).

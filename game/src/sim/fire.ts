@@ -9,7 +9,7 @@ import { startBreaking } from "./world.ts";
 
 type Step = [dx: number, dy: number];
 
-/** Cross arms in the order they burn and are drawn: up, left, down, right (0x417253-0x4173a6). */
+/** Cross arms in the order they burn: up, left, down, right (0x417253-0x4173a6). */
 const ARMS: Step[] = [
   [0, -1],
   [-1, 0],
@@ -125,7 +125,7 @@ function nukeSpan(pos: number, size: number): [number, number] {
  */
 export function burnFire(state: MatchState, bomb: BombState, now: number): void {
   const water = isWaterBomb(bomb.kind);
-  state.bombSprites.push({ type: "fire", cells: bomb.fireCells, anim: water ? 1 : 0, frame: bomb.fireFrame });
+  state.bombSprites.push({ type: "fire", cells: fireDrawCells(state, bomb), anim: water ? 1 : 0, frame: bomb.fireFrame });
   const kind = flameKind(bomb);
   for (const cell of bomb.fireCells) state.flame[cell] = kind;
   if (!animDue(now, bomb.fireMs, FIRE_FPS)) return;
@@ -144,6 +144,24 @@ export function burnFire(state: MatchState, bomb: BombState, now: number): void 
   }
   if (bomb.tntLeft > 0 && moveTnt(state, bomb)) return;
   endFire(state, bomb);
+}
+
+/** 0x406aa5-0x406e8e: draw order differs from the burn/cleanup order where fire sprites overlap. */
+function fireDrawCells(state: MatchState, bomb: BombState): number[] {
+  if (bomb.kind === BombKind.Nuke) return bomb.fireCells;
+  const { width } = state.layout;
+  const col = bomb.cell % width;
+  const row = Math.floor(bomb.cell / width);
+  const diagonal = bomb.kind === BombKind.X;
+  const arms = (diagonal ? DIAGONALS : ARMS).map(([dx, dy]) =>
+    bomb.fireCells.filter((cell) => Math.sign((cell % width) - col) === dx && Math.sign(Math.floor(cell / width) - row) === dy),
+  );
+  arms[0].reverse();
+  if (diagonal) {
+    arms[1].reverse();
+    arms[3].reverse();
+  }
+  return [...arms[0], bomb.cell, ...arms[1], ...arms[2], ...arms[3]];
 }
 
 /**

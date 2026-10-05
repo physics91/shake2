@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { nowMs, START_BOMBS, START_FIRE, START_SPEED } from "./constants.ts";
 import { createMatch, step } from "./match.ts";
+import { applyPickup } from "./pickup.ts";
 import { msvcRand } from "./rng.ts";
-import { RESET_ICON_MS } from "./status.ts";
+import { CURSE_MS, RESET_ICON_MS } from "./status.ts";
 import { addBomb, layoutFromAscii, run, runUntil, setups, VERSUS } from "./testing.ts";
-import type { GameMode, MatchState, PlayerState, SimEvent } from "./types.ts";
+import type { GameMode, InputFrame, MatchState, PlayerState, SimEvent } from "./types.ts";
 import { Anim, Dir, ItemKind } from "./types.ts";
 import { collectItem } from "./world.ts";
 
@@ -77,6 +78,104 @@ describe("summon capsule drop (0x453270)", () => {
 });
 
 describe("summon capsule pickup (0x40b2ac, 0x453d00)", () => {
+  for (const mode of [6, 7] as const) {
+    for (const earlierSlot of [false, true]) {
+      it.each(["neutral", "held", "omitted"] as const)(`clears a completed death's stop before revival when polled in mode ${mode} (earlier slot=${earlierSlot}, input=%s)`, (poll) => {
+        const targetId = earlierSlot ? 1 : 2;
+        const pickerId = earlierSlot ? 2 : 1;
+        const row = earlierSlot ? "2..1...3......." : "1..2...3.......";
+        const players = setups(3).map((p) => ({ ...p, character: "shaky", team: p.id === 3 ? 2 : 1 }));
+        const state = createMatch(layoutFromAscii([row]), players, { ...VERSUS, mode }, 71);
+        const target = byId(state, targetId);
+        const input: InputFrame | null = poll === "omitted" ? null : poll === "held"
+          ? { dir: Dir.Up, bomb: true, attack: true, evade: true } : { dir: null, bomb: false };
+        const heldBomb = poll === "held";
+
+        run(state, 150);
+        step(state, { [targetId]: { dir: null, bomb: true } });
+        run(state, 59, { [targetId]: { dir: null, bomb: heldBomb } });
+        step(state, { [targetId]: { dir: Dir.Left, bomb: heldBomb } });
+        step(state, { [targetId]: { dir: null, bomb: heldBomb } });
+        expect(target).toMatchObject({ alive: false, gone: false, stopRequested: true });
+        runUntil(state, () => target.gone, 200, { [targetId]: { dir: null, bomb: heldBomb } });
+        expect(target).toMatchObject({ stopRequested: true, actionLatch: heldBomb });
+
+        step(state, { [targetId]: input });
+        expect(target).toMatchObject({ gone: true, anim: Anim.Death, actionLatch: false, stopRequested: poll === "omitted" });
+
+        run(state, 20, { [pickerId]: { dir: Dir.Right, bomb: false }, [targetId]: input });
+        expect(state.events).toContainEqual({ type: "revived", playerId: targetId });
+        expect(target.stopRequested).toBe(poll === "omitted" && earlierSlot);
+        step(state, { [targetId]: { dir: Dir.Right, bomb: false } });
+        expect(target.x).toBe(145);
+        expect(target.anim).toBe((poll === "omitted" && earlierSlot ? Anim.Stand : Anim.Walk) + Dir.Right);
+        expect(target.frame).toBe(poll === "omitted" || !earlierSlot ? 0 : 1);
+      });
+    }
+  }
+
+  for (const mode of [6, 7] as const) {
+    for (const earlierSlot of [false, true]) {
+      it.each([false, true])(`preserves a stop when death polls are omitted, then clears it on revived neutral input in mode ${mode} (target in earlier slot=${earlierSlot}, poll omitted=%s)`, (omittedPoll) => {
+        const targetId = earlierSlot ? 1 : 2;
+        const pickerId = earlierSlot ? 2 : 1;
+        const row = earlierSlot ? "2..1...3......." : "1..2...3.......";
+        const players = setups(3).map((p) => ({ ...p, character: "shaky", team: p.id === 3 ? 2 : 1 }));
+        const state = createMatch(layoutFromAscii([row]), players, { ...VERSUS, mode }, 71);
+        const target = byId(state, targetId);
+
+        run(state, 150);
+        step(state, { [targetId]: { dir: null, bomb: true } });
+        run(state, 59);
+        step(state, { [targetId]: { dir: Dir.Left, bomb: false } });
+        step(state, {});
+        run(state, 36, { [targetId]: null });
+        run(state, 20, { [pickerId]: { dir: Dir.Right, bomb: false }, [targetId]: null });
+        expect(state.events).toContainEqual({ type: "revived", playerId: targetId });
+        expect(target.stopRequested).toBe(true);
+
+        step(state, { [targetId]: omittedPoll ? null : { dir: null, bomb: false } });
+        expect(target.stopRequested).toBe(omittedPoll);
+
+        step(state, { [targetId]: { dir: Dir.Right, bomb: false } });
+        expect(target.x).toBe(145);
+        expect(target.anim).toBe((omittedPoll ? Anim.Stand : Anim.Walk) + Dir.Right);
+        expect(target.frame).toBe(omittedPoll ? 0 : 1);
+        expect(target.stopRequested).toBe(false);
+      });
+    }
+
+    it.each([false, true])(`clears a natural death's pending walk stop before revival and the next movement in mode ${mode} (target in earlier slot=%s)`, (earlierSlot) => {
+      const targetId = earlierSlot ? 1 : 2;
+      const pickerId = earlierSlot ? 2 : 1;
+      const row = earlierSlot ? "2..1...3......." : "1..2...3.......";
+      const players = setups(3).map((p) => ({ ...p, character: "shaky", team: p.id === 3 ? 2 : 1 }));
+      const state = createMatch(layoutFromAscii([row]), players, { ...VERSUS, mode }, 71);
+      const target = byId(state, targetId);
+
+      run(state, 150);
+      step(state, { [targetId]: { dir: null, bomb: true } });
+      run(state, 59);
+      step(state, { [targetId]: { dir: Dir.Left, bomb: false } });
+      step(state, {});
+      expect(target.alive).toBe(false);
+      expect(target.stopRequested).toBe(true);
+
+      run(state, 36);
+      run(state, 20, { [pickerId]: { dir: Dir.Right, bomb: false } });
+      expect(state.events).toContainEqual({ type: "revived", playerId: targetId });
+      expect(target.alive).toBe(true);
+      expect(target.gone).toBe(false);
+      expect(target.stopRequested).toBe(false);
+
+      step(state, { [targetId]: { dir: Dir.Right, bomb: false } });
+      expect(target.x).toBe(145);
+      expect(target.anim).toBe(Anim.Walk + Dir.Right);
+      expect(target.frame).toBe(1);
+      expect(target.stopRequested).toBe(false);
+    });
+  }
+
   it("brings a dead teammate back on the capsule's cell, standing, with fresh stats, stars and the revival effect", () => {
     const state = summonMatch([1, 1, 2, 2]);
     const cell = killOut(state, 2);
@@ -91,7 +190,8 @@ describe("summon capsule pickup (0x40b2ac, 0x453d00)", () => {
 
     const revived = byId(state, 2);
     const now = nowMs(state.tick);
-    expect(revived).toMatchObject({ alive: true, gone: false, x: 2 * 40 + 20, y: 16, anim: Anim.Stand + Dir.Down, frame: 0 });
+    // Slot 2 also runs its common update after slot 1 revives it in this tick.
+    expect(revived).toMatchObject({ alive: true, gone: false, x: 2 * 40 + 20, y: 16, anim: Anim.Stand + Dir.Down, frame: 1 });
     expect([revived.bombCapacity, revived.firePower, revived.speed]).toEqual([START_BOMBS, START_FIRE, START_SPEED]);
     expect(revived.badState).toEqual({ start: now, length: RESET_ICON_MS });
     expect(state.effects).toMatchObject([{ kind: "revival", owner: 2, follow: true, lifeMs: 0 }]);
@@ -131,14 +231,14 @@ describe("summon capsule pickup (0x40b2ac, 0x453d00)", () => {
     const state = summonMatch([1, 1, 2, 2]);
     Object.assign(byId(state, 2), { alive: false, anim: Anim.Death });
     state.items.push({ cell: 3, kind: ItemKind.Capsule, tick: state.tick, dropped: true });
-    const rng = state.rng;
+    const second = Math.floor((state.clockMs + nowMs(state.tick)) / 1000);
 
     collectItem(state, byId(state, 1), 3);
 
     expect(byId(state, 2).alive).toBe(false);
     expect(state.items).toEqual([]);
     expect(state.effects).toEqual([]);
-    expect(state.rng).toBe(rng);
+    expect(state.rng).toBe(second);
   });
 
   it("picks among the dead teammates by rand() % count in slot order, after srand(time(0)) (0x453d11)", () => {
@@ -155,4 +255,81 @@ describe("summon capsule pickup (0x40b2ac, 0x453d00)", () => {
 
     expect(state.players.filter((p) => p.alive).map((p) => p.id)).toEqual([1, expected, 4].sort());
   });
+});
+
+describe("curse expiry during the death animation (0x40acf7, 0x40b751)", () => {
+  for (const mode of [6, 7] as const) {
+    for (const victimId of [1, 2]) {
+      const pickerId = victimId === 1 ? 2 : 1;
+      const direction = victimId === 1 ? Dir.Left : Dir.Right;
+
+      it(`keeps reset speed after a slow curse ends while dying, mode ${mode}, victim ${victimId}`, () => {
+        const state = summonMatch([1, 1, 2, 2], mode);
+        const victim = byId(state, victimId);
+        applyPickup(state, victim, ItemKind.Teleport);
+        applyPickup(state, victim, ItemKind.Speed);
+        applyPickup(state, victim, ItemKind.Mystery, 33);
+        const start = nowMs(state.tick);
+        run(state, 285);
+        expect(victim.speed).toBe(2);
+
+        killOut(state, victimId, () => {
+          runUntil(state, () => nowMs(state.tick) - start >= CURSE_MS, 30);
+          expect(victim).toMatchObject({ alive: false, gone: false, speed: 2 });
+          expect(victim.status.slow).toBe(start);
+
+          step(state, {});
+
+          expect(victim).toMatchObject({ alive: false, gone: false, speed: 6 });
+          expect(victim.status.slow).toBeNull();
+        });
+
+        expect(nowMs(state.tick) - start).toBeGreaterThan(CURSE_MS);
+        expect(victim.status.slow).toBeNull();
+        expect(victim.speed).toBe(6);
+        expect(state.items.some((item) => item.kind === ItemKind.Speed && item.dropped)).toBe(true);
+        runUntil(state, () => victim.alive, 100, { [pickerId]: { dir: direction, bomb: false } });
+        expect(victim.inv.teleport).toBe(1);
+        expect(victim.speed).toBe(START_SPEED);
+        run(state, 3);
+        expect(victim.speed).toBe(START_SPEED);
+      });
+
+      it(`handles held B immediately after reviving when prohibition ended while dying, mode ${mode}, victim ${victimId}`, () => {
+        const state = summonMatch([1, 1, 2, 2], mode);
+        const victim = byId(state, victimId);
+        applyPickup(state, victim, ItemKind.Teleport);
+        applyPickup(state, victim, ItemKind.Mystery, 35);
+        const start = nowMs(state.tick);
+        const held = { dir: null, bomb: true, attack: true, evade: true };
+        run(state, 285, { [victimId]: held });
+        const cell = victimId === 1 ? 0 : 2;
+        state.flame[cell] = 1;
+        step(state, { [victimId]: held });
+        state.flame[cell] = 0;
+        runUntil(state, () => nowMs(state.tick) - start >= CURSE_MS, 30, { [victimId]: held });
+        expect(victim).toMatchObject({ alive: false, gone: false });
+        expect(victim.status.noBomb).toBe(start);
+
+        step(state, { [victimId]: held });
+
+        expect(victim).toMatchObject({ alive: false, gone: false });
+        expect(victim.status.noBomb).toBeNull();
+        runUntil(state, () => victim.gone, 200, { [victimId]: held });
+
+        expect(nowMs(state.tick) - start).toBeGreaterThan(CURSE_MS);
+        expect(victim.status.noBomb).toBeNull();
+        runUntil(state, () => victim.alive, 100, { [pickerId]: { dir: direction, bomb: false }, [victimId]: held });
+        expect(victim.actionLatch).toBe(false);
+
+        step(state, { [victimId]: held });
+
+        expect(state.bombs.filter((bomb) => bomb.owner === victimId)).toHaveLength(1);
+        expect(victim.inv.teleport).toBe(1);
+        expect(victim.flight).toBeNull();
+        run(state, 3, { [victimId]: held });
+        expect(state.bombs.filter((bomb) => bomb.owner === victimId)).toHaveLength(1);
+      });
+    }
+  }
 });

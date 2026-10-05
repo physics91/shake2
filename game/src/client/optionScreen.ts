@@ -112,8 +112,17 @@ export class OptionScreen {
     });
     // The page's option section edits the same object: its save shows in the window.
     this.stopListening = host.settings.listen(() => {
-      if (!this.saving) this.window.reload();
+      if (this.saving) return;
+      this.window.reload();
+      // Keep the active editor with that copy, so its next event cannot put the old macro back.
+      if (this.window.editing >= 0) this.macroLine.text = this.window.macros[this.window.editing + 1];
     });
+    // The editor's messages copy the record even while help replaces the draw (0x460588).
+    // Copy after ChatLine handles them; MSGBOX still keeps its deferred view.
+    const copyEditor = () => this.syncText();
+    const editorEvents = ["keydown", "input", "compositionupdate", "compositionend"] as const;
+    const editors = [this.macroLine.element, this.idLine.element];
+    for (const editor of editors) for (const type of editorEvents) editor.addEventListener(type, copyEditor);
     this.requestFriends();
     const down = (event: KeyboardEvent) => {
       // Keys typed into the page's controls (the option section below) are not the window's.
@@ -132,12 +141,19 @@ export class OptionScreen {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", blur);
+      for (const editor of editors) for (const type of editorEvents) editor.removeEventListener(type, copyEditor);
     };
   }
 
   /** The editors' inputs, whose keys the lobby takes as the window's. */
   owns(element: Element | null): boolean {
     return element === this.macroLine.element || element === this.idLine.element;
+  }
+
+  /** Keep the macro and friend records until an editor event after MSGBOX closes. */
+  deferChanges(defer: boolean): void {
+    this.macroLine.deferChanges(defer);
+    this.idLine.deferChanges(defer);
   }
 
   /** S->C 0x63 for this window, or for the page's option section (ownAsk false). */
@@ -227,6 +243,9 @@ export class OptionScreen {
     // The window has the keyboard, as the original's does: a click on it leaves no page control focused.
     const active = document.activeElement;
     if (active instanceof HTMLElement && active !== document.body && !this.host.stage.contains(active)) active.blur();
+    // Checks and clicks inside the friend popup leave its editor open; return its keyboard without reloading the caret.
+    if (this.window.editing >= 0) this.macroLine.focus();
+    else if (this.window.popup?.mode === "add") this.idLine.focus();
   }
 
   /** 0x460588 → 0x4228d0, 0x422d10: the open editor's text into the edited box or the popup's ID. */

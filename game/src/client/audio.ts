@@ -21,6 +21,8 @@ export class SoundBank {
   private voices = new Map<string, { source: AudioBufferSourceNode; gate: Gate }>();
   /** Each effect's latest play or stop: a play whose file arrives after a newer one does not sound. */
   private requests = new Map<string, number>();
+  /** Muting cancels effects still loading without canceling music-gated cues. */
+  private effectsRequest = 0;
   private music: { key: string; sources: AudioBufferSourceNode[]; timer: number } | null = null;
   private musicRequest = 0;
   /** Music asked for before the first user gesture; it starts on unlock. */
@@ -43,8 +45,10 @@ export class SoundBank {
     const enabled = () => (gate === "music" ? this.musicOn : this.effects);
     if (!context || !enabled()) return;
     const request = this.request(name);
+    const effectsRequest = this.effectsRequest;
     void this.buffer(context, `${SOUND_BASE}${name}.wav`).then((buffer) => {
       if (!buffer || !enabled() || this.requests.get(name) !== request) return;
+      if (gate === "effects" && effectsRequest !== this.effectsRequest) return;
       this.silence(name);
       const source = context.createBufferSource();
       source.buffer = buffer;
@@ -61,6 +65,12 @@ export class SoundBank {
   stop(name: string): void {
     this.request(name);
     this.silence(name);
+  }
+
+  /** The program starts over: cancel its playing/loading sounds without changing the option switches. */
+  stopAll(): void {
+    this.stopMusic();
+    for (const name of this.requests.keys()) this.stop(name);
   }
 
   private request(name: string): number {
@@ -80,7 +90,10 @@ export class SoundBank {
   /** Off cuts the effects that are ringing; end and endsig, which follow the music switch, ring on. */
   setEffects(on: boolean): void {
     this.effects = on;
-    if (!on) for (const [name, voice] of [...this.voices]) if (voice.gate === "effects") this.stop(name);
+    if (!on) {
+      this.effectsRequest += 1;
+      for (const [name, voice] of [...this.voices]) if (voice.gate === "effects") this.stop(name);
+    }
   }
 
   setMusic(on: boolean): void {
@@ -148,6 +161,7 @@ export class SoundBank {
         .then((response) => (response.ok ? response.arrayBuffer() : Promise.reject(new Error(response.statusText))))
         .then((data) => context.decodeAudioData(data))
         .catch((error: unknown) => {
+          this.buffers.delete(url);
           console.warn(`audio ${url} unavailable`, error);
           return null;
         });

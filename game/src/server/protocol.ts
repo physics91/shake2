@@ -6,11 +6,17 @@ import type { Dir, GameMode, LevelLayout, MatchState, Phase, PlayerState, SimEve
 import { cp949Bytes, cutBytes, trimChat, trimSpaces, typeable } from "./cp949.ts";
 
 /**
- * 15: the notices (notice, status-notice). 14: the ranking (ranking, ranking-search). 13: scene 5's guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
+ * 19: room update kinds (slot/team replies reset the cursor even for identical state).
+ * 18: server load request IDs (late replies). 17: ranking request IDs (late replies).
+ * 16: the input poll's paused flag (help, exit box, chat).
+ * 15: the notices (notice, status-notice). 14: the ranking (ranking, ranking-search). 13: scene 5's
+ * guild (set-guild). 12: account cards (the user list's card, the room's nick, hue and
  * badges, the room info's and the friend list's badges). 11: accounts (login, sign-up, the version
  * check, hello with a session and a channel).
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 19;
+/** A room snapshot's originating packet: 0x45, 0x2e, or news that preserves the cursor. */
+export type RoomChange = "slot" | "team" | "other";
 export const MAX_MESSAGE_BYTES = 4096;
 export const MAX_NAME_LENGTH = 12;
 export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -180,11 +186,11 @@ export type ClientMessage =
   /** Own team 1..6 (SELECTTEAM, C->S 0x2e). */
   | { type: "set-team"; team: number }
   | { type: "start" }
-  | { type: "input"; dir: Dir | null; bomb: boolean; attack: boolean; evade: boolean }
+  | { type: "input"; dir: Dir | null; bomb: boolean; attack: boolean; evade: boolean; paused?: boolean }
   /** One line in a match (0x446200: record type 0x14 to the host, which passes it on). */
   | { type: "game-chat"; text: string }
   /** A server list row's load query (C->S 0x4c, 0x448410); taken before hello. */
-  | { type: "server-info"; channel: number }
+  | { type: "server-info"; channel: number; requestId: number }
   /**
    * The my-info window's O (C->S 0x1a) in the lobby, or scene 5's Go (the old 0x1a) over the auth
    * connection: the character to play with, its hue and whether the ID is shown.
@@ -200,9 +206,9 @@ export type ClientMessage =
    */
   | { type: "set-guild"; guild: number }
   /** The ranking's page (ranklist_2.asp?page=N, 0x447290), 1 the first: scene 5's and the lobby's ranking window. */
-  | { type: "ranking"; page: number }
+  | { type: "ranking"; page: number; requestId: number }
   /** FIND (ranklist_2.asp?search=ID, 0x447700): the page the ID is on. */
-  | { type: "ranking-search"; id: string }
+  | { type: "ranking-search"; id: string; requestId: number }
   /** The own chat line is open or closed: the keys go unread and the "chat" mark shows (state packet +0x2c). */
   | { type: "typing"; on: boolean }
   /** The option window's friend list (C->S 0x63): the own list and where each friend is now. */
@@ -338,7 +344,8 @@ export type ServerMessage =
   | { type: "room-info"; code: string; status: RoomStatus; round: number; players: { slot: number; name: string; badge: Badge }[] }
   /** One lobby chat line. */
   | { type: "lobby-chat"; name: string; text: string }
-  | { type: "room"; room: RoomInfo | null }
+  /** Slot/team replies apply their cursor setting even if the room state did not change. */
+  | { type: "room"; room: RoomInfo | null; change?: RoomChange }
   /** `music` is the tune picked for the match: 1.. into the welcome's list, 0 for none. */
   | { type: "match-start"; layout: LevelLayout; music: number }
   /**
@@ -353,7 +360,7 @@ export type ServerMessage =
   /** The saved character (S->C 0x1a): the my-info window's "수정 되었습니다.". */
   | { type: "profile"; character: string; hue: number; useId: boolean }
   /** A server list row's data (S->C 0x4c): the channel's name and its load in percent. */
-  | { type: "server-info"; channel: number; name: string; load: number }
+  | { type: "server-info"; channel: number; name: string; load: number; requestId: number }
   /** The auth server's answer (S->C 0x0a): the account, the session for the game servers and their rows. */
   | { type: "login"; ok: true; account: OwnAccount; token: string; channels: ChannelRow[] }
   /** "로그인 실패": the client has no other auth message (0x448ad4). */
@@ -367,9 +374,9 @@ export type ServerMessage =
   /** hello refused (S->C 0x0a result): 0 "로그인 실패", 2 "이미 로그인 되어 있습니다", 3 "레벨이 맞지 않습니다". */
   | { type: "refused"; code: number }
   /** A ranking page's rows, none past the last page (the client then keeps the list it has). */
-  | { type: "ranking"; page: number; rows: RankingRow[] }
+  | { type: "ranking"; page: number; rows: RankingRow[]; requestId: number }
   /** FIND's answer: the ID's page and its rows, or null ("Not Found") for an ID not ranked. */
-  | { type: "ranking-search"; page: number | null; rows: RankingRow[] }
+  | { type: "ranking-search"; page: number | null; rows: RankingRow[]; requestId: number }
   /** The notice line (S->C 0x50): the lobby's, the room's and the match's bottom text for 60 s. */
   | { type: "notice"; text: string }
   /** Scene 5's notices (S->C 0x101): lines each ended by "\n", drawn down its right side. */
@@ -514,9 +521,13 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case "set-guild":
       return isInt(data.guild, -0x8000, 0x7fff) ? { type: "set-guild", guild: data.guild } : null;
     case "ranking":
-      return isInt(data.page, 1, 0x7fffffff) ? { type: "ranking", page: data.page } : null;
+      return isInt(data.page, 1, 0x7fffffff) && isInt(data.requestId, 1, Number.MAX_SAFE_INTEGER)
+        ? { type: "ranking", page: data.page, requestId: data.requestId }
+        : null;
     case "ranking-search":
-      return isFriendId(data.id) ? { type: "ranking-search", id: data.id } : null;
+      return isFriendId(data.id) && isInt(data.requestId, 1, Number.MAX_SAFE_INTEGER)
+        ? { type: "ranking-search", id: data.id, requestId: data.requestId }
+        : null;
     case "set-status":
       return shortText(data.nick) && typeof data.greeting === "string" && data.greeting.length <= 64 && typeof data.useId === "boolean"
         ? { type: "set-status", nick: data.nick, greeting: data.greeting, useId: data.useId }
@@ -563,7 +574,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return text === null ? null : { type: "game-chat", text };
     }
     case "server-info":
-      return isInt(data.channel, 0, MAX_CHANNELS - 1) ? { type: "server-info", channel: data.channel } : null;
+      return isInt(data.channel, 0, MAX_CHANNELS - 1) && isInt(data.requestId, 1, Number.MAX_SAFE_INTEGER)
+        ? { type: "server-info", channel: data.channel, requestId: data.requestId } : null;
     case "set-character":
       return typeof data.character === "string" && data.character.length <= 32 && isInt(data.hue, -180, 180) && typeof data.useId === "boolean"
         ? { type: "set-character", character: data.character, hue: data.hue, useId: data.useId }
@@ -599,7 +611,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       const evade = data.evade ?? false;
       if (!isDir(data.dir) || typeof data.bomb !== "boolean") return null;
       if (typeof attack !== "boolean" || typeof evade !== "boolean") return null;
-      return { type: "input", dir: data.dir, bomb: data.bomb, attack, evade };
+      if (data.paused !== undefined && typeof data.paused !== "boolean") return null;
+      return { type: "input", dir: data.dir, bomb: data.bomb, attack, evade, ...(data.paused !== undefined && { paused: data.paused }) };
     }
     default:
       return null;

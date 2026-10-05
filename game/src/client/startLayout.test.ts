@@ -14,6 +14,7 @@ import {
   rowBarTop,
   rowClickAt,
   rowHoverAt,
+  rowOrigin,
   rowsShown,
   rowTexts,
   slideBlits,
@@ -111,6 +112,29 @@ describe("server list (0x433750, 0x433b10, 0x4343f0)", () => {
     expect(rowHoverAt(80, 160, 1)).toBe(-1);
     expect(rowHoverAt(80, 160, 2)).toBe(1);
     expect(rowHoverAt(520, 142, 21)).toBe(20);
+  });
+
+  it("takes the displayed page's row without overlapping the earlier channels", () => {
+    for (const count of [39, 40, 41, 80, 81]) {
+      const reached: number[] = [];
+      for (let page = 0; page < Math.ceil(count / 40); page++) {
+        for (let slot = 0; slot < 40; slot++) {
+          const x = slot < 20 ? 80 : 520, y = 142 + 18 * (slot % 20);
+          const index = page * 40 + slot;
+          expect(rowClickAt(x, y, count, page)).toBe(index < count ? index : -1);
+          expect(rowHoverAt(x, y, count, page)).toBe(index < count ? index : -1);
+          if (index < count) reached.push(rowClickAt(x, y, count, page));
+        }
+      }
+      expect(reached).toEqual(Array.from({ length: count }, (_, i) => i));
+    }
+  });
+
+  it("resets the original row Y only when crossing into the second column", () => {
+    expect(rowOrigin(19)).toEqual({ x: 76, y: 484 });
+    expect(rowOrigin(20)).toEqual({ x: 516, y: 142 });
+    expect(rowOrigin(39)).toEqual({ x: 516, y: 484 });
+    expect(rowOrigin(40)).toEqual({ x: 516, y: 502 });
   });
 
   it("picks each row's bar from the original's table", () => {

@@ -48,4 +48,12 @@ describe.skipIf(!existsSync(MAPS_DIR))("exported original maps", () => {
     expect(layout.rollSpawns).toBe(true);
     for (const cell of layout.spawns) expect(layout.kinds[cell]).toBe(CellKind.Empty);
   });
+
+  it.each(["mizar01", "mizar02", "practice"])("%s shares b1's six-frame animation with its b2 bricks (0x462560)", (name) => {
+    const source = JSON.parse(readFileSync(join(MAPS_DIR, `${name}.json`), "utf-8"));
+    const layout = layoutFromLevel(name, source);
+    const secondBricks = source.bricks.filter((brick: { sprite: number }) => brick.sprite === 1);
+    expect(secondBricks.length).toBeGreaterThan(0);
+    for (const brick of secondBricks) expect(layout.breakAnims[brick.cell]).toEqual({ frames: 6, fps: 5 });
+  });
 });

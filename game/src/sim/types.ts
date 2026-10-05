@@ -433,11 +433,27 @@ export interface MatchState {
   lingering: number[];
   /** Practice: where the local player's occupancy bit goes (null outside practice). */
   localMark: LocalMark | null;
+  /** Blind players' points at the background pass, before movement and status changes. */
+  blindSprites: Pick<PlayerState, "id" | "x" | "y">[] | null;
+  /** Visible players' positions at the shadow pass, before bombs and player updates. */
+  shadowSprites: { x: number; y: number }[] | null;
+  /** Teammates' arrows read each player's position and body frame before its update. */
+  teamMarkerSprites: Pick<PlayerState, "id" | "x" | "y" | "anim" | "frame">[] | null;
+  /** IDs reaching their body draw in this player pass; null before the first pass. */
+  bodyPlayers: number[] | null;
+  /** IDs using the alive drawing branch in this player pass; null before the first pass. */
+  aliveDrawPlayers: number[] | null;
+  /** IDs whose alive branch reaches the remote stars draw this tick; null before the first pass. */
+  badStatePlayers: number[] | null;
   bombSprites: BombSprite[];
   effects: Effect[];
   effectSprites: EffectSprite[];
   breaking: BreakingBrick[];
+  /** Brick draw pass before crumbling advances and bombs run; frame per cell, -1 if hidden. */
+  brickSprites: number[] | null;
   items: ItemState[];
+  /** Item draw pass before bombs and players; null before the first playing update. */
+  itemSprites: ItemState[] | null;
   /**
    * Cells whose item bit (tile +0x10 & 0x200) a pickup or a fire turned off while another item
    * stays listed there: that one is drawn, but no pickup, fire or drop sees it until another item
@@ -445,6 +461,8 @@ export interface MatchState {
    */
   itemBitCleared: number[];
   objects: ObjectState[];
+  /** Each sheet's draw after its advance, before later passes can restart or remove it. */
+  objectSprites: Pick<ObjectState, "cell" | "frame">[] | null;
   timerSeconds: number;
   timerMs: number;
   hurried: boolean;

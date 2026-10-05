@@ -55,10 +55,42 @@ export function captureBmp(rgba: Uint8ClampedArray, width: number, height: numbe
 
 /** [0x497f28]: when F12 was last taken. */
 let lastAsked = Number.NEGATIVE_INFINITY;
+interface CaptureSource { read(): HTMLCanvasElement | null }
+/** The current scene supplies the program's composition surface ([0x493798]). */
+let activeSource: CaptureSource | null = null;
+/** [0x48c2b8]: one pending request, even if another F12 arrives before a drawing. */
+let pendingCapture: { owner: CaptureSource } | null = null;
+let pendingFrame: number | null = null;
 
 /** A new program has taken no F12 yet. */
 export function resetCapture(): void {
+  if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
+  pendingFrame = null;
+  pendingCapture = null;
   lastAsked = Number.NEGATIVE_INFINITY;
+}
+
+function queueCapture(): void {
+  if (!pendingCapture || pendingFrame !== null) return;
+  pendingFrame = requestAnimationFrame(() => {
+    pendingFrame = null;
+    if (!pendingCapture || !activeSource) return;
+    // 0x405f3a: an inactive window keeps its request for the next active drawing.
+    if (!document.hasFocus()) return;
+    if (pendingCapture.owner !== activeSource) {
+      // A scene change can queue its first draw after this callback. Let it draw first.
+      pendingCapture.owner = activeSource;
+      queueCapture();
+      return;
+    }
+    const canvas = activeSource.read();
+    if (!canvas) {
+      queueCapture();
+      return;
+    }
+    pendingCapture = null;
+    save(canvas);
+  });
 }
 
 function save(canvas: HTMLCanvasElement): void {
@@ -76,24 +108,38 @@ function save(canvas: HTMLCanvasElement): void {
 
 /**
  * F12 on a screen's canvas; `blocked` is its yes/no box, `source` what is saved: the game screens
- * save their composition, which 0x412c00 locks, not what the present made of it. The browser's own
- * F12 (developer tools) is kept off while a screen is up, as the key is the game's; the tools stay
+ * save their composition, which 0x412c00 locks, not what the present made of it.
+ * A source still loading or awaiting its first drawing returns null, keeping the request pending.
+ * The browser's own F12 (developer tools) is kept off while a screen is up, as the key is the game's; the tools stay
  * on their menu.
  */
 export function attachCapture(
   canvas: HTMLCanvasElement,
   blocked: () => boolean = () => false,
-  source: () => HTMLCanvasElement = () => canvas,
+  source: () => HTMLCanvasElement | null = () => canvas,
 ): () => void {
+  const current = { read: source };
+  activeSource = current;
+  queueCapture();
   const onKey = (event: KeyboardEvent) => {
-    if (event.code !== "F12") return;
+    if (event.code !== "F12" || activeSource !== current) return;
     event.preventDefault();
+    if (event.keyCode === 229) return;
     const now = performance.now();
     if (blocked() || !captureDue(now, lastAsked)) return;
     lastAsked = now;
     // The frame after the key, as it is drawn (the screen's own frame callback was asked for first).
-    requestAnimationFrame(() => save(source()));
+    pendingCapture ??= { owner: current };
+    queueCapture();
+  };
+  const onFocus = () => {
+    if (activeSource === current) queueCapture();
   };
   window.addEventListener("keydown", onKey);
-  return () => window.removeEventListener("keydown", onKey);
+  window.addEventListener("focus", onFocus);
+  return () => {
+    window.removeEventListener("keydown", onKey);
+    window.removeEventListener("focus", onFocus);
+    if (activeSource === current) activeSource = null;
+  };
 }

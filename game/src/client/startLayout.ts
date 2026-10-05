@@ -164,35 +164,43 @@ export function toggleSlide(slide: ListSlide): void {
   Object.assign(slide, { open: true, closing: false, w: 14, x: 300, l: 514, leftDone: false, rightDone: false, closeX: 31, closeW: 281, closeL: 225 });
 }
 
-/** Row i: 20 a column, the left one from x 76, the right from 516, 18 px apart from y 142. */
-export function rowOrigin(i: number): Point {
-  return { x: i < 20 ? 76 : 516, y: 142 + 18 * (i % 20) };
+/** The original's two columns of twenty positions; overflow uses the same positions on another page (R). */
+export const SERVER_ROWS_PER_PAGE = 40;
+
+export function serverPageCount(count: number): number {
+  return Math.max(1, Math.ceil(count / SERVER_ROWS_PER_PAGE));
 }
 
-function rowAt(x: number, y: number, count: number, columns: readonly [number, number][]): number {
-  for (let i = 0; i < count; i++) {
+/** Row i: Y resets at row 20 only (0x433b34–0x433b40); later original rows continued below the window. */
+export function rowOrigin(i: number): Point {
+  return { x: i < 20 ? 76 : 516, y: 142 + 18 * (i < 20 ? i : i - 20) };
+}
+
+function rowAt(x: number, y: number, count: number, columns: readonly [number, number][], page: number): number {
+  const first = page * SERVER_ROWS_PER_PAGE;
+  for (let i = 0; i < Math.min(count - first, SERVER_ROWS_PER_PAGE); i++) {
     const [left, right] = columns[i < 20 ? 0 : 1];
-    const top = 142 + 18 * (i % 20);
-    if (x >= left && x <= right && y >= top && y <= top + 15) return i;
+    const top = rowOrigin(i).y;
+    if (x >= left && x <= right && y >= top && y <= top + 15) return first + i;
   }
   return -1;
 }
 
 /** The lit row (0x4339a0): x 76..265 or 514..726, inside the list, under the server count. */
-export function rowHoverAt(x: number, y: number, count: number): number {
+export function rowHoverAt(x: number, y: number, count: number, page = 0): number {
   if (!inside([60, 126, 288, 517], x, y) && !inside([514, 126, 742, 517], x, y)) return -1;
   return rowAt(x, y, count, [
     [76, 265],
     [514, 726],
-  ]);
+  ], page);
 }
 
 /** The clicked row (0x434770): the left column's band is wider, to 288. */
-export function rowClickAt(x: number, y: number, count: number): number {
+export function rowClickAt(x: number, y: number, count: number, page = 0): number {
   return rowAt(x, y, count, [
     [76, 288],
     [514, 726],
-  ]);
+  ], page);
 }
 
 /** The bar's source top by row (jump table 0x433f14/0x433ef0); rows 39-48 keep row 38's. */

@@ -197,6 +197,7 @@ export async function loadLobbyAssets(): Promise<LobbyScreenAssets> {
 
 export interface LobbyScreenOptions {
   canvas: HTMLCanvasElement;
+  cursor?: CursorAnim;
   /** The canvas's positioned parent, for the editors' hidden inputs. */
   stage: HTMLElement;
   assets: LobbyScreenAssets;
@@ -312,11 +313,12 @@ export class LobbyScreen {
   private option: OptionScreen | null = null;
   /** The ranking window (scene 12). */
   private rankingWindow: RankingWindow | null = null;
-  private readonly portraits = new Map<string, Sheet | null>();
+  private readonly portraits = new Map<string, Sheet>();
+  private readonly portraitLoads = new Set<string>();
   private readonly scroll = new ChatScroll(LOBBY_SCROLL.geometry);
   private readonly caret = new CaretBlink();
   private readonly pointer = new Pointer();
-  private readonly cursor = new CursorAnim();
+  private readonly cursor: CursorAnim;
   /** Tells a screen reader what only the canvas shows: a popup or a message. */
   private readonly status = document.createElement("p");
   private state: LobbyState;
@@ -348,6 +350,7 @@ export class LobbyScreen {
 
   constructor(options: LobbyScreenOptions, state: LobbyState) {
     this.options = options;
+    this.cursor = options.cursor ?? new CursorAnim();
     this.state = state;
     this.waitingOnly = options.waitingOnly;
     const ctx = options.canvas.getContext("2d");
@@ -410,7 +413,17 @@ export class LobbyScreen {
   /** The message box (MSGBOX 0x443700): a refusal or a reply, over whatever is open. */
   showMessage(text: string): void {
     this.message = { text, since: performance.now() };
+    this.messageEditors(true);
     this.status.textContent = text;
+  }
+
+  /** The editor runs before MSGBOX blocks copying into the scene's fields (0x460374). */
+  private messageEditors(up: boolean): void {
+    for (const line of [this.chat, this.title, this.secretLine, this.passwordLine, this.greetingLine, this.nickLine, this.idLine]) {
+      line.deferChanges(up);
+    }
+    this.option?.deferChanges(up);
+    this.rankingWindow?.deferChanges(up);
   }
 
   /**
@@ -421,6 +434,7 @@ export class LobbyScreen {
   refused(text: string): void {
     this.roomAsked = false;
     if (this.myInfo) this.myInfo.busy = false;
+    this.cursor.set(false);
     this.showMessage(text);
   }
 
@@ -430,6 +444,7 @@ export class LobbyScreen {
     // (0x4300d0, 0x42fe60): an Enter during the wait has no popup left to send again.
     if (this.popup === "create" || this.popup === "password") this.closePopup(true);
     this.roomAsked = true;
+    this.cursor.set(true);
   }
 
   /** S->C 0x1a accepted: the ID check is kept, the window closes and says so over the lobby (0x445069). */
@@ -455,6 +470,7 @@ export class LobbyScreen {
   passwordAsked(code: string): void {
     this.askPassword(code);
     this.roomAsked = false;
+    this.cursor.set(false);
   }
 
   /** A room's line (0x459e06): a playing room says so, a secret one asks for its password, any other is joined. */
@@ -475,6 +491,18 @@ export class LobbyScreen {
     const user = this.state.users.find((u) => u.id === id);
     if (user) this.openUserInfo(user.name, user.card);
     return Boolean(user);
+  }
+
+  /** The hidden info control follows the same room lookup and popup as a right release. */
+  requestRoomInfo(code: string): boolean {
+    if (!this.takesRoomInfo) return false;
+    const room = this.state.rooms.find((room) => room.code === code);
+    if (!room?.title) return false;
+    this.chat.close();
+    this.roomInfo = ZEROED_INFO;
+    this.openPopup("roomInfo", `${roomNumberText(room.number)}번 방 정보 창이 열렸습니다. Esc로 닫습니다.`);
+    this.options.send({ type: "room-info", code: room.code });
+    return true;
   }
 
   /** S->C 0x55: the room info popup's record, whichever room it answers (the original does not check). */
@@ -694,6 +722,10 @@ export class LobbyScreen {
   }
 
   private lobbyRelease(x: number, y: number): void {
+    // A canvas release returns from the assistive controls to the game. A closed line stays closed
+    // until the next key; an open one keeps its text and caret as it takes the focus back.
+    if (this.chat.isOpen) this.chat.focus();
+    else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     const { sounds } = this.options;
     const icon = lobbyItemIconAt(x, y);
     if (icon && this.iconLit(icon)) {
@@ -752,15 +784,9 @@ export class LobbyScreen {
 
   /** A right release on a room (0x430880): its info popup, filled by the server's reply. */
   private rightRelease(x: number, y: number): void {
-    // Busy, the mouse is dropped before the right release is looked at (0x458794).
-    if (this.helpScreen || this.busy || !this.clear) return;
     const row = roomRowAt(x, y);
     const room = row >= 0 ? this.rows[row] : null;
-    if (!room?.title) return;
-    this.chat.close();
-    this.roomInfo = ZEROED_INFO;
-    this.openPopup("roomInfo", `${roomNumberText(room.number)}번 방 정보 창이 열렸습니다. Esc로 닫습니다.`);
-    this.options.send({ type: "room-info", code: room.code });
+    if (room) this.requestRoomInfo(room.code);
   }
 
   /** A user row (0x4307b0 → 0x42f160): the row's record in the window; nothing is sent, no sound. */
@@ -846,6 +872,7 @@ export class LobbyScreen {
       close: () => this.closeOption(),
       announce: (text) => (this.status.textContent = text),
     });
+    this.option.deferChanges(this.message !== null);
     this.openPopup("option", "옵션 창이 열렸습니다. 마우스로 고치고 Enter로 저장, Esc로 취소합니다. 같은 설정이 아래 옵션 부분에도 있습니다.");
   }
 
@@ -867,6 +894,7 @@ export class LobbyScreen {
       announce: (text) => (this.status.textContent = text),
       balloons: () => this.balloons,
     });
+    this.rankingWindow.deferChanges(this.message !== null);
     this.openPopup("ranking", "랭킹 창이 열렸습니다. ◀▶로 쪽을 넘기고 FIND로 아이디를 찾습니다. Esc로 닫습니다.");
   }
 
@@ -921,12 +949,14 @@ export class LobbyScreen {
   /** `_p.spr` into slot 6 turned by the hue as it is read (0x413d30, path a). */
   private loadPortrait(index: number, hue: number): void {
     const key = portraitKey(index, hue);
-    if (this.portraits.has(key)) return;
-    this.portraits.set(key, null);
-    loadTintedSheet("character", portraitSheetName(CHARACTER_IDS[index]), hue).then(
+    const cached = this.portraits.get(key);
+    // Reopening or reselecting retries the plain fallback without discarding its visible image.
+    if (this.portraitLoads.has(key) || (cached && (hue === 0 || cached.image instanceof HTMLCanvasElement))) return;
+    this.portraitLoads.add(key);
+    void loadTintedSheet("character", portraitSheetName(CHARACTER_IDS[index]), hue).then(
       (sheet) => this.portraits.set(key, sheet),
       () => undefined,
-    );
+    ).finally(() => this.portraitLoads.delete(key));
   }
 
   /** A new character is shown: its sprite is loaded again with anim 0 and the window's hue (0x413d30, 0x462e30). */
@@ -959,11 +989,13 @@ export class LobbyScreen {
     if (info.greeting) {
       if (inside(GREETING_POPUP.ok.hit, x, y)) this.submitGreeting();
       else if (inside(GREETING_POPUP.cancel.hit, x, y)) this.closeGreeting();
+      if (info.greeting) this.greetingLine.focus();
       return;
     }
     if (info.nickname) {
       if (inside(NICK_POPUP.cancel.hit, x, y)) this.closeNick();
       else if (inside(NICK_POPUP.ok.hit, x, y)) this.submitNick();
+      if (info.nickname) this.nickLine.focus();
       return;
     }
     switch (myInfoButtonAt(x, y)) {
@@ -1130,6 +1162,8 @@ export class LobbyScreen {
       default:
         break;
     }
+    // Returning from an assistive field keeps the current editor and its caret, without reloading it.
+    if (this.popup === "create") (this.onPassword ? this.secretLine : this.title).focus();
   }
 
   /** The secret check (0x42ff40): off clears the password and puts the editor back on the title; on leaves it where it is. */
@@ -1137,14 +1171,17 @@ export class LobbyScreen {
     this.secret = !this.secret;
     if (this.secret) this.secretLine.open();
     else this.secretLine.close();
-    this.editCreate(this.secret && this.onPassword);
+    this.editCreate(this.secret && this.onPassword, !this.secret);
     this.status.textContent = this.secret ? "비밀방: 비밀번호 칸이 생겼습니다. Tab으로 옮겨 갑니다." : "비밀방 해제";
   }
 
   /** The create popup's editor on the password or the title (0x42f3f0). */
-  private editCreate(password: boolean): void {
+  private editCreate(password: boolean, reload = true): void {
+    if (this.onPassword !== password) (this.onPassword ? this.secretLine : this.title).discardDeferredChanges();
     this.onPassword = password;
-    (password ? this.secretLine : this.title).focus();
+    const line = password ? this.secretLine : this.title;
+    if (reload) line.reloadRecord();
+    line.focus();
   }
 
   /**
@@ -1164,12 +1201,12 @@ export class LobbyScreen {
     this.passwordLine.open();
   }
 
-  /** A release on the password popup (0x459942): OK, then 취소; no sounds. The field takes the page's focus back. */
+  /** A release on the password popup (0x459942): OK, then 취소; no sounds. An editor left open takes the page's focus back. */
   private passwordRelease(x: number, y: number): void {
     const hit = passwordPopupAt(x, y);
     if (hit === "ok") this.submitPassword();
     else if (hit === "cancel") this.closePopup(true);
-    else if (inside(PASSWORD_POPUP.field.hit, x, y)) this.passwordLine.focus();
+    if (this.popup === "password") this.passwordLine.focus();
   }
 
   /** OK or Enter (0x42fe60): nothing typed asks for it and the popup stays; else the join goes with it and the popup closes. */
@@ -1211,6 +1248,7 @@ export class LobbyScreen {
 
   private hideMessage(): void {
     this.message = null;
+    this.messageEditors(false);
     this.status.textContent = "";
   }
 
@@ -1239,6 +1277,12 @@ export class LobbyScreen {
       (this.rankingWindow?.owns(active) ?? false) ||
       active === null;
     if (!ours) return;
+    if (event.keyCode === 229) {
+      // A process key still opens a closed, uncovered lobby line (0x4602f5). Focus it before the
+      // IME inserts its first syllable; Enter and Esc reported by the IME remain editor input.
+      if (this.popup === null && !this.chat.isOpen && lobbyKeyOpensChat(event)) this.chat.open();
+      return;
+    }
     // Tab moves on to the page's controls, which do everything the canvas does; a key change takes
     // it, and so does the create popup with the secret check on, where it swaps the fields (0x45fa70).
     if (event.key === "Tab") {

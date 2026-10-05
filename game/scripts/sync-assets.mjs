@@ -1,25 +1,44 @@
 // Copy the assets the game uses from the extracted originals into public/assets
 // and write public/assets/manifest.json. Run after `python3 -m shakefmt.export`.
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const extracted = join(root, "assets", "extracted");
 const original = join(root, "original", "extracted", "Shake0311_20020323", "files", "App_Executables");
-const target = join(root, "game", "public", "assets");
+const destination = join(root, "game", "public", "assets");
 
 const SPRITE_DIRS = ["character", "bomb", "brick", "item", "object", "w_character"];
 
-function copyMatching(fromDir, toDir, predicate) {
+function copyMatching(fromDir, toDir, predicate, destinationName = (name) => name) {
   mkdirSync(toDir, { recursive: true });
   const names = readdirSync(fromDir).filter(predicate).sort();
-  for (const name of names) cpSync(join(fromDir, name), join(toDir, name));
-  return names;
+  for (const name of names) cpSync(join(fromDir, name), join(toDir, destinationName(name)));
+  return names.map(destinationName);
 }
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf-8"));
+}
+
+function validateExports() {
+  const indexPath = join(extracted, "index.json");
+  if (!existsSync(indexPath)) return;
+  const index = readJson(indexPath);
+  for (const entry of [...index.entries, ...(index.borrowed ?? [])]) {
+    if (entry.error !== undefined) throw new Error(`failed export ${entry.source}: ${entry.error}`);
+    for (const field of ["output", "metadata", "preview", "rgb"]) {
+      if (entry[field] === undefined) continue;
+      const path = join(extracted, entry[field]);
+      if (!statSync(path).isFile()) throw new Error(`not an exported file: ${path}`);
+    }
+  }
+}
+
+function copyListed(fromDir, toDir, files) {
+  mkdirSync(toDir, { recursive: true });
+  for (const file of new Set(files)) cpSync(join(fromDir, file), join(toDir, file));
 }
 
 if (!existsSync(extracted)) {
@@ -27,74 +46,97 @@ if (!existsSync(extracted)) {
   process.exit(1);
 }
 
-rmSync(target, { recursive: true, force: true });
+// Build every file and the manifest before replacing the working assets.
+const workspace = mkdtempSync(join(root, "game", ".assets-sync-"));
+const target = join(workspace, "assets");
+const previous = join(workspace, "previous");
+let needsRestore = false;
+try {
+  validateExports();
+  const isSheet = (name) => name.endsWith(".png") || name.endsWith(".json");
+  for (const dir of SPRITE_DIRS) {
+    copyMatching(join(extracted, "spr_data", dir), join(target, "spr", dir), isSheet);
+  }
+  // spr_data's own files: banner1.spr, scene 5's banner.
+  copyMatching(join(extracted, "spr_data"), join(target, "spr", "misc"), isSheet);
+  // Scene 5's guild list (0x4416f0), read as the original reads it.
+  cpSync(join(original, "guild.dat"), join(target, "guild.dat"));
+  const mapFiles = copyMatching(join(extracted, "map_data"), join(target, "maps"), (n) => n.endsWith(".json") || n.endsWith(".png"));
+  // image/ also holds cursor.spr, exported as a sheet (cursor.json + cursor.png).
+  copyMatching(join(extracted, "image"), join(target, "image"), isSheet);
+  // Windows accepts either case; the game's browser requests use lowercase effect names.
+  const sounds = copyMatching(join(original, "sound"), join(target, "sound"), (n) => n.toLowerCase().endsWith(".wav"), (n) => n.toLowerCase());
 
-const isSheet = (name) => name.endsWith(".png") || name.endsWith(".json");
-for (const dir of SPRITE_DIRS) {
-  copyMatching(join(extracted, "spr_data", dir), join(target, "spr", dir), isSheet);
+  // Music rendered offline from the original MIDI with gm.dls (tools/shakefmt/bgm.py); optional.
+  const bgmIndex = join(extracted, "bgm", "index.json");
+  const music = existsSync(bgmIndex)
+    ? readJson(bgmIndex).tracks.map((t) => ({ name: t.name, role: t.role, file: t.file, loopEnd: t.loop_end }))
+    : [];
+  if (music.length > 0) {
+    copyListed(join(extracted, "bgm"), join(target, "bgm"), music.map((t) => t.file));
+  }
+
+  // Bitmap strikes from the local Windows gulim.ttc (tools/shakefmt/font.py); optional.
+  const fontIndex = join(extracted, "font", "index.json");
+  const fonts = existsSync(fontIndex)
+    ? readJson(fontIndex).strikes.map((s) => ({ id: s.id, file: s.file, ppem: s.ppem, ascent: s.ascent, descent: s.descent }))
+    : [];
+  if (fonts.length > 0) {
+    copyListed(join(extracted, "font"), join(target, "font"), fonts.map((f) => f.file));
+  }
+
+  const characterNames = readdirSync(join(extracted, "spr_data", "character"))
+    .filter((n) => n.endsWith(".json") && !/_(g|p)\.json$/.test(n))
+    .map((n) => basename(n, ".json"))
+    .sort();
+
+  const maps = mapFiles
+    .filter((n) => n.endsWith(".json"))
+    .map((n) => {
+      const level = readJson(join(target, "maps", n));
+      return { id: basename(n, ".json"), title: level.title, objects: level.objects.length };
+    });
+
+  const sheets = Object.fromEntries(
+    SPRITE_DIRS.map((dir) => [
+      dir,
+      readdirSync(join(target, "spr", dir))
+        .filter((n) => n.endsWith(".json"))
+        .map((n) => basename(n, ".json"))
+        .sort(),
+    ]),
+  );
+
+  const manifest = {
+    note: "Generated by scripts/sync-assets.mjs from AOZORA Shake2 (2002) originals. Do not redistribute.",
+    characters: characterNames,
+    maps,
+    sounds: sounds.map((n) => basename(n, ".wav")),
+    music,
+    fonts,
+    spriteDirs: SPRITE_DIRS,
+    sheets,
+  };
+  writeFileSync(join(target, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+  mkdirSync(dirname(destination), { recursive: true });
+  if (existsSync(destination)) {
+    renameSync(destination, previous);
+    needsRestore = true;
+  }
+  try {
+    renameSync(target, destination);
+  } catch (error) {
+    if (needsRestore) {
+      renameSync(previous, destination);
+      needsRestore = false;
+    }
+    throw error;
+  }
+  needsRestore = false;
+  console.log(
+    `synced ${characterNames.length} characters, ${maps.length} maps, ${sounds.length} sounds, ${music.length} music tracks, ${fonts.length} font strikes -> ${destination}`,
+  );
+} finally {
+  // If restoring failed too, keep the sole previous copy for recovery.
+  if (!needsRestore) rmSync(workspace, { recursive: true, force: true });
 }
-// spr_data's own files: banner1.spr, scene 5's banner.
-copyMatching(join(extracted, "spr_data"), join(target, "spr", "misc"), isSheet);
-// Scene 5's guild list (0x4416f0), read as the original reads it.
-cpSync(join(original, "guild.dat"), join(target, "guild.dat"));
-const mapFiles = copyMatching(join(extracted, "map_data"), join(target, "maps"), (n) => n.endsWith(".json") || n.endsWith(".png"));
-// image/ also holds cursor.spr, exported as a sheet (cursor.json + cursor.png).
-copyMatching(join(extracted, "image"), join(target, "image"), isSheet);
-const sounds = copyMatching(join(original, "sound"), join(target, "sound"), (n) => n.toLowerCase().endsWith(".wav"));
-
-// Music rendered offline from the original MIDI with gm.dls (tools/shakefmt/bgm.py); optional.
-const bgmIndex = join(extracted, "bgm", "index.json");
-const music = existsSync(bgmIndex)
-  ? readJson(bgmIndex).tracks.map((t) => ({ name: t.name, role: t.role, file: t.file, loopEnd: t.loop_end }))
-  : [];
-if (music.length > 0) {
-  const files = new Set(music.map((t) => t.file));
-  copyMatching(join(extracted, "bgm"), join(target, "bgm"), (n) => files.has(n));
-}
-
-// Bitmap strikes from the local Windows gulim.ttc (tools/shakefmt/font.py); optional.
-const fontIndex = join(extracted, "font", "index.json");
-const fonts = existsSync(fontIndex)
-  ? readJson(fontIndex).strikes.map((s) => ({ id: s.id, file: s.file, ppem: s.ppem, ascent: s.ascent, descent: s.descent }))
-  : [];
-if (fonts.length > 0) {
-  const files = new Set(fonts.map((f) => f.file));
-  copyMatching(join(extracted, "font"), join(target, "font"), (n) => files.has(n));
-}
-
-const characterNames = readdirSync(join(extracted, "spr_data", "character"))
-  .filter((n) => n.endsWith(".json") && !/_(g|p)\.json$/.test(n))
-  .map((n) => basename(n, ".json"))
-  .sort();
-
-const maps = mapFiles
-  .filter((n) => n.endsWith(".json"))
-  .map((n) => {
-    const level = readJson(join(target, "maps", n));
-    return { id: basename(n, ".json"), title: level.title, objects: level.objects.length };
-  });
-
-const sheets = Object.fromEntries(
-  SPRITE_DIRS.map((dir) => [
-    dir,
-    readdirSync(join(target, "spr", dir))
-      .filter((n) => n.endsWith(".json"))
-      .map((n) => basename(n, ".json"))
-      .sort(),
-  ]),
-);
-
-const manifest = {
-  note: "Generated by scripts/sync-assets.mjs from AOZORA Shake2 (2002) originals. Do not redistribute.",
-  characters: characterNames,
-  maps,
-  sounds: sounds.map((n) => basename(n, ".wav")),
-  music,
-  fonts,
-  spriteDirs: SPRITE_DIRS,
-  sheets,
-};
-writeFileSync(join(target, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
-console.log(
-  `synced ${characterNames.length} characters, ${maps.length} maps, ${sounds.length} sounds, ${music.length} music tracks, ${fonts.length} font strikes -> ${target}`,
-);

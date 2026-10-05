@@ -8,7 +8,7 @@ export type FriendFile = StoreFile<FriendBook>;
 
 /**
  * The book kept in `path`. A missing file starts empty; one that cannot be read as a book is moved
- * aside (`<path>.broken-<time>`) and the book starts empty.
+ * aside (`<path>.broken-<time>`, with a numeric suffix if occupied) and the book starts empty.
  */
 export function openFriendFile(path: string, log?: (line: string) => void, delayMs?: number): FriendFile {
   return openStoreFile<FriendData, FriendBook>(

@@ -5,9 +5,10 @@ import type { MatchState, PlayerSetup, Rules } from "../sim/types.ts";
 import type { MusicTrack, SoundBank } from "./audio.ts";
 import { GameView, runFixedLoop } from "./gameView.ts";
 import type { KeyBinding } from "./input.ts";
-import { attachKeyboard, boundCodes, KeyState } from "./input.ts";
+import { attachKeyboard, boundCodes, KeyState, readKeysWhileLoading } from "./input.ts";
 import { loadSceneAssets } from "./scene.ts";
 import { attachCapture } from "./screenCapture.ts";
+import type { CursorAnim } from "./screenKit.ts";
 
 export interface LocalPlayer {
   setup: PlayerSetup;
@@ -16,6 +17,7 @@ export interface LocalPlayer {
 
 export interface LocalGameOptions {
   canvas: HTMLCanvasElement;
+  cursor?: CursorAnim;
   levelId: string;
   players: LocalPlayer[];
   rules: Rules;
@@ -25,6 +27,8 @@ export interface LocalGameOptions {
   onExit: () => void;
   /** The match was left while its pictures loaded: nothing starts, the tune playing is left alone. */
   cancelled?: () => boolean;
+  /** Remove initial loading input immediately when the screen is left. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -32,17 +36,20 @@ export interface LocalGameOptions {
  * Like the original returning to its room, the game exits 5 s into the final result.
  */
 export async function startLocalGame(options: LocalGameOptions): Promise<() => void> {
+  const cancelled = () => options.signal?.aborted || options.cancelled?.();
+  if (cancelled()) return () => undefined;
   const { canvas, players, rules, sounds } = options;
-  const assets = await loadSceneAssets(
+  const keys = new KeyState();
+  const bound = boundCodes(players.map((p) => p.binding));
+  const assets = await readKeysWhileLoading(keys, bound, () => loadSceneAssets(
     options.levelId,
     players.map((p) => p.setup.character),
-  );
-  if (options.cancelled?.()) return () => undefined;
+  ), options.signal);
+  if (cancelled()) return () => undefined;
   // Shadows and the invisible blend read the screen back each frame (0x413620 works on the surface).
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("canvas 2d context unavailable");
   const layout = layoutFromLevel(options.levelId, assets.level.meta);
-  const keys = new KeyState();
 
   const state: MatchState = createMatch(
     layout,
@@ -54,6 +61,7 @@ export async function startLocalGame(options: LocalGameOptions): Promise<() => v
   // Browser checks steer by the live state in development; production builds drop this.
   if (import.meta.env.DEV) Object.assign(window, { shakeMatch: state });
   const view = new GameView(ctx, assets, sounds, {
+    cursor: options.cursor,
     localPlayerIds: players.map((p) => p.setup.id),
     hostId: players[0].setup.id,
     music: options.music,
@@ -61,7 +69,7 @@ export async function startLocalGame(options: LocalGameOptions): Promise<() => v
   });
   view.ingest(state, state.events);
 
-  const detachKeyboard = attachKeyboard(keys, boundCodes(players.map((p) => p.binding)));
+  const detachKeyboard = attachKeyboard(keys, bound);
   const onKey = (event: KeyboardEvent) => {
     if (event.code === "Escape") {
       stop();

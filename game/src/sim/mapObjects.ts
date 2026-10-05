@@ -25,6 +25,7 @@ const ZONE_STRIDE = 15;
  * zone therefore goes off once, harmlessly, at every round start.
  */
 export function resetObjects(state: MatchState): void {
+  state.objectSprites = null;
   state.objects = state.layout.objects.map((object) => ({
     cell: object.cell,
     frame: 0,
@@ -63,6 +64,13 @@ export function updateObjects(state: MatchState, sheet: number): void {
       return;
     }
     obj.frame = 0;
+  });
+  // 0x411700 draws after advancing, before a later explosion or sudden-death pass changes it.
+  const sprites = state.objectSprites ??= state.objects.map(({ cell, frame }) => ({ cell, frame }));
+  state.layout.objects.forEach((object, i) => {
+    if (object.sheet !== sheet) return;
+    const { cell, frame } = state.objects[i];
+    sprites[i] = { cell, frame };
   });
 }
 

@@ -23,31 +23,45 @@ export function loadTintedSheet(dir: "character" | "w_character", name: string, 
   if (pending) {
     turned.delete(key);
   } else {
-    pending = turnSheet(dir, name, turn);
+    const discard = () => {
+      // An evicted request can finish after a newer one for this hue was put in the cache.
+      if (turned.get(key) === pending) turned.delete(key);
+    };
+    pending = turnSheet(dir, name, turn).then(
+      ({ sheet, tinted }) => {
+        // The plain fallback lasts for this load; the next one should try the requested hue again.
+        if (!tinted) discard();
+        return sheet;
+      },
+      (error: unknown) => {
+        discard();
+        throw error;
+      },
+    );
     if (turned.size >= KEPT_SHEETS) turned.delete(turned.keys().next().value as string);
   }
   turned.set(key, pending);
   return pending;
 }
 
-async function turnSheet(dir: string, name: string, hue: number): Promise<Sheet> {
+async function turnSheet(dir: string, name: string, hue: number): Promise<{ sheet: Sheet; tinted: boolean }> {
   const plain = await loadSheet(dir, name);
   let raw: HTMLImageElement;
   try {
     raw = await loadImage(`spr/${dir}/${plain.meta.sheet.replace(/\.png$/i, ".rgb.png")}`);
   } catch {
-    return plain;
+    return { sheet: plain, tinted: false };
   }
   const { width, height } = raw;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return plain;
+  if (!ctx) return { sheet: plain, tinted: false };
   ctx.drawImage(raw, 0, 0);
   const pixels = tintSprPixels(ctx.getImageData(0, 0, width, height).data, width, hue);
   ctx.putImageData(new ImageData(pixels, width, height), 0, 0);
-  return { image: canvas, meta: plain.meta };
+  return { sheet: { image: canvas, meta: plain.meta }, tinted: true };
 }
 
 /** Each work surface is 70 × 70 (0x41216f–0x4121bd). */

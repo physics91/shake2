@@ -36,7 +36,7 @@ import {
   timerGlyphs,
 } from "./hudLayout.ts";
 import type { BlindWindow } from "./blind.ts";
-import { blindWindowAt, drawBlindFilter } from "./blind.ts";
+import { blindWindowAt, currentBlindWindow, drawBlindFilter } from "./blind.ts";
 import { bubbleLines, CHAT_BUBBLE, CHAT_LINE, TYPING_MARK } from "./chat.ts";
 import { balloonAt, NET_TYPING_MARK } from "./matchChat.ts";
 import type { NoticeLine } from "./noticeLine.ts";
@@ -64,7 +64,13 @@ export interface RenderView {
   hurryTick: number | null;
   /** Whether the last round result was a draw; its DRAW stays on the wait screen. */
   lastRoundDraw: boolean;
+  /** The composition already holds this round's result/wait picture (0x4100e0 retains it). */
+  waitRetained?: boolean;
   faces: PanelFaces;
+  /** The two marker sprites belong to this screen and advance only after a marker is drawn. */
+  markers: MarkerAnimations;
+  /** One shared stars sprite advances every field frame, even while no player has a bad state. */
+  badState: BadStateAnimation;
   /**
    * The message box (0x443c50), drawn in its place in the order: practice's end and Esc boxes
    * (while one is up the textbox is not), a network guest's exit box after the countdown (0x40ca15).
@@ -72,8 +78,8 @@ export interface RenderView {
   overlay?: (ctx: CanvasRenderingContext2D) => void;
   /** The mouse in screen pixels, for practice's textbox help. */
   mouse?: { x: number; y: number };
-  /** The game's own mouse cursor while the mouse is over the screen: its point and cursor.spr frame. */
-  cursor?: { x: number; y: number; frame: number };
+  /** Draw the session cursor, advancing it only where this scene shows it. */
+  cursor?: { x: number; y: number; draw(ctx: CanvasRenderingContext2D): void };
   /** The F1 help screen is up. */
   help?: boolean;
   /** The chat of practice or of a network match. */
@@ -131,13 +137,13 @@ function renderNetworkScreen(ctx: CanvasRenderingContext2D, assets: SceneAssets,
   renderField(ctx, assets, state, view);
   if (view.overlay) {
     view.overlay(ctx);
-    if (view.cursor) drawCursor(ctx, assets, view.cursor);
+    view.cursor?.draw(ctx);
   }
   if (view.help) {
     drawHelpScreen(ctx, assets.hud.help);
-    if (view.cursor) drawCursor(ctx, assets, view.cursor);
+    view.cursor?.draw(ctx);
   }
-  return blindView(assets, state, view);
+  return presentBlindView(state, view);
 }
 
 /**
@@ -147,6 +153,7 @@ function renderNetworkScreen(ctx: CanvasRenderingContext2D, assets: SceneAssets,
  */
 function renderPracticeScreen(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, view: RenderView): BlindWindow | null {
   let blind: BlindWindow | null = null;
+  let present: BlindWindow | null = null;
   switch (state.phase) {
     case "waiting":
       renderWait(ctx, assets, state, view);
@@ -158,29 +165,37 @@ function renderPracticeScreen(ctx: CanvasRenderingContext2D, assets: SceneAssets
       renderFinalResult(ctx, assets, state, view);
       break;
     default:
-      renderField(ctx, assets, state, view);
-      blind = blindView(assets, state, view);
+      blind = renderField(ctx, assets, state, view);
+      present = presentBlindView(state, view);
   }
   if (blind) {
-    if (view.cursor) drawCursor(ctx, assets, view.cursor);
+    view.cursor?.draw(ctx);
     drawBlindFilter(ctx, assets.hud.blindFilter, blind);
   }
   // Practice's F1 help (0x432f90), last in the frame.
   if (view.help) drawHelpScreen(ctx, assets.hud.help);
-  if (view.cursor && (view.help || !blind)) drawCursor(ctx, assets, view.cursor);
-  return blind;
+  if (view.help || !blind) view.cursor?.draw(ctx);
+  return present;
 }
 
 /**
- * The screen's own player (0x469948) when blind: the window follows its point (0x406100), but not
- * under the F1 help (blindWindowAt). Its timer runs out only in the alive player's update, so it
- * outlasts a death (0x452f8c).
+ * The background saves the own player's point before CMM (0x406100). F1 skips this pass;
+ * movement, the first apple flame and expiry affect the next background, not this one.
  */
-function blindView(assets: SceneAssets, state: MatchState, view: RenderView): BlindWindow | null {
+function frameBlindView(assets: SceneAssets, state: MatchState, view: RenderView): BlindWindow | null {
   const own = ownPlayer(state, view);
-  if (own?.status.blind == null) return null;
-  const at = screenPos(assets, own);
-  return blindWindowAt(at.x, at.y, view.help === true);
+  if (!own || view.help) return null;
+  const point = state.blindSprites == null
+    ? own.status.blind === null ? undefined : own
+    : state.blindSprites.find((sprite) => sprite.id === own.id);
+  if (!point) return null;
+  const at = playAreaPos(assets, point.x, point.y);
+  return blindWindowAt(at.x, at.y, false);
+}
+
+/** 0x405f90 reads blindness after CMM; 0x412f05 uses the background's retained centre. */
+function presentBlindView(state: MatchState, view: RenderView): BlindWindow | null {
+  return ownPlayer(state, view)?.status.blind == null ? null : currentBlindWindow();
 }
 
 function ownPlayer(state: MatchState, view: RenderView): PlayerState | undefined {
@@ -194,22 +209,18 @@ function ownTeam(state: MatchState, view: RenderView): number | null {
   return ownPlayer(state, view)?.team ?? null;
 }
 
-/** The game's cursor (0x43f070): cursor.spr anim 0 with its anchor at the mouse, over everything. */
-function drawCursor(ctx: CanvasRenderingContext2D, assets: SceneAssets, cursor: { x: number; y: number; frame: number }): void {
-  const anim = assets.cursor.meta.animations[0];
-  drawFrame(ctx, assets.cursor, anim, cursor.frame % anim.frames.length, cursor.x, cursor.y);
-}
-
-export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, view: RenderView): void {
+export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, view: RenderView): BlindWindow | null {
   ctx.imageSmoothingEnabled = false;
   // Blind, the map goes down only in the window (practice 0x4060e6, network 0x408f2c): the rest of
   // the composition keeps what earlier frames left there, under this frame's sprites.
-  const blind = blindView(assets, state, view);
-  if (blind) {
-    const { left, top, width, height } = blind;
-    ctx.drawImage(assets.level.background, left, top, width, height, left, top, width, height);
-  } else {
-    ctx.drawImage(assets.level.background, 0, 0, SCREEN_W, SCREEN_H);
+  const blind = frameBlindView(assets, state, view);
+  if (!view.help) {
+    if (blind) {
+      const { left, top, width, height } = blind;
+      ctx.drawImage(assets.level.background, left, top, width, height, left, top, width, height);
+    } else {
+      ctx.drawImage(assets.level.background, 0, 0, SCREEN_W, SCREEN_H);
+    }
   }
   drawFixedBlocks(ctx, assets, state);
   drawTimer(ctx, assets, state);
@@ -220,6 +231,7 @@ export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, 
   drawShadows(ctx, assets, state);
   drawItems(ctx, assets, state);
   drawBombs(ctx, assets, state, view);
+  const badStateFrame = view.badState.advance(assets.badState, state);
   const marked = markedPlayer(state, view);
   const locals = state.players.filter((p) => view.localPlayerIds.includes(p.id));
   const practice = state.rules.practice;
@@ -230,23 +242,33 @@ export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, 
     if (locals.includes(player)) continue;
     const mate = team !== null && player.team === team;
     // 0x40a9f1: the yellow 우리편 arrow over a teammate, before the body, through its death
-    // animation and while it is invisible; not once the death has ended (+0x200).
-    if (mate && !player.gone) drawMarker(ctx, assets, assets.teamMarker, state, player);
-    // 0x40ab74: an invisible teammate is still drawn, through the half blend; an invisible enemy is not.
-    if (player.status.invisible === null || mate) drawPlayer(ctx, assets, player);
+    // animation and while it is invisible. The gone check and body anchor precede its update.
+    if (mate) {
+      const marker = state.teamMarkerSprites === null
+        ? player.gone ? undefined : player
+        : state.teamMarkerSprites.find((sprite) => sprite.id === player.id);
+      if (marker) drawMarker(ctx, assets, assets.teamMarker, state, { ...player, ...marker }, view.markers);
+    }
+    // 0x40abaf checks invisibility in the alive branch; 0x40ad7b draws a dying body regardless.
+    // 0x40a9a4 skips a gone player even if a later pickup revives it before the tick ends.
+    const aliveDraw = state.aliveDrawPlayers?.includes(player.id) ?? player.alive;
+    const body = state.bodyPlayers?.includes(player.id) ?? !player.gone;
+    if (body && (!aliveDraw || player.status.invisible === null || mate)) drawPlayer(ctx, assets, player);
     // 0x40ac1f: a typing player's "chat" mark right after the body, an invisible enemy's too.
-    if (player.alive && typing.includes(player.id)) drawTypingMark(ctx, assets, player);
-    // Practice's dummy loop draws no stars (0x407c65-0x407f98).
-    if (!practice) drawBadState(ctx, assets, state, player);
+    if (aliveDraw && typing.includes(player.id)) drawTypingMark(ctx, assets, player);
+    // Remote stars are in the alive branch (0x40ab22), before a death can start. The dead
+    // branch draws no stars; neither does practice's dummy loop (0x407c65-0x407f98).
+    const stars = state.badStatePlayers?.includes(player.id) ?? player.alive;
+    if (!practice && stars) drawBadState(ctx, assets, player, badStateFrame);
   }
   for (const player of locals) drawPlayer(ctx, assets, player);
   // Practice leaves the item grid out while its player is blind (0x40842c).
   if (locals[0] && !(practice && locals[0].status.blind !== null)) drawItemGrid(ctx, assets, locals[0], practice);
-  for (const player of locals) drawBadState(ctx, assets, state, player);
-  if (marked) drawMarker(ctx, assets, assets.marker, state, marked);
+  for (const player of locals) drawBadState(ctx, assets, player, badStateFrame);
+  if (marked) drawMarker(ctx, assets, assets.marker, state, marked, view.markers);
   if (state.rules.practice) {
     renderPracticeHud(ctx, assets, state, view);
-    return;
+    return blind;
   }
   // [0x49285e] is a word: the login's count, then one more a pickup (0x410827).
   drawCandy(ctx, assets, candyWord((view.candyBase ?? 0) + (locals[0]?.candy ?? 0)));
@@ -265,6 +287,7 @@ export function renderField(ctx: CanvasRenderingContext2D, assets: SceneAssets, 
     const glyph = countdownBlit(countdownValue(state));
     blit(ctx, assets.hud.sd, glyph.src, glyph.x, glyph.y);
   }
+  return blind;
 }
 
 /**
@@ -402,12 +425,12 @@ function drawFixedBlocks(ctx: CanvasRenderingContext2D, assets: SceneAssets, sta
 /**
  * One sheet's pass of map objects (0x411700) in file order, on the frames the simulation keeps.
  * Object_A only draws anims 14-26 here (the rest would be baked into the background; no map
- * has any), and objects a sudden-death block took are gone.
+ * has any), using the cell and frame at that sheet's pass (0x411700).
  */
 function drawObjects(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, sheet: number): void {
   const records = assets.level.meta.objects;
   state.layout.objects.forEach((object, i) => {
-    const obj = state.objects[i];
+    const obj = (state.objectSprites ?? state.objects)[i];
     if (object.sheet !== sheet || !obj || obj.cell < 0 || !records[i]) return;
     if (sheet === 0 && (object.anim < 14 || object.anim > 26)) return;
     drawMapObject(ctx, assets.objectSheets, records[i], obj.frame);
@@ -455,22 +478,26 @@ function drawSuddenDeath(ctx: CanvasRenderingContext2D, assets: SceneAssets, sta
   }
 }
 
-/** 0x401890: every brick is anim 1 of its sheet, intact at frame 0. */
+/** 0x401890: map list order, anim 1, before the brick advances and the bombs run. */
 function drawBricks(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState): void {
+  // The combined brick sheet shares the first image's frame rectangles (0x462560, 0x462b00).
+  const anim = assets.level.bricks[0]?.meta.animations[1];
+  if (!anim) return;
   for (const brick of assets.level.meta.bricks) {
-    const crumbling = state.breaking.find((b) => b.cell === brick.cell);
-    if (!crumbling && state.grid[brick.cell] !== CellKind.Brick) continue;
     const sheet = assets.level.bricks[brick.sprite];
-    const anim = sheet?.meta.animations[1];
-    if (!sheet || !anim) continue;
+    if (!sheet) continue;
+    const frame = state.brickSprites?.[brick.cell]
+      ?? state.breaking.find((b) => b.cell === brick.cell)?.frame
+      ?? (state.grid[brick.cell] === CellKind.Brick ? 0 : -1);
+    if (frame < 0) continue;
     const at = cellTopLeft(assets, state, brick.cell);
-    drawFrame(ctx, sheet, anim, crumbling ? Math.min(crumbling.frame, anim.frames.length - 1) : 0, at.x, at.y);
+    drawFrame(ctx, sheet, anim, Math.min(frame, anim.frames.length - 1), at.x, at.y);
   }
 }
 
-/** The item list (0x409285) at the cells' foot, over the Object_B pass and the shadows. */
+/** The item pass (0x409285), before bombs and players can remove or drop an item. */
 function drawItems(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState): void {
-  for (const item of state.items) {
+  for (const item of state.itemSprites ?? state.items) {
     const anim = assets.items.meta.animations[item.kind];
     const at = cellTopLeft(assets, state, item.cell);
     // Dropped items stand one pixel higher (0x453690).
@@ -481,12 +508,13 @@ function drawItems(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: Ma
 
 /**
  * Shadows (0x40914f): the weighted blend (0x413620) with w 100, (dst·100 + src·156) >> 8 on each
- * 16-bit field. None for an invisible player, the local one included.
+ * 16-bit field. None for an invisible player, the local one included. Visibility and positions
+ * are those before the later bomb and player passes, as in the original.
  */
 function drawShadows(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState): void {
-  for (const player of state.players) {
-    if (player.gone || player.status.invisible !== null) continue;
-    const at = screenPos(assets, player);
+  const sprites = state.shadowSprites ?? state.players.filter((player) => !player.gone && player.status.invisible === null);
+  for (const sprite of sprites) {
+    const at = playAreaPos(assets, sprite.x, sprite.y);
     blitBlended(ctx, assets.shadow, at.x - 14, at.y - 7, SHADOW_WEIGHT);
   }
 }
@@ -508,8 +536,9 @@ function drawBombs(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: Ma
       continue;
     }
     if (isMine(sprite.anim) && !view.localPlayerIds.includes(sprite.owner)) continue;
-    const owner = state.players.find((p) => p.id === sprite.owner) ?? state.players[0];
-    const sheet = owner && characterOf(assets, owner)?.bomb;
+    const owner = state.players.find((p) => p.id === sprite.owner);
+    // A bomb keeps its owner's sheet after the player leaves (0x458061, 0x417e0d).
+    const sheet = assets.tinted.get(sprite.owner)?.bomb ?? (owner && characterOf(assets, owner)?.bomb);
     const anim = sheet?.meta.animations[sprite.anim];
     if (!sheet || !anim) continue;
     const at = playAreaPos(assets, sprite.x, sprite.y);
@@ -524,7 +553,7 @@ function bodyAnim(assets: SceneAssets, player: PlayerState): { sheet: Sheet; ani
   return { sheet, anim, frame: Math.min(player.frame, anim.frames.length - 1) };
 }
 
-/** An invisible player that is drawn at all (the local one) goes through the (dst | src) >> 1 blend (0x462c70). */
+/** Invisible local, teammate and dying enemy bodies use the (dst | src) >> 1 blend (0x462c70). */
 function drawPlayer(ctx: CanvasRenderingContext2D, assets: SceneAssets, player: PlayerState): void {
   if (player.gone) return;
   const body = bodyAnim(assets, player);
@@ -555,11 +584,78 @@ function headTop(assets: SceneAssets, player: PlayerState): { x: number; y: numb
 }
 
 /** The diff1 "me" (0x40bc6a) or diff2 teammate (0x40aa3a) arrow, 8 px above the top of the body frame. */
-function drawMarker(ctx: CanvasRenderingContext2D, assets: SceneAssets, sheet: Sheet, state: MatchState, player: PlayerState): void {
+function drawMarker(ctx: CanvasRenderingContext2D, assets: SceneAssets, sheet: Sheet, state: MatchState, player: PlayerState, markers: MarkerAnimations): void {
   const top = headTop(assets, player);
   if (!top) return;
   const anim = sheet.meta.animations[0];
-  drawFrame(ctx, sheet, anim, timedFrame(state.tick, anim.unknown_u16, anim.frames.length), top.x, top.y - 8);
+  drawFrame(ctx, sheet, anim, markers.frame(sheet, state, player.id), top.x, top.y - 8);
+}
+
+/** diff1 and the shared diff2 draw their current frame, then advance once (0x40bc75, 0x40aaee). */
+export class MarkerAnimations {
+  private round: number | null = null;
+  private readonly sprites = new Map<Sheet, MarkerAnimation>();
+
+  frame(sheet: Sheet, state: Pick<MatchState, "round" | "tick">, playerId: number): number {
+    if (state.round !== this.round) {
+      this.round = state.round;
+      this.sprites.clear();
+    }
+    let sprite = this.sprites.get(sheet);
+    if (!sprite) {
+      sprite = { frame: 0, lastMs: -Infinity, drawnAt: -1, drawn: new Map() };
+      this.sprites.set(sheet, sprite);
+    }
+    // Browser redraws of the same logic frame keep each teammate's originally drawn frame.
+    if (sprite.drawnAt !== state.tick) {
+      sprite.drawnAt = state.tick;
+      sprite.drawn.clear();
+    }
+    const previous = sprite.drawn.get(playerId);
+    if (previous !== undefined) return previous;
+    const frame = sprite.frame;
+    sprite.drawn.set(playerId, frame);
+    const now = nowMs(state.tick);
+    const anim = sheet.meta.animations[0];
+    if (animDue(now, sprite.lastMs, anim.unknown_u16)) {
+      sprite.lastMs = now;
+      sprite.frame = (frame + 1) % anim.frames.length;
+    }
+    return frame;
+  }
+}
+
+interface MarkerAnimation {
+  frame: number;
+  lastMs: number;
+  drawnAt: number;
+  drawn: Map<number, number>;
+}
+
+/**
+ * The shared bad_state sprite advances before the player pass (0x40a957; practice 0x407b78),
+ * including countdown frames and frames with no stars. The world load recreates it each round.
+ */
+export class BadStateAnimation {
+  private round: number | null = null;
+  private frame = 0;
+  private lastMs = -Infinity;
+
+  advance(sheet: Sheet, state: Pick<MatchState, "round" | "tick">): number {
+    if (state.round !== this.round) {
+      this.round = state.round;
+      this.frame = 0;
+      // The original's zero timer is already due on the first field frame after startup.
+      this.lastMs = -Infinity;
+    }
+    const now = nowMs(state.tick);
+    const anim = sheet.meta.animations[0];
+    if (animDue(now, this.lastMs, anim.unknown_u16)) {
+      this.lastMs = now;
+      this.frame = (this.frame + 1) % anim.frames.length;
+    }
+    return this.frame;
+  }
 }
 
 /**
@@ -567,12 +663,12 @@ function drawMarker(ctx: CanvasRenderingContext2D, assets: SceneAssets, sheet: S
  * other players, even an invisible one (0x40ac62); after the item grid for the local player
  * (0x40bc26). One shared sprite object, so every player's stars blink together.
  */
-function drawBadState(ctx: CanvasRenderingContext2D, assets: SceneAssets, state: MatchState, player: PlayerState): void {
+function drawBadState(ctx: CanvasRenderingContext2D, assets: SceneAssets, player: PlayerState, frame: number): void {
   if (player.gone || !player.badState) return;
   const top = headTop(assets, player);
   if (!top) return;
   const anim = assets.badState.meta.animations[0];
-  drawFrame(ctx, assets.badState, anim, timedFrame(state.tick, anim.unknown_u16, anim.frames.length), top.x, top.y);
+  drawFrame(ctx, assets.badState, anim, frame, top.x, top.y);
 }
 
 /**

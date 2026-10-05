@@ -1,6 +1,6 @@
 import type { Manifest } from "../assets/types.ts";
 import { compareIgnoreCase, cp949Bytes, cutBytes, typeable } from "../server/cp949.ts";
-import type { ChannelRow, ClientMessage, OwnAccount, PanelBar, RoomInfo, ServerMessage } from "../server/protocol.ts";
+import type { ChannelRow, ClientMessage, OwnAccount, PanelBar, RoomChange, RoomInfo, ServerMessage } from "../server/protocol.ts";
 import { badgeOf, shownName, START_BARS, typingPacketDue } from "../server/protocol.ts";
 import { hasItem, ITEM_KICK, ITEM_WHISPER } from "../server/items.ts";
 import {
@@ -34,7 +34,7 @@ import type { ChatDraw } from "./renderer.ts";
 import { addReply, deleteReply } from "./friends.ts";
 import { connectedPad, padFrame } from "./gamepad.ts";
 import type { KeyBinding } from "./input.ts";
-import { attachKeyboard, boundCodes, KeyState, soloKeys, soloKeysHelp, VERSUS_KEYS } from "./input.ts";
+import { attachKeyboard, boundCodes, isButtonActivation, KeyState, soloKeys, soloKeysHelp, VERSUS_KEYS } from "./input.ts";
 import { banSlot, ChatTimers, chatSubmit, targetWhisper } from "./chatCommand.ts";
 import type { LocalPlayer } from "./localGame.ts";
 import { startLocalGame } from "./localGame.ts";
@@ -56,15 +56,15 @@ import { loadRoomAssets, RoomScreen } from "./roomScreen.ts";
 import { loadSceneAssets } from "./scene.ts";
 import { attachCapture, resetCapture } from "./screenCapture.ts";
 import type { GameScreen } from "./shell.ts";
-import { fadeOver, freezeCanvas } from "./screenKit.ts";
+import { CursorAnim, fadeOver, freezeCanvas, Pointer } from "./screenKit.ts";
 import { gameScreen, mount, settings, sounds } from "./shell.ts";
 import { newSlide } from "./startLayout.ts";
 import type { LoginSent, ServerList, ServerRow, StartScene } from "./startScreen.ts";
-import { LOGIN_FAILED } from "./startScreen.ts";
+import { AUTH_FAILED, LOGIN_FAILED } from "./startScreen.ts";
 import { defaultServerUrl, StartView } from "./startView.ts";
 import { STATUS_TEXT, statusNoticeLines } from "./statusLayout.ts";
 import { newStatusState } from "./statusScreen.ts";
-import { choiceGroup, h, readPreference, writePreference } from "./ui.ts";
+import { choiceGroup, h, readPreference, replaceChildrenKeepingFocus, writePreference } from "./ui.ts";
 
 /** The match's keys as the option window set them. */
 function keysHelp(): string {
@@ -134,6 +134,8 @@ export function mountOnline(manifest: Manifest): () => void {
 
 class OnlineSession {
   private readonly manifest: Manifest;
+  /** [0x496348]: cursor.spr outlives every menu, practice and match screen. */
+  private readonly cursor = new CursorAnim();
   /** The auth server's connection, kept across the start's screens. */
   private readonly auth: AuthLink;
   /** The login's record (the lobby's copy once in one) and session; null before a login or without the auth server. */
@@ -144,8 +146,9 @@ class OnlineSession {
   private enterAfterLogin = false;
   /** Scene 5's 확인 or pw ▶ waits for its answer on the auth connection. */
   private statusSaving: "status" | "guild" | null = null;
-  /** The load queries sent, by row index: when, for the ping. */
-  private readonly asked = new Map<number, number>();
+  /** The current load query per row: its identity and send time for the ping. */
+  private readonly asked = new Map<number, { requestId: number; at: number }>();
+  private loadRequestId = 0;
   /** [0x49272c]: the game server has not answered the version yet; a close now means it is full. */
   private awaitingVersion = false;
   private socket: WebSocket | null = null;
@@ -173,7 +176,7 @@ class OnlineSession {
   private game: OnlineGame | null = null;
   private startView: StartView | null = null;
   /** The server list's slide, rows and choice, kept like the original's statics. */
-  private readonly list: ServerList = { slide: newSlide(), rows: [], selected: -1 };
+  private readonly list: ServerList = { slide: newSlide(), rows: [], selected: -1, page: 0 };
   /** Scene 5's character, check and guild list place, kept like the original's statics. */
   private readonly status = newStatusState(readPreference("p1"));
   /** The list is fading out toward the lobby. */
@@ -243,6 +246,7 @@ class OnlineSession {
     const begin = options.begin ?? (startShown ? "login" : "logo");
     startShown = true;
     this.startView = new StartView({
+      cursor: this.cursor,
       manifest: this.manifest,
       list: this.list,
       status: this.status,
@@ -253,13 +257,14 @@ class OnlineSession {
         startMusic: () => playWaitingMusic(sounds, this.manifest, "lobby"),
         account: () => this.account,
         authConnect: () => this.auth.connect(this.serverUrl),
+        serverChanged: () => this.changeServer(),
         login: (id, password) => this.login(id, password),
         listServers: () => this.listServer(),
         practice: (character, hue) => this.startPractice(character, hue),
         saveCharacter: (character, hue, useId) => this.saveCharacter(character, hue, useId),
         saveStatus: (profile) => this.saveStatus("status", { type: "set-status", ...profile }),
         saveGuild: (guild) => this.saveStatus("guild", { type: "set-guild", guild }),
-        ranking: this.ranking.access((message) => this.account !== null && this.auth.send(message)),
+        ranking: this.ranking.access((message) => this.account !== null && this.auth.send(message), this.auth),
         characterChanged: (character) => writePreference("p1", character),
         // The web site's sign-up and checks go to the account server (R); a send that finds it gone
         // connects again, so the next try can go (the original made a new connection each time).
@@ -278,7 +283,7 @@ class OnlineSession {
         enter: ({ id, password }) => this.formEnter(id, password),
         // A page cannot close its window: the program starts over, silent, from its logo, logged out.
         exit: () => {
-          sounds.stopMusic();
+          sounds.stopAll();
           this.auth.dispose();
           // A connection under way goes with the program, and so do the form's wait for one and the
           // fade out toward the lobby or the local room, whose screen goes too.
@@ -307,6 +312,7 @@ class OnlineSession {
           this.noticeLine = new NoticeLine();
           this.list.slide = newSlide();
           this.list.selected = -1;
+          this.list.page = 0;
           Object.assign(this.status, newStatusState(readPreference("p1")));
           this.showStart({ begin: "logo" });
         },
@@ -372,8 +378,9 @@ class OnlineSession {
 
   private authStateChanged(state: AuthState): void {
     if (state !== "failed") return;
+    if (this.statusSaving !== null) this.startView?.saveRefused(AUTH_FAILED);
     this.statusSaving = null;
-    this.ranking.drop();
+    this.ranking.drop(this.auth);
     if (this.enterAfterLogin) {
       this.enterAfterLogin = false;
       this.showError("인증 서버에 접속하지 못했습니다.");
@@ -410,7 +417,7 @@ class OnlineSession {
         }
         return;
       case "server-info":
-        this.rowAnswered(message.channel, message.load);
+        this.rowAnswered(message.channel, message.requestId, message.load);
         return;
       case "status-notice":
         // S->C 0x101 (0x45eb70, 0x41cdd0): the lines replace the last ones; an odd text is dropped.
@@ -454,6 +461,7 @@ class OnlineSession {
       : [{ name: serverName(this.serverUrl), colour: "#ffffff", channel: 0, load: 1000, ping: -1 }];
     this.list.rows.push({ ...LOCAL_ROW });
     this.list.selected = -1;
+    this.list.page = 0;
     this.queryServers();
   }
 
@@ -467,25 +475,26 @@ class OnlineSession {
       const channel = row.channel;
       if (channel === undefined || row.local) continue;
       const at = performance.now();
-      this.asked.set(channel, at);
-      if (!this.auth.send({ type: "server-info", channel })) {
-        this.rowAnswered(channel, null);
+      const requestId = ++this.loadRequestId;
+      this.asked.set(channel, { requestId, at });
+      if (!this.auth.send({ type: "server-info", channel, requestId })) {
+        this.rowAnswered(channel, requestId, null);
         continue;
       }
       setTimeout(() => {
-        if (this.asked.get(channel) === at) this.rowAnswered(channel, null);
+        this.rowAnswered(channel, requestId, null);
       }, QUERY_TIMEOUT_MS);
     }
   }
 
   /** A row's answer, or null for none. */
-  private rowAnswered(channel: number, load: number | null): void {
-    const at = this.asked.get(channel);
-    if (at === undefined) return;
+  private rowAnswered(channel: number, requestId: number, load: number | null): void {
+    const query = this.asked.get(channel);
+    if (!query || query.requestId !== requestId) return;
     this.asked.delete(channel);
     const row = this.list.rows.find((r) => r.channel === channel && !r.local);
     if (!row) return;
-    Object.assign(row, load === null ? { load: 1000, ping: -1 } : { load, ping: Math.round(performance.now() - at) });
+    Object.assign(row, load === null ? { load: 1000, ping: -1 } : { load, ping: Math.round(performance.now() - query.at) });
     this.startView?.serverInfo(row);
   }
 
@@ -495,17 +504,46 @@ class OnlineSession {
     return url;
   }
 
-  private showRoom(room: RoomInfo): void {
+  /** A different server has different accounts and sessions: return to the existing login screen. */
+  private changeServer(): void {
+    const url = this.serverUrl;
+    // During the logo/loading no auth connection exists yet; login will use the new setting.
+    if (this.auth.url === null || this.auth.url === url) return;
+    this.auth.dispose();
+    this.dropSocket();
+    this.account = null;
+    this.token = null;
+    this.channels = [];
+    this.list.rows = [];
+    this.list.selected = -1;
+    this.list.page = 0;
+    this.enterAfterLogin = false;
+    this.leavingStart = false;
+    this.welcome = null;
+    this.lobby = null;
+    this.room = null;
+    this.statusSaving = null;
+    this.ranking.reset();
+    this.status.notices = [];
+    this.noticeLine = new NoticeLine();
+    this.startView?.resetLogin();
+    this.auth.connect(url);
+  }
+
+  private showRoom(room: RoomInfo, change?: RoomChange): void {
     const welcome = this.welcome;
     if (!welcome || this.disposed) return;
     if (this.roomView?.code !== room.code) {
       const entering = this.roomView === null && this.lastAct === "join-room";
       this.lastAct = null;
       const from = this.shownPicture();
+      // Create/join replies reset the global cursor before scene 7 (0x444e60, 0x445022).
+      if (this.lobbyView) this.cursor.set(false);
       this.lobbyView?.dispose();
       this.lobbyView = null;
       this.roomView?.dispose();
       this.roomView = new RoomView(this.manifest, welcome, room, this.chatLog, {
+        cursor: this.cursor,
         send: (message) => this.send(message),
         say: (text) => this.say(text),
         kickedOut: () => this.leaveKicked(),
@@ -523,7 +561,7 @@ class OnlineSession {
       this.fadeTo(this.roomView.root, from);
       playWaitingMusic(sounds, this.manifest, "room");
     }
-    this.roomView.update(room);
+    this.roomView.update(room, change);
   }
 
   /**
@@ -554,12 +592,13 @@ class OnlineSession {
       return;
     }
     // From a room or a match: the leave reply (0x44a015) and EXITGAME (0x44f8f9) fade.
-    const from = fadeIn ? null : this.shownPicture();
+    const from = this.shownPicture();
     this.roomView?.dispose();
     this.roomView = null;
     // Chat that came during the fade from the list is kept; a room's return starts empty (0x449e50).
     if (!fadeIn) this.lobbyLog = [];
     this.lobbyView = new LobbyView(welcome, lobby, this.lobbyLog, this.lobbyWaitingOnly, {
+      cursor: this.cursor,
       send: (message) => this.send(message),
       say: (text) => this.say(text),
       exit: (askServers) => this.exit(askServers),
@@ -589,14 +628,14 @@ class OnlineSession {
         if (this.socket?.readyState !== WebSocket.OPEN) return false;
         this.send(message);
         return true;
-      }),
-    }, fadeIn);
+      }, this.socket),
+    }, false);
     // The F1 hint on the first lobby (0x44911e), only into an empty buffer: a live S->C 0x50 stays.
     if (this.firstLobby) this.noticeLine.hint(NOTICE.joinText, performance.now());
     this.firstLobby = false;
     this.errorLine = this.lobbyView.errorLine;
     mount(this.lobbyView.root);
-    if (!fadeIn) this.fadeTo(this.lobbyView.root, from);
+    this.fadeTo(this.lobbyView.root, from, fadeIn);
     if (music) playWaitingMusic(sounds, this.manifest, "lobby");
   }
 
@@ -607,7 +646,7 @@ class OnlineSession {
   private exit(askServers: boolean): void {
     const socket = this.socket;
     this.socket = null;
-    this.ranking.drop();
+    this.ranking.drop(socket);
     this.dropLobbySaves();
     this.welcome = null;
     this.lobby = null;
@@ -632,6 +671,8 @@ class OnlineSession {
 
   /** A line typed in the lobby or the room (0x446200): chat, or a command. */
   private say(text: string): void {
+    // A kick notice drops the line before it can change the timers or the last sent text.
+    if (this.kicked) return;
     const line = chatLine(text);
     if (line === null) return;
     const now = performance.now();
@@ -762,7 +803,7 @@ class OnlineSession {
     });
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
-      this.ranking.drop();
+      this.ranking.drop(socket);
       this.dropLobbySaves();
       const full = this.awaitingVersion;
       this.awaitingVersion = false;
@@ -817,6 +858,9 @@ class OnlineSession {
         this.startView?.refused(REFUSALS[message.code] ?? LOGIN_FAILED);
         break;
       case "welcome": {
+        // Game-server S->C 0x0a ends the row's wait before the lobby data arrives (0x444b58).
+        if (this.startView) this.startView.connected();
+        else this.cursor.set(false);
         this.welcome = { playerId: message.playerId, maps: message.maps, music: message.music };
         const { character, hue, nick, greeting, useId } = message.account;
         this.account = message.account;
@@ -867,6 +911,7 @@ class OnlineSession {
         break;
       case "kick":
         // S->C 0x44 (0x4452e0): the busy cursor goes off whatever it says.
+        this.cursor.set(false);
         this.roomView?.refused();
         if (message.ok) this.kickArrived(message.slot);
         break;
@@ -893,6 +938,8 @@ class OnlineSession {
         this.lobbyView?.showMessage(nickRefusal(message.code));
         break;
       case "room":
+        // S->C 0x45/0x2e always reset the global cursor, including identical or ignored room data.
+        if (message.change === "slot" || message.change === "team") this.cursor.set(false);
         // Put out, the room's screen stays under the message box; the server has let go of the player.
         if (this.kicked) {
           if (!message.room) this.room = null;
@@ -909,12 +956,14 @@ class OnlineSession {
           this.stopGame();
           this.showLobby();
         } else if (!this.game) {
-          this.showRoom(message.room);
+          this.showRoom(message.room, message.change);
         } else {
           this.game.hostChanged(message.room.hostId);
         }
         break;
       case "match-start":
+        // S->C 0x25 sets the global cursor before its room/scene checks (0x445128, 0x44a281).
+        this.cursor.set(false);
         if (this.room && this.welcome) this.startGame(message.layout, message.music, this.room, this.welcome.playerId);
         break;
       case "snapshot":
@@ -971,7 +1020,7 @@ class OnlineSession {
   private dropSocket(): void {
     const socket = this.socket;
     this.socket = null;
-    this.ranking.drop();
+    this.ranking.drop(socket);
     this.dropLobbySaves();
     this.awaitingVersion = false;
     socket?.close();
@@ -1004,7 +1053,7 @@ class OnlineSession {
     this.fadeTo(screen.root, from);
     const track = listedTrack(this.manifest, this.welcome?.music ?? [], music);
     const candy = this.account?.candy ?? 0;
-    this.game = new OnlineGame(screen, layout, room, playerId, track, candy, this.noticeLine, (message) => this.send(message), () => this.networkProblem());
+    this.game = new OnlineGame(screen, layout, room, playerId, track, candy, this.noticeLine, this.cursor, (message) => this.send(message), () => this.networkProblem());
   }
 
   private stopGame(keepMusic = false): void {
@@ -1022,18 +1071,22 @@ class OnlineSession {
    * server list (0x458bc5) and its time limit to scene 5 (0x406235), each with the fade.
    */
   private startPractice(character: string, hue: number): void {
-    this.runLocal("혼자 연습", practiceKeysHelp(), this.shownPicture(), () => this.backToList(), (screen, finish, _cancelled, failed) =>
+    this.runLocal("혼자 연습", practiceKeysHelp(), this.shownPicture(), () => this.backToList(), (screen, finish, cancelled, failed, signal) =>
       startPracticeGame({
         canvas: screen.canvas,
+        cursor: this.cursor,
         local: { id: 1, name: readPreference("online.name") || "1P", character },
         hue,
         sounds,
         settings: settings.current,
         announce: screen.announce,
         onExit: () => finish(() => this.backToList()),
+        setExitAction: screen.setExitAction,
         onTimeUp: () => finish(() => this.backToStatus()),
         onFailed: failed,
         badge: this.account ? badgeOf(this.account) : undefined,
+        cancelled,
+        signal,
       }),
     );
   }
@@ -1059,6 +1112,8 @@ class OnlineSession {
       if (this.startView !== startView) return;
       startView.dispose();
       this.startView = null;
+      // The local row completes the same connection wait before drawing the room (R).
+      this.cursor.set(false);
       this.showLocalRoom(null);
     });
   }
@@ -1076,6 +1131,7 @@ class OnlineSession {
     const welcome: Welcome = { playerId: LOCAL_IDS[0], maps: local.lists.maps, music: local.lists.music };
     this.roomView?.dispose();
     this.roomView = new RoomView(this.manifest, welcome, structuredClone(local.room), local.log, {
+      cursor: this.cursor,
       send: (message) => this.localSend(message),
       say: (text) => this.localSay(text),
       kickedOut: () => undefined,
@@ -1140,14 +1196,17 @@ class OnlineSession {
     const from = this.shownPicture();
     this.roomView?.dispose();
     this.roomView = null;
+    // As at 0x44a3d4, stop the room tune before waiting for the world's pictures.
+    sounds.stopMusic();
     const players: LocalPlayer[] = local.room.players.map((p, i) => ({
       setup: { id: p.id, name: p.name, character: p.character },
       binding: VERSUS_KEYS[i],
     }));
     const back = () => this.showLocalRoom(this.shownPicture());
-    this.runLocal("2인 대전", VERSUS_KEYS_HELP, from, back, (screen, finish, cancelled) =>
+    this.runLocal("2인 대전", VERSUS_KEYS_HELP, from, back, (screen, finish, cancelled, _failed, signal) =>
       startLocalGame({
         canvas: screen.canvas,
+        cursor: this.cursor,
         levelId: mapId,
         players,
         rules: VERSUS_RULES,
@@ -1156,6 +1215,7 @@ class OnlineSession {
         announce: screen.announce,
         onExit: () => finish(back),
         cancelled,
+        signal,
       }),
     );
   }
@@ -1175,6 +1235,7 @@ class OnlineSession {
       finish: (then: () => void) => void,
       cancelled: () => boolean,
       failed: (error: unknown) => void,
+      signal: AbortSignal,
     ) => Promise<() => void>,
   ): void {
     this.stopGame();
@@ -1182,9 +1243,11 @@ class OnlineSession {
     this.startView = null;
     let running: (() => void) | null = null;
     let over = false;
+    const cancel = new AbortController();
     const finish = (then: () => void) => {
       if (over) return;
       over = true;
+      cancel.abort();
       running?.();
       if (this.localGame === entry) this.localGame = null;
       then();
@@ -1196,7 +1259,7 @@ class OnlineSession {
     mount(screen.root);
     this.fadeTo(screen.root, from);
     const failed = (error: unknown) => screen.failed(`시작하지 못했습니다: ${(error as Error).message}`);
-    start(screen, finish, () => over, failed).then(
+    start(screen, finish, () => over, failed, cancel.signal).then(
       (stop) => {
         if (over) stop();
         else {
@@ -1230,10 +1293,10 @@ class OnlineSession {
   }
 
   /** fade(1) onto the screen just mounted. */
-  private fadeTo(root: HTMLElement, from: HTMLCanvasElement | null): void {
+  private fadeTo(root: HTMLElement, from: HTMLCanvasElement | null, inOnly = false): void {
     this.stopVeil?.();
     const stage = root.querySelector<HTMLElement>(".stage");
-    this.stopVeil = stage ? fadeOver(stage, from) : null;
+    this.stopVeil = stage ? fadeOver(stage, from, inOnly) : null;
   }
 }
 
@@ -1242,6 +1305,7 @@ class OnlineSession {
  * screen reader path. Only the host has START; a guest's START is ready (0x45a412).
  */
 interface RoomActions {
+  cursor?: CursorAnim;
   send(message: ClientMessage): void;
   /** A chat line, through the session's send rule. */
   say(text: string): void;
@@ -1346,7 +1410,7 @@ class RoomView {
       h(
         "header",
         { class: "toolbar" },
-        h("button", { class: "btn small", type: "button", onclick: () => send({ type: "leave-room" }) }, "← 방 나가기"),
+        h("button", { class: "btn small", type: "button", onclick: () => this.screen ? this.screen.leaveRoom() : send({ type: "leave-room" }) }, "← 방 나가기"),
         h(
           "h1",
           { tabindex: "-1" },
@@ -1389,6 +1453,7 @@ class RoomView {
         this.screen = new RoomScreen(
           {
             canvas: this.canvas,
+            cursor: actions.cursor,
             stage: this.stage,
             assets,
             playerId: welcome.playerId,
@@ -1413,6 +1478,7 @@ class RoomView {
       },
       (error: Error) => {
         this.loading.textContent = `대기실 그림을 불러오지 못했습니다: ${error.message}`;
+        this.loading.classList.add("asset-error");
       },
     );
   }
@@ -1453,9 +1519,9 @@ class RoomView {
     this.screen = null;
   }
 
-  update(room: RoomInfo): void {
+  update(room: RoomInfo, change?: RoomChange): void {
     this.room = room;
-    this.screen?.update(room);
+    this.screen?.update(room, change);
     const me = this.welcome.playerId;
     const isHost = room.hostId === me;
     const own = room.players.find((p) => p.id === me);
@@ -1468,7 +1534,7 @@ class RoomView {
     this.readyButton.textContent = this.ready ? "준비 취소" : "준비";
 
     const teams = isTeamMode(room.mode);
-    this.slots.replaceChildren(...Array.from({ length: MAX_PLAYERS }, (_, slot) => this.slotItem(room, slot, isHost, teams)));
+    replaceChildrenKeepingFocus(this.slots, ...Array.from({ length: MAX_PLAYERS }, (_, slot) => this.slotItem(room, slot, isHost, teams)));
     this.updateTeams(room, isHost);
 
     const guests = room.players.filter((p) => p.id !== room.hostId);
@@ -1513,7 +1579,7 @@ class RoomView {
         isHost
           ? h(
               "button",
-              { class: "btn small", type: "button", onclick: () => this.send({ type: "set-slot", slot, open: closed }) },
+              { class: "btn small", type: "button", "data-focus-key": `slot:${slot}`, onclick: () => this.send({ type: "set-slot", slot, open: closed }) },
               closed ? "열기" : "닫기",
             )
           : null,
@@ -1528,16 +1594,16 @@ class RoomView {
       p.id === room.hostId ? null : h("span", { class: "ready" }, p.ready ? "준비 완료" : "대기"),
       // The canvas's lit slot icons on another's slot, pressed in its middle.
       p.id !== me && isHost && hasItem(this.items(), ITEM_KICK)
-        ? h("button", { class: "btn small", type: "button", onclick: () => this.screen?.slotIcon(slot, "kick") }, `${p.name} 강퇴 (강퇴 아이콘)`)
+        ? h("button", { class: "btn small", type: "button", "data-focus-key": `kick:${p.id}`, onclick: () => this.screen?.slotIcon(slot, "kick") }, `${p.name} 강퇴 (강퇴 아이콘)`)
         : null,
       p.id !== me && hasItem(this.items(), ITEM_WHISPER)
-        ? h("button", { class: "btn small", type: "button", onclick: () => this.screen?.slotIcon(slot, "whisper") }, `${p.name}에게 귓말 (귓말 아이콘)`)
+        ? h("button", { class: "btn small", type: "button", "data-focus-key": `whisper:${p.id}`, onclick: () => this.screen?.slotIcon(slot, "whisper") }, `${p.name}에게 귓말 (귓말 아이콘)`)
         : null,
       // The slot's click, dropped where the canvas drops it.
       this.pickCharacter
         ? h(
             "button",
-            { class: "btn small", type: "button", onclick: () => !this.screen?.dropsClicks && this.pickCharacter?.(slot) },
+            { class: "btn small", type: "button", "data-focus-key": `character:${p.id}`, onclick: () => !this.screen?.dropsClicks && this.pickCharacter?.(slot) },
             `${p.name} 캐릭터 바꾸기 (지금 ${p.character})`,
           )
         : null,
@@ -1643,12 +1709,18 @@ class OnlineGame {
   private readonly joystick = settings.current.control === 1;
   private readonly detachKeyboard: () => void;
   private readonly detachCapture: () => void;
+  private readonly pointer = new Pointer();
+  private readonly detachPointer: () => void;
   private readonly listeners: [EventTarget, string, EventListener][] = [];
   private view: GameView | null = null;
+  /** A requested capture waits until the scene has composed its first actual frame. */
+  private captureReady = false;
   private state: MatchState | null = null;
   /** The snapshots that came before the pictures, each with its own state; none once the load is over. */
   private queued: { state: MatchState; events: SimEvent[] }[] | null = [];
   private lastSent: Required<InputFrame> = { dir: null, bomb: false, attack: false, evade: false };
+  /** The server must skip the input poll too: keeping the old keys would still turn or act. */
+  private pausedSent = false;
   private frame = 0;
   private stopped = false;
   /** The chat line ([0x48c0e8]): closed at the start (0x44a3db); what the server was last told of it. */
@@ -1670,7 +1742,6 @@ class OnlineGame {
   private help = false;
   private box: PracticeBox | null = null;
   private hover: 0 | 1 | 2 = 0;
-  private pressed = false;
   /** The mouse in screen pixels, which the box reads even when it has not moved. */
   private mouse = { x: 0, y: 0 };
   private boxImages: BoxImages | null = null;
@@ -1684,6 +1755,7 @@ class OnlineGame {
   private readonly candyBase: number;
   /** The session's notice line, in the bottom message's place while it holds a text (0x40c1d2). */
   private readonly notice: NoticeLine;
+  private readonly cursor: CursorAnim;
 
   constructor(
     screen: GameScreen,
@@ -1693,9 +1765,11 @@ class OnlineGame {
     music: MusicTrack | null,
     candyBase: number,
     notice: NoticeLine,
+    cursor: CursorAnim,
     send: (message: ClientMessage) => void,
     hostLost: () => void,
   ) {
+    this.cursor = cursor;
     this.hostLost = hostLost;
     this.candyBase = candyBase;
     this.notice = notice;
@@ -1708,16 +1782,20 @@ class OnlineGame {
     this.chat = new ChatLine(screen.stage);
     // With the joystick the keyboard's game keys are not read (0x402520 mode 1), but a browser
     // shows no pad until one of its buttons is pressed, so the keys play until then.
-    this.detachKeyboard = attachKeyboard(this.keys, boundCodes([this.binding]), () => this.syncInput());
+    // A bound Enter/F-key must open chat/help before its action is sent. Otherwise a server
+    // tick between that action and the pause packet can consume an input the scene never reads.
     this.listen(window, "keydown", (event) => this.onKey(event as KeyboardEvent));
+    this.detachKeyboard = attachKeyboard(this.keys, boundCodes([this.binding]), () => this.syncInput());
     this.detachCapture = attachCapture(
       screen.canvas,
       () => this.box !== null,
-      () => this.view?.composition ?? screen.canvas,
+      () => this.captureReady ? this.view?.composition ?? null : null,
     );
-    this.listen(screen.canvas, "pointermove", (event) => this.onPointer(event as PointerEvent));
-    this.listen(screen.canvas, "pointerdown", () => (this.pressed = true));
-    this.listen(screen.canvas, "pointerup", (event) => this.onRelease(event as PointerEvent));
+    this.detachPointer = this.pointer.attach(screen.canvas, {
+      moved: () => this.onPointer(),
+      pressed: () => this.onPointer(),
+      released: (x, y) => this.onRelease(x, y),
+    });
     void this.load(room);
   }
 
@@ -1746,6 +1824,7 @@ class OnlineGame {
       const ctx = this.screen.canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) throw new Error("canvas 2d context unavailable");
       this.view = new GameView(ctx, assets, sounds, {
+        cursor: this.cursor,
         localPlayerIds: [this.playerId],
         hostId: this.hostId,
         music: this.music,
@@ -1754,6 +1833,7 @@ class OnlineGame {
         candyBase: this.candyBase,
         notice: this.notice,
       });
+      this.screen.setExitAction(() => this.requestExit());
       this.screen.loaded();
       this.view.catchUp(this.queued ?? []);
       this.queued = null;
@@ -1764,8 +1844,14 @@ class OnlineGame {
       };
       this.frame = requestAnimationFrame(draw);
     } catch (error) {
-      // Nothing will catch up with the snapshots now.
-      this.queued = null;
+      if (this.stopped) return;
+      // A failed scene cannot show a move or an editor. Release its server state and inputs;
+      // the failure notice keeps the screen's initial exit action.
+      this.send({ type: "typing", on: false });
+      // First drop queued taps, then poll released keys: a skipped poll keeps an old walk going.
+      this.send({ type: "input", dir: null, bomb: false, attack: false, evade: false, paused: true });
+      this.send({ type: "input", dir: null, bomb: false, attack: false, evade: false, paused: false });
+      this.stop();
       this.screen.failed(`에셋을 불러오지 못했습니다: ${(error as Error).message}`);
     }
   }
@@ -1838,17 +1924,20 @@ class OnlineGame {
     const pad = this.joystick ? connectedPad() : null;
     const next = pad ? padFrame(pad) : this.keys.sample(this.binding);
     this.keys.endTick();
-    if (this.frozen) return;
-    const same = (Object.keys(next) as (keyof InputFrame)[]).every((key) => next[key] === this.lastSent[key]);
+    const paused = this.frozen;
+    if (paused && this.pausedSent) return;
+    const same = paused === this.pausedSent && (Object.keys(next) as (keyof InputFrame)[]).every((key) => next[key] === this.lastSent[key]);
     if (same) return;
     this.lastSent = next;
-    this.send({ type: "input", ...next });
+    this.pausedSent = paused;
+    this.send({ type: "input", ...next, paused });
   }
 
   private onKey(event: KeyboardEvent): void {
+    if (isButtonActivation(event)) return;
     if (event.code === "F1") event.preventDefault();
-    // Keys the IME takes for its composition.
-    if (event.isComposing || event.keyCode === 229) return;
+    // The IME's process key belongs to the editor; real keys retain the scene's handling.
+    if (event.keyCode === 229) return;
     const state = this.state;
     const slot = macroSlot(event.code);
     if (slot !== null) {
@@ -1864,14 +1953,17 @@ class OnlineGame {
     }
     if (this.box) {
       // Any key clears the help while the box is up (0x460097); Enter answers the box, not the line.
+      // WM_CHAR drops characters/Backspace, but Delete and IME still edit the buffer (0x403a97, 0x40368b).
+      if (event.key !== "Delete") event.preventDefault();
       this.help = false;
-      if (event.key === "Enter") event.preventDefault();
       const result = boxKey(this.box, event.key);
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         this.hover = boxKeyCursor(this.box);
         this.screen.announce(this.box.selection === 1 ? "예" : "아니오");
       }
-      if (result) this.answer(result);
+      if (result) {
+        this.answer(result);
+      }
       return;
     }
     if (event.code === "F1") {
@@ -1906,12 +1998,24 @@ class OnlineGame {
         break;
       case "box":
         this.box = openBox("esc");
+        this.chat.deferChanges(true);
         this.hover = boxHover(this.box, this.mouse);
         this.screen.announce("종료하시겠습니까? 예(Y), 아니오(N)");
         break;
       case "none":
         break;
     }
+  }
+
+  /** The hidden Esc + confirmation sequence only leaves where the scene offers it. */
+  private requestExit(): void {
+    const state = this.state;
+    if (this.help || (state && closesExitBox(state.phase, state.round))) return;
+    if (state) {
+      const action = matchEscape({ help: false, chatOpen: false, host: this.isHost, round: state.round, phase: state.phase });
+      if (action !== "leave" && action !== "box") return;
+    }
+    this.send({ type: "leave-room" });
   }
 
   /** 0x446200: the recall buffer takes the line as typed; a blank line, or one on the wait and result screens, goes nowhere. */
@@ -1933,30 +2037,21 @@ class OnlineGame {
 
   private closeBox(): void {
     this.box = null;
+    // Keep the record until the next editor message, including when a result frame closes it.
+    this.chat.deferChanges(false);
     this.hover = 0;
-    this.pressed = false;
+    this.pointer.held = null;
     this.syncInput();
   }
 
-  private toScreen(event: PointerEvent): { x: number; y: number } {
-    const rect = this.screen.canvas.getBoundingClientRect();
-    return {
-      x: Math.floor(((event.clientX - rect.left) * SCREEN_W) / rect.width),
-      y: Math.floor(((event.clientY - rect.top) * SCREEN_H) / rect.height),
-    };
-  }
-
-  private onPointer(event: PointerEvent): void {
-    this.mouse = this.toScreen(event);
+  private onPointer(): void {
+    this.mouse = this.pointer.mouse;
     if (!this.box) return;
     this.hover = boxPointer(this.box, this.mouse.x, this.mouse.y);
-    this.pressed = (event.buttons & 1) !== 0;
   }
 
-  private onRelease(event: PointerEvent): void {
-    this.pressed = false;
+  private onRelease(x: number, y: number): void {
     if (!this.box || this.help) return;
-    const { x, y } = this.toScreen(event);
     const result = boxClick(this.box, x, y);
     if (!result) return;
     // A click on the box's buttons sounds menu2 (0x4589a9); its keys are silent (0x461bc0).
@@ -1983,9 +2078,9 @@ class OnlineGame {
     }
     const box = this.box;
     const images = this.boxImages;
-    this.chat.locked = box !== null;
-    const overlay = box && images ? (ctx: CanvasRenderingContext2D) => drawPracticeBox(ctx, images, box, this.hover, this.pressed) : undefined;
+    const overlay = box && images ? (ctx: CanvasRenderingContext2D) => drawPracticeBox(ctx, images, box, this.hover, this.pointer.held !== null) : undefined;
     view.render(state, { overlay, help: this.help, chat: this.chatDraw(state), bars: this.ownBars() });
+    this.captureReady = true;
   }
 
   /**
@@ -2046,12 +2141,15 @@ class OnlineGame {
   }
 
   stop(keepMusic = false): void {
+    if (this.stopped) return;
     this.stopped = true;
+    this.queued = null;
     cancelAnimationFrame(this.frame);
     this.view?.dispose(keepMusic);
     this.chat.dispose();
     this.detachKeyboard();
     this.detachCapture();
+    this.detachPointer();
     for (const [target, type, listener] of this.listeners) target.removeEventListener(type, listener);
   }
 }

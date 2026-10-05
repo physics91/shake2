@@ -15,11 +15,14 @@ const jsonCache = new Map<string, Promise<unknown>>();
 export function loadImage(path: string): Promise<HTMLImageElement> {
   let pending = imageCache.get(path);
   if (!pending) {
-    pending = new Promise((resolve, reject) => {
+    pending = new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.onload = () => resolve(image);
       image.onerror = () => reject(new Error(`failed to load ${path}`));
       image.src = BASE + path;
+    }).catch((error: unknown) => {
+      imageCache.delete(path);
+      throw error;
     });
     imageCache.set(path, pending);
   }
@@ -29,10 +32,15 @@ export function loadImage(path: string): Promise<HTMLImageElement> {
 export function loadJson<T>(path: string): Promise<T> {
   let pending = jsonCache.get(path);
   if (!pending) {
-    pending = fetch(BASE + path).then((response) => {
-      if (!response.ok) throw new Error(`failed to load ${path}: ${response.status}`);
-      return response.json();
-    });
+    pending = fetch(BASE + path)
+      .then((response) => {
+        if (!response.ok) throw new Error(`failed to load ${path}: ${response.status}`);
+        return response.json();
+      })
+      .catch((error: unknown) => {
+        jsonCache.delete(path);
+        throw error;
+      });
     jsonCache.set(path, pending);
   }
   return pending as Promise<T>;

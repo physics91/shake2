@@ -18,6 +18,7 @@ export class AuthLink {
   private socket: WebSocket | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private current: AuthState = "idle";
+  private address: string | null = null;
   private readonly events: AuthLinkEvents;
 
   constructor(events: AuthLinkEvents) {
@@ -28,9 +29,16 @@ export class AuthLink {
     return this.current;
   }
 
-  /** Connects unless connected or connecting. */
+  /** The requested address, kept after a failed connection so a changed setting can be detected. */
+  get url(): string | null {
+    return this.address;
+  }
+
+  /** Connects unless already connected or connecting to this address. */
   connect(url: string): void {
-    if (this.current === "open" || this.current === "connecting") return;
+    if (this.address === url && (this.current === "open" || this.current === "connecting")) return;
+    this.dispose();
+    this.address = url;
     let socket: WebSocket;
     try {
       socket = new WebSocket(url);
@@ -75,6 +83,7 @@ export class AuthLink {
     this.socket = null;
     this.clearTimer();
     this.current = "idle";
+    this.address = null;
     socket?.close();
   }
 

@@ -21,7 +21,8 @@ import { chatLineClass, shownChat } from "./roomChat.ts";
 import { roomNumberText } from "./roomLayout.ts";
 import type { SettingsStore } from "./settings.ts";
 import { sounds } from "./shell.ts";
-import { h } from "./ui.ts";
+import { h, replaceChildrenKeepingFocus } from "./ui.ts";
+import type { CursorAnim } from "./screenKit.ts";
 
 export interface LobbyState {
   channel: string;
@@ -30,6 +31,7 @@ export interface LobbyState {
 }
 
 export interface LobbyActions {
+  cursor?: CursorAnim;
   send(message: ClientMessage): void;
   /** A chat line, through the session's send rule. */
   say(text: string): void;
@@ -124,8 +126,8 @@ export class LobbyView {
   private readonly whisperButton = h("button", { class: "btn", type: "submit" }, "귓말 대상 정하기");
   private readonly optionPanel: OptionPanel;
   private screen: LobbyScreen | null = null;
-  /** A message box asked for before the canvas screen came up: it shows once the screen is there. */
-  private pendingMessage: string | null = null;
+  /** Requests and replies that came before the pictures: their order preserves waits and popups. */
+  private pending: ((screen: LobbyScreen) => void)[] = [];
   private state: LobbyState;
   /** The room whose 정보 button was pressed last. */
   private infoAsked: string | null = null;
@@ -336,6 +338,7 @@ export class LobbyView {
         this.screen = new LobbyScreen(
           {
             canvas: this.canvas,
+            cursor: actions.cursor,
             stage: this.stage,
             assets,
             playerId: welcome.playerId,
@@ -363,12 +366,13 @@ export class LobbyView {
           this.state,
         );
         this.screen.setLog(chatLog);
-        if (this.pendingMessage !== null) this.screen.showMessage(this.pendingMessage);
-        this.pendingMessage = null;
+        for (const run of this.pending) run(this.screen);
+        this.pending = [];
         this.loading.remove();
       },
       (error: Error) => {
         this.loading.textContent = `로비 그림을 불러오지 못했습니다: ${error.message}`;
+        this.loading.classList.add("asset-error");
       },
     );
   }
@@ -378,7 +382,7 @@ export class LobbyView {
     this.screen?.update(state);
     this.heading.textContent = `로비 · ${state.channel}`;
     const maps = new Map(this.welcome.maps.map((m) => [m.id, mapTitle(m.title)]));
-    this.roomList.replaceChildren(
+    replaceChildrenKeepingFocus(this.roomList,
       ...(state.rooms.length === 0
         ? [h("li", {}, "만들어진 방이 없습니다.")]
         : state.rooms.map((room) =>
@@ -395,6 +399,7 @@ export class LobbyView {
                 {
                   class: "btn small",
                   type: "button",
+                  "data-focus-key": `join:${room.code}`,
                   // What a click on the room's line does; before the canvas is up, the server asks for a password.
                   onclick: () => (this.screen ? this.screen.joinRoom(room) : this.actions.send({ type: "join-room", code: room.code })),
                 },
@@ -406,11 +411,15 @@ export class LobbyView {
                   class: "btn small",
                   type: "button",
                   "aria-label": `${roomNumberText(room.number)}번 방 정보`,
-                  onclick: () => {
-                    // What a right release on the room does, dropped as it is under the help, a wait, a popup or a message.
-                    if (this.screen && !this.screen.takesRoomInfo) return;
-                    this.infoAsked = room.code;
-                    this.actions.send({ type: "room-info", code: room.code });
+                  "data-focus-key": `info:${room.code}`,
+                  onclick: (event: Event) => {
+                    const button = event.currentTarget as HTMLElement;
+                    this.withScreen((screen) => {
+                      if (screen.requestRoomInfo(room.code)) {
+                        this.infoAsked = room.code;
+                        button.blur();
+                      }
+                    });
                   },
                 },
                 "정보",
@@ -418,7 +427,7 @@ export class LobbyView {
             ),
           )),
     );
-    this.userList.replaceChildren(
+    replaceChildrenKeepingFocus(this.userList,
       ...state.users.map((user) =>
         h(
           "li",
@@ -431,6 +440,7 @@ export class LobbyView {
               class: "btn small",
               type: "button",
               "aria-label": `${user.name} 정보`,
+              "data-focus-key": String(user.id),
               // What a click on the user's line does: the user info window, which Esc closes once the
               // focus leaves the button for the page.
               onclick: (event: Event) => {
@@ -460,12 +470,12 @@ export class LobbyView {
 
   /** A create or join went out: the canvas waits for the answer. */
   waitForRoom(): void {
-    this.screen?.waitForRoom();
+    this.withScreen((screen) => screen.waitForRoom());
   }
 
   /** Join reply 3: the canvas's password popup takes the keys (its editor is the page's password field). */
   passwordAsked(code: string): void {
-    this.screen?.passwordAsked(code);
+    this.withScreen((screen) => screen.passwordAsked(code));
   }
 
   /** S->C 0x55: the canvas's popup, and the page's line when its 정보 button asked. */
@@ -483,8 +493,7 @@ export class LobbyView {
     this.characterSelect.value = this.actions.profile.character;
     this.showHue();
     this.errorLine.textContent = "수정 되었습니다.";
-    if (this.screen) this.screen.profileSaved();
-    else this.pendingMessage = "수정 되었습니다.";
+    this.withScreen((screen) => screen.profileSaved());
   }
 
   /** The hue field holds the account's hue, and takes a new one only with the colour item, as the icon does. */
@@ -532,15 +541,13 @@ export class LobbyView {
   /** A reply or a bad title: the original's message box, and the page's alert line. */
   showMessage(text: string): void {
     this.errorLine.textContent = text;
-    if (this.screen) this.screen.showMessage(text);
-    else this.pendingMessage = text;
+    this.withScreen((screen) => screen.showMessage(text));
   }
 
   /** The server's refusal, which also ends a create or join's wait. */
   refused(text: string): void {
     this.errorLine.textContent = text;
-    if (this.screen) this.screen.refused(text);
-    else this.pendingMessage = text;
+    this.withScreen((screen) => screen.refused(text));
   }
 
   dispose(): void {
@@ -548,5 +555,12 @@ export class LobbyView {
     this.optionPanel.dispose();
     this.screen?.dispose();
     this.screen = null;
+    this.pending = [];
+  }
+
+  private withScreen(run: (screen: LobbyScreen) => void): void {
+    if (this.disposed) return;
+    if (this.screen) run(this.screen);
+    else this.pending.push(run);
   }
 }

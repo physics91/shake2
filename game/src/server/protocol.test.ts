@@ -5,6 +5,15 @@ import { addBomb, layoutFromAscii, playingMatch, run, setups, VERSUS } from "../
 import { MAX_MESSAGE_BYTES, parseClientMessage, roomTitle, sanitizeName, toWireState } from "./protocol.ts";
 
 describe("parseClientMessage", () => {
+  it("keeps whether the client's input poll is paused, and refuses a non-boolean flag", () => {
+    for (const paused of [true, false]) {
+      expect(parseClientMessage(JSON.stringify({ type: "input", dir: null, bomb: false, paused }))).toMatchObject({ paused });
+    }
+    for (const paused of [1, "true", null]) {
+      expect(parseClientMessage(JSON.stringify({ type: "input", dir: null, bomb: false, paused }))).toBeNull();
+    }
+  });
+
   it("accepts well-formed messages", () => {
     expect(parseClientMessage('{"type":"input","dir":3,"bomb":true}')).toEqual({
       type: "input",
@@ -79,9 +88,16 @@ describe("parseClientMessage", () => {
   });
 
   it("takes a server list row's load query with the row (C->S 0x4c)", () => {
-    expect(parseClientMessage('{"type":"server-info","channel":2}')).toEqual({ type: "server-info", channel: 2 });
-    expect(parseClientMessage('{"type":"server-info"}')).toBeNull();
-    expect(parseClientMessage('{"type":"server-info","channel":80}')).toBeNull();
+    expect(parseClientMessage('{"type":"server-info","channel":2,"requestId":1}')).toEqual({ type: "server-info", channel: 2, requestId: 1 });
+    expect(parseClientMessage(JSON.stringify({ type: "server-info", channel: 2, requestId: Number.MAX_SAFE_INTEGER })))
+      .toEqual({ type: "server-info", channel: 2, requestId: Number.MAX_SAFE_INTEGER });
+    expect(parseClientMessage('{"type":"server-info","channel":2}')).toBeNull();
+    expect(parseClientMessage('{"type":"server-info","requestId":1}')).toBeNull();
+    expect(parseClientMessage('{"type":"server-info","channel":80,"requestId":1}')).toBeNull();
+  });
+
+  it.each([0, -1, 1.5, "1", null, Number.MAX_SAFE_INTEGER + 1])("rejects an invalid server load request ID: %s", (requestId) => {
+    expect(parseClientMessage(JSON.stringify({ type: "server-info", channel: 0, requestId }))).toBeNull();
   });
 
   it("takes a character to save with its hue and ID check (C->S 0x1a)", () => {
@@ -131,14 +147,23 @@ describe("parseClientMessage", () => {
   });
 
   it("takes a ranking page from 1 up and an ID the finder's editor could hold (ranklist_2.asp)", () => {
-    expect(parseClientMessage('{"type":"ranking","page":1}')).toEqual({ type: "ranking", page: 1 });
-    expect(parseClientMessage('{"type":"ranking","page":40000}')).toEqual({ type: "ranking", page: 40000 });
-    expect(parseClientMessage('{"type":"ranking","page":0}')).toBeNull();
-    expect(parseClientMessage('{"type":"ranking","page":1.5}')).toBeNull();
-    expect(parseClientMessage('{"type":"ranking-search","id":"Tester1"}')).toEqual({ type: "ranking-search", id: "Tester1" });
-    expect(parseClientMessage('{"type":"ranking-search","id":""}')).toBeNull();
-    expect(parseClientMessage('{"type":"ranking-search","id":"abcdefghijk"}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking","page":1,"requestId":1}')).toEqual({ type: "ranking", page: 1, requestId: 1 });
+    expect(parseClientMessage('{"type":"ranking","page":40000,"requestId":2}')).toEqual({ type: "ranking", page: 40000, requestId: 2 });
+    expect(parseClientMessage('{"type":"ranking","page":0,"requestId":1}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking","page":1.5,"requestId":1}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking-search","id":"Tester1","requestId":3}')).toEqual({ type: "ranking-search", id: "Tester1", requestId: 3 });
+    expect(parseClientMessage('{"type":"ranking-search","id":"","requestId":1}')).toBeNull();
+    expect(parseClientMessage('{"type":"ranking-search","id":"abcdefghijk","requestId":1}')).toBeNull();
     expect(parseClientMessage('{"type":"ranking-search"}')).toBeNull();
+  });
+
+  it.each(["ranking", "ranking-search"])("requires a positive safe request ID for %s", (type) => {
+    const query = type === "ranking" ? { type, page: 1 } : { type, id: "Tester1" };
+    for (const requestId of [undefined, null, 0, -1, 1.5, "1", Number.MAX_SAFE_INTEGER + 1]) {
+      expect(parseClientMessage(JSON.stringify({ ...query, requestId }))).toBeNull();
+    }
+    const largest = { ...query, requestId: Number.MAX_SAFE_INTEGER };
+    expect(parseClientMessage(JSON.stringify(largest))).toEqual(largest);
   });
 
   it("takes the typing flag as a boolean (state packet +0x2c)", () => {

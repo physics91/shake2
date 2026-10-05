@@ -150,7 +150,7 @@ export class SignUpWindow {
     else if (this.focus === 3) this.check("nick");
   }
 
-  /** The editor back on the focused field, as every click on the window reloads it (0x41adc1). */
+  /** Restore DOM focus without reloading the record; a mouse release does that before its hit test. */
   refocus(): void {
     this.setFocus(this.focus, false);
   }
@@ -158,6 +158,9 @@ export class SignUpWindow {
   /** A release on the window (0x41ad60). */
   release(x: number, y: number): void {
     if (this.waiting) return;
+    // Every release reloads the current field before testing buttons or empty space (0x41ad60 → 0x41adbc).
+    const field = fieldOfFocus(this.focus);
+    if (field) this.lines[field].reloadRecord();
     const target = signUpTargetAt(x, y);
     switch (target) {
       case "idCheck":
@@ -261,17 +264,18 @@ export class SignUpWindow {
     for (const line of Object.values(this.lines)) line.locked = locked;
   }
 
-  private setFocus(focus: SignUpFocus, speak = true): void {
+  private setFocus(focus: SignUpFocus, reload = true): void {
     this.focus = focus;
     const field = fieldOfFocus(focus);
     if (field) {
+      if (reload) this.lines[field].reloadRecord();
       this.lines[field].focus();
       return;
     }
     // A check button has no editor: what is typed there goes nowhere (0x41bf10).
     const active = document.activeElement;
     if (active instanceof HTMLElement && this.owns(active)) active.blur();
-    if (speak) this.options.announce(focus === 1 ? "아이디검색 단추. Enter로 검색합니다." : "닉네임검색 단추. Enter로 검색합니다.");
+    if (reload) this.options.announce(focus === 1 ? "아이디검색 단추. Enter로 검색합니다." : "닉네임검색 단추. Enter로 검색합니다.");
   }
 
   private notice(notice: SignUpNotice): void {

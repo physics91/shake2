@@ -24,13 +24,15 @@ export function dropCapsule(state: MatchState, player: PlayerState): void {
  * 0x453d00 for whoever picked the capsule up, on either team: one of the picker's teammates whose
  * death animation has ended, rand() % count in slot order, stands again at the capsule cell's
  * centre facing down, with the item reset's stats and stars (0x40cea0) and revival.spr. With
- * nobody to bring back the capsule is simply used up. The pick reseeds with srand(time(0)) first (0x453d11).
+ * nobody to bring back the capsule is simply used up. It reseeds before checking the candidates
+ * (0x453d11), even when none are dead. Revival keeps the body's animation clock, bomb pass and
+ * pending walk stop (+0x171); the next common update consumes that stop when a frame is due.
  */
 export function reviveTeammate(state: MatchState, picker: PlayerState, cell: number): void {
-  const candidates = state.players.filter((p) => p.gone && p.team === picker.team);
-  if (candidates.length === 0) return;
   const now = nowMs(state.tick);
   srandTime(state, now);
+  const candidates = state.players.filter((p) => p.gone && p.team === picker.team);
+  if (candidates.length === 0) return;
   const revived = candidates[msvcRand(state) % candidates.length];
   const at = cellTopLeft(state, cell);
   Object.assign(revived, {
@@ -39,11 +41,8 @@ export function reviveTeammate(state: MatchState, picker: PlayerState, cell: num
     dir: Dir.Down,
     anim: Anim.Stand + Dir.Down,
     frame: 0,
-    animMs: now,
-    stopRequested: false,
     alive: true,
     gone: false,
-    bombPass: false,
     flight: null,
   });
   resetAbilities(revived, now);

@@ -89,6 +89,9 @@ describe("jump (item 5)", () => {
     run(state, 1);
     expect(player.alive).toBe(true);
     runUntil(state, () => player.anim < Anim.Jump || !player.alive);
+    // The local network loop checks fire while still airborne, then CMM lands the jump.
+    expect(player.alive).toBe(true);
+    run(state, 1);
     expect(player.alive).toBe(false);
   });
 });

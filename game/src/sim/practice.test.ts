@@ -71,6 +71,29 @@ describe.skipIf(!existsSync(MAP))("practice (scene 9)", () => {
     ]);
   });
 
+  it("preserves a pending walk stop when a real bomb starts the death before the next animation frame", () => {
+    const layout = layoutFromLevel("practice", JSON.parse(readFileSync(MAP, "utf-8")));
+    const state = createPractice(layout, { ...LOCAL, character: "shaky" }, 650);
+    const player = state.players.find((p) => p.id === LOCAL.id)!;
+
+    run(state, 1, { dir: null, bomb: true });
+    run(state, 57);
+    run(state, 3, { dir: Dir.Down, bomb: false });
+    expect(player.alive).toBe(true);
+    expect(player.anim).toBe(Anim.Walk + Dir.Down);
+    expect(player.stopRequested).toBe(false);
+    const animMs = player.animMs;
+
+    run(state, 1);
+
+    expect(state.events).toContainEqual({ type: "death", playerId: LOCAL.id });
+    expect(player.alive).toBe(false);
+    expect(player.anim).toBe(Anim.Death);
+    expect(player.frame).toBe(0);
+    expect(player.animMs).toBe(animMs);
+    expect(player.stopRequested).toBe(true);
+  });
+
   it("dummies never pick items up: only the local player does (0x4501f0)", () => {
     const state = practice();
     state.items = [{ cell: 0, kind: ItemKind.Kick, tick: 0, dropped: false }];

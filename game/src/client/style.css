@@ -564,6 +564,19 @@ details summary {
   white-space: nowrap;
 }
 
+/* Without the screen's art, AGENTS.md permits a plain-text failure notice. */
+.screen.shake .stage > .loading.asset-error {
+  inset: 0;
+  width: auto;
+  height: auto;
+  padding: 24px;
+  overflow: auto;
+  clip-path: none;
+  white-space: normal;
+  background: #000;
+  z-index: 1;
+}
+
 .screen.shake .stage {
   width: min(100vw, calc(100dvh * 4 / 3));
   max-width: none;

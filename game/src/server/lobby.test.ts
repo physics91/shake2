@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import { TICK_RATE } from "../sim/constants.ts";
 import { msvcRand } from "../sim/rng.ts";
 import { layoutFromAscii, VERSUS } from "../sim/testing.ts";
+import { Dir } from "../sim/types.ts";
 import type { MatchRecord } from "./accounts.ts";
 import { FriendBook } from "./friends.ts";
 import type { LobbyConfig } from "./lobby.ts";
 import { Lobby, PASSWORD_FAILURES_KEPT_MS, PASSWORD_RETRY_MAX_MS, PASSWORD_RETRY_MS } from "./lobby.ts";
 import type { OwnAccount, RoomInfo, ServerMessage, UserCard } from "./protocol.ts";
-import { START_BARS, TYPING_PACKET_MS, typingPacketDue, userCard } from "./protocol.ts";
+import { parseClientMessage, START_BARS, TYPING_PACKET_MS, typingPacketDue, userCard } from "./protocol.ts";
 import { LEAVE_PENALTY } from "./results.ts";
 import { PING_ECHO_MS } from "./room.ts";
 
@@ -298,6 +299,46 @@ describe("Lobby", () => {
     t.lobby.tick();
 
     expect(t.last(1, "snapshot")?.state.bombs).toHaveLength(1);
+  });
+
+  it("does not apply a countdown key after help paused the poll, and resumes with the current keys", () => {
+    const t = startTwoPlayerMatch();
+    for (let i = 0; i < TICK_RATE; i++) t.lobby.tick();
+    const me = () => t.last(1, "snapshot")!.state.players.find((p) => p.id === 1)!;
+    const { x, y, dir, anim } = me();
+    t.lobby.handle(1, { type: "input", dir: Dir.Up, bomb: false, attack: false, evade: false });
+    t.lobby.handle(1, parseClientMessage(JSON.stringify({ type: "input", dir: Dir.Up, bomb: false, paused: true }))!);
+    for (let i = 0; i < TO_PLAY; i++) t.lobby.tick();
+    expect(t.last(1, "snapshot")?.state.phase).toBe("playing");
+    expect(me()).toMatchObject({ x, y, dir, anim });
+    expect(t.last(2, "snapshot")?.typing).toEqual([]);
+
+    t.lobby.handle(1, parseClientMessage(JSON.stringify({ type: "input", dir: Dir.Right, bomb: false, paused: false }))!);
+    t.lobby.tick();
+    expect(me().x).toBeGreaterThan(x);
+  });
+
+  it("keeps a walk going under a paused poll but reads no new bomb or released direction", () => {
+    const t = startTwoPlayerMatch();
+    for (let i = 0; i < TO_PLAY; i++) t.lobby.tick();
+    const me = () => t.last(1, "snapshot")!.state.players.find((p) => p.id === 1)!;
+    t.lobby.handle(1, { type: "input", dir: Dir.Right, bomb: false, attack: false, evade: false });
+    t.lobby.tick();
+    const x = me().x;
+    t.lobby.handle(1, parseClientMessage(JSON.stringify({ type: "input", dir: null, bomb: true, paused: true }))!);
+    for (let i = 0; i < 10; i++) t.lobby.tick();
+    expect(me().x).toBeGreaterThan(x);
+    expect(t.last(1, "snapshot")?.state.bombs).toEqual([]);
+    expect(t.last(2, "snapshot")?.typing).toEqual([]);
+  });
+
+  it("drops a bomb tapped under help even if the poll resumes before the next server tick", () => {
+    const t = startTwoPlayerMatch();
+    for (let i = 0; i < TO_PLAY; i++) t.lobby.tick();
+    t.lobby.handle(1, parseClientMessage(JSON.stringify({ type: "input", dir: null, bomb: true, paused: true }))!);
+    t.lobby.handle(1, parseClientMessage(JSON.stringify({ type: "input", dir: null, bomb: false, paused: false }))!);
+    t.lobby.tick();
+    expect(t.last(1, "snapshot")?.state.bombs).toEqual([]);
   });
 
   it("plays a round to the end: a player caught by their own bomb hands the medal to the other", () => {
@@ -1334,5 +1375,44 @@ describe("chat commands", () => {
     m.lobby.handle(1, { type: "kick", slot: 1 });
     expect(m.last(1, "kick")?.ok).toBe(false);
     expect(m.room(2)?.code).toBe("ABCD");
+  });
+});
+
+describe("room reply kinds", () => {
+  it("broadcasts both identical slot replies to every member", () => {
+    const t = hostAndGuestOf(makeLobby());
+    t.lobby.handle(1, { type: "set-slot", slot: 2, open: false });
+    const first = structuredClone(t.last(1, "room")!);
+    t.lobby.handle(1, { type: "set-slot", slot: 2, open: false });
+    for (const id of [1, 2]) {
+      expect(t.last(id, "room")).toHaveProperty("change", "slot");
+      expect(t.last(id, "room")!.room).toEqual(first.room);
+      const replies = t.inbox.get(id)!.filter((m) => m.type === "room").slice(-2);
+      expect(replies).toHaveLength(2);
+      for (const reply of replies) expect(reply).toHaveProperty("change", "slot");
+    }
+  });
+
+  it("broadcasts the reply kind when the chosen team is already selected", () => {
+    const t = hostAndGuestOf(makeLobby());
+    t.lobby.handle(1, { type: "set-mode", mode: 1 });
+    const before = structuredClone(t.room(2));
+    t.lobby.handle(2, { type: "set-team", team: 2 });
+    for (const id of [1, 2]) {
+      expect(t.last(id, "room")).toHaveProperty("change", "team");
+      expect(t.room(id)).toEqual(before);
+    }
+  });
+
+  it("identifies ordinary ready, mode, map and music updates", () => {
+    const t = hostAndGuestOf(makeLobby());
+    const actions = [
+      { type: "set-ready", ready: true }, { type: "set-mode", mode: 1 },
+      { type: "set-map", mapId: "other" }, { type: "set-music", music: 1 },
+    ] as const;
+    for (const action of actions) {
+      t.lobby.handle(action.type === "set-ready" ? 2 : 1, action);
+      for (const id of [1, 2]) expect(t.last(id, "room")).toHaveProperty("change", "other");
+    }
   });
 });

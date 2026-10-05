@@ -1,11 +1,11 @@
 import { randomBytes, randomInt } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import type { IncomingMessage, RequestListener, Server as HttpServer } from "node:http";
 import { createServer as createTlsServer } from "node:https";
 import type { Server as HttpsServer } from "node:https";
 import type { AddressInfo, Socket } from "node:net";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { WebSocket } from "ws";
 import { WebSocketServer } from "ws";
@@ -212,8 +212,33 @@ function randomRoomCode(): string {
   return Array.from({ length: ROOM_CODE_LENGTH }, () => ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)]).join("");
 }
 
+/** Resolve existing links in a storage path, including parents of a file not created yet. */
+function canonicalStorePath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) throw error;
+    return join(canonicalStorePath(parent), basename(path));
+  }
+}
+
+function checkStoreFiles(accountsFile?: string, friendsFile?: string): void {
+  if (!accountsFile || !friendsFile) return;
+  const accounts = canonicalStorePath(accountsFile), friends = canonicalStorePath(friendsFile);
+  let shared = accounts === friends;
+  if (!shared && existsSync(accounts) && existsSync(friends)) {
+    const a = statSync(accounts, { bigint: true }), f = statSync(friends, { bigint: true });
+    shared = a.dev === f.dev && a.ino === f.ino;
+  }
+  if (shared) throw new Error("ACCOUNTS_FILE and FRIENDS_FILE must use different files");
+}
+
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const log = options.log ?? (() => undefined);
+  // Check before either book can move an incompatible file aside or schedule a save over it.
+  checkStoreFiles(options.accountsFile, options.friendsFile);
   const { maps, music, characters } = loadPlayableMaps(options.assetsDir);
   const friendFile = options.friendsFile ? openFriendFile(options.friendsFile, log) : null;
   const friends = friendFile?.book ?? new FriendBook();
@@ -224,7 +249,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   };
   const accountFile = options.accountsFile ? openAccountFile(options.accountsFile, defaults, log) : null;
   const accounts = accountFile?.book ?? new AccountBook(undefined, defaults);
-  // Set by close(): a match the shutdown cuts short is nobody's leave (LEAVE_PENALTY) and nobody's win.
+  // Shutdown keeps earned candy; a match it cuts short is nobody's leave or win.
   let closing = false;
   const specs = options.channels?.length ? options.channels : [{ name: DEFAULT_CHANNEL, colour: DEFAULT_COLOUR }];
   const channels: Channel[] = specs.map((spec) => ({
@@ -241,7 +266,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       friends,
       saveCharacter: (name, choice) => accounts.update(name, choice),
       recordMatch: (name, record) => {
-        if (!closing) accounts.recordMatch(name, record);
+        if (closing) {
+          if (record.candy > 0) accounts.recordMatch(name, { cell: 0, won: false, lost: false, candy: record.candy });
+        } else {
+          accounts.recordMatch(name, record);
+        }
       },
       badgeOf: (name) => {
         const account = accounts.get(name);

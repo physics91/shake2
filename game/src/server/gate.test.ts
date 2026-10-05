@@ -305,12 +305,12 @@ describe("the gate's game servers (C->S 0x47 and 0x0a)", () => {
   it("gives each row's load as its users over its capacity (S->C 0x4c)", async () => {
     const t = await makeGate(["tester", "other"], [{ maxUsers: 4 }]);
     t.connect(1);
-    t.gate.handle(1, { type: "server-info", channel: 0 });
-    expect(t.last(1, "server-info")).toEqual({ type: "server-info", channel: 0, name: "채널0", load: 0 });
+    t.gate.handle(1, { type: "server-info", channel: 0, requestId: 1 });
+    expect(t.last(1, "server-info")).toEqual({ type: "server-info", channel: 0, name: "채널0", load: 0, requestId: 1 });
     await t.enter(1, "tester");
-    t.gate.handle(1, { type: "server-info", channel: 0 });
-    expect(t.last(1, "server-info")?.load).toBe(25);
-    t.gate.handle(1, { type: "server-info", channel: 3 });
+    t.gate.handle(1, { type: "server-info", channel: 0, requestId: 2 });
+    expect(t.last(1, "server-info")).toMatchObject({ load: 25, requestId: 2 });
+    t.gate.handle(1, { type: "server-info", channel: 3, requestId: 3 });
     expect(t.all(1, "server-info")).toHaveLength(2);
   });
 
@@ -430,32 +430,33 @@ describe("the gate's saves over the auth connection (scene 5)", () => {
     const t = await makeGate([...ids, "tester"]);
     ids.forEach((id, i) => t.accounts.update(id, { cell: 1000 - 10 * i, wins: i + 1, guild: i === 0 ? 7 : -1 }));
     t.connect(1);
-    t.gate.handle(1, { type: "ranking", page: 1 });
+    t.gate.handle(1, { type: "ranking", page: 1, requestId: 10 });
     expect(t.last(1, "ranking")).toBeUndefined();
 
     await t.login(1, "tester");
-    t.gate.handle(1, { type: "ranking", page: 1 });
+    t.gate.handle(1, { type: "ranking", page: 1, requestId: 10 });
     const first = t.last(1, "ranking");
     expect(first?.page).toBe(1);
+    expect(first?.requestId).toBe(10);
     expect(first?.rows).toHaveLength(RANKING_PAGE_ROWS);
     expect(first?.rows[0]).toEqual({ rank: 1, id: "ranka", cell: 1000, wins: 1, level: 1, guild: 7, gender: 0 });
     expect(first?.rows[14]).toMatchObject({ rank: 15, id: "ranko", level: levelFor(15, ids.length) });
-    t.gate.handle(1, { type: "ranking", page: 2 });
+    t.gate.handle(1, { type: "ranking", page: 2, requestId: 11 });
     expect(t.last(1, "ranking")?.rows.map((row) => [row.rank, row.id])).toEqual([[16, "rankp"], [17, "rankq"]]);
     // Past the last page no rows come; "tester" has no match and is on none.
-    t.gate.handle(1, { type: "ranking", page: 3 });
-    expect(t.last(1, "ranking")).toEqual({ type: "ranking", page: 3, rows: [] });
+    t.gate.handle(1, { type: "ranking", page: 3, requestId: 12 });
+    expect(t.last(1, "ranking")).toEqual({ type: "ranking", page: 3, rows: [], requestId: 12 });
 
-    t.gate.handle(1, { type: "ranking-search", id: "RANKQ" });
-    expect(t.last(1, "ranking-search")).toMatchObject({ page: 2, rows: [{ rank: 16 }, { rank: 17 }] });
+    t.gate.handle(1, { type: "ranking-search", id: "RANKQ", requestId: 13 });
+    expect(t.last(1, "ranking-search")).toMatchObject({ page: 2, rows: [{ rank: 16 }, { rank: 17 }], requestId: 13 });
     for (const id of ["tester", "nobody"]) {
-      t.gate.handle(1, { type: "ranking-search", id });
-      expect(t.last(1, "ranking-search")).toEqual({ type: "ranking-search", page: null, rows: [] });
+      t.gate.handle(1, { type: "ranking-search", id, requestId: 14 });
+      expect(t.last(1, "ranking-search")).toEqual({ type: "ranking-search", page: null, rows: [], requestId: 14 });
     }
 
     t.connect(2, "203.0.113.2");
     await t.enter(2, "ranka");
-    t.gate.handle(2, { type: "ranking", page: 1 });
+    t.gate.handle(2, { type: "ranking", page: 1, requestId: 10 });
     expect(t.last(2, "ranking")?.rows).toHaveLength(RANKING_PAGE_ROWS);
   });
 

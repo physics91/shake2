@@ -93,7 +93,8 @@ export class KeyState {
   private tapped = new Set<string>();
 
   press(code: string): void {
-    if (!this.held.includes(code)) this.held.push(code);
+    if (this.held.includes(code)) return;
+    this.held.push(code);
     this.tapped.add(code);
   }
 
@@ -124,6 +125,11 @@ export class KeyState {
   }
 }
 
+/** Enter and Space activate an assistive button instead of the game's keys. */
+export function isButtonActivation(event: KeyboardEvent): boolean {
+  return event.target instanceof HTMLElement && event.target.tagName === "BUTTON" && (event.code === "Space" || event.key === "Enter");
+}
+
 /**
  * Feed window keyboard events into `keys`; `onChange` runs after each bound key change. Returns a
  * detach function. Keys typed into a text field are left to it, except in one marked
@@ -132,13 +138,14 @@ export class KeyState {
  */
 export function attachKeyboard(keys: KeyState, bound: ReadonlySet<string>, onChange?: () => void): () => void {
   const down = (event: KeyboardEvent) => {
-    if (!bound.has(event.code)) return;
+    if (!bound.has(event.code) || isButtonActivation(event)) return;
     if (isTextField(event.target)) {
       if (!(event.target as HTMLElement).hasAttribute("data-direct-input")) return;
     } else {
       event.preventDefault();
     }
-    if (event.repeat) return;
+    // Loading or a blur can hide the initial press; a repeat still says the key is down.
+    // KeyState ignores presses it already holds, so repeats cannot create extra action taps.
     keys.press(event.code);
     onChange?.();
   };
@@ -159,6 +166,19 @@ export function attachKeyboard(keys: KeyState, bound: ReadonlySet<string>, onCha
     window.removeEventListener("keyup", up);
     window.removeEventListener("blur", blur);
   };
+}
+
+/** Keep keys held through an asset load; completed taps expire before the game's first poll. */
+export async function readKeysWhileLoading<T>(keys: KeyState, bound: ReadonlySet<string>, load: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const detach = signal?.aborted ? () => undefined : attachKeyboard(keys, bound);
+  signal?.addEventListener("abort", detach, { once: true });
+  try {
+    return await load();
+  } finally {
+    signal?.removeEventListener("abort", detach);
+    detach();
+    keys.endTick();
+  }
 }
 
 function isTextField(target: EventTarget | null): boolean {

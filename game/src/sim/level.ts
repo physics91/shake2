@@ -25,7 +25,9 @@ export function layoutFromLevel(id: string, source: LevelSource): LevelLayout {
   const { width, height, cell_width, cell_height } = source.grid;
   const kinds = source.cells.kind.flat().map(toCellKind);
   const breakAnims: (BreakAnim | null)[] = kinds.map(() => null);
-  for (const brick of source.bricks) breakAnims[brick.cell] = brickBreak(source.sprites[brick.sprite] ?? "");
+  // 0x462560 combines the images but reads animation metadata from the first sheet only.
+  const breakAnim = brickBreak(source.sprites[0] ?? "");
+  for (const brick of source.bricks) breakAnims[brick.cell] = breakAnim;
   return {
     id,
     width,

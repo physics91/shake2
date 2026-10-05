@@ -7,7 +7,7 @@ import type { Sheet } from "./assets.ts";
 import { loadSheet } from "./assets.ts";
 import type { SoundBank } from "./audio.ts";
 import { mapTitle } from "./menu.ts";
-import { PanelFaces, renderField, SCREEN_H, SCREEN_W } from "./renderer.ts";
+import { BadStateAnimation, MarkerAnimations, PanelFaces, renderField, SCREEN_H, SCREEN_W } from "./renderer.ts";
 import type { SceneAssets } from "./scene.ts";
 import { loadSceneAssets } from "./scene.ts";
 import { drawFrame, loopingFrame } from "./sprite.ts";
@@ -29,6 +29,8 @@ export function mountViewer(manifest: Manifest, sounds: SoundBank): () => void {
   const soundPanel = h("section", { class: "viewer-panel", "aria-label": "효과음" });
   const panels = { sprite: spritePanel, map: mapPanel, sound: soundPanel } as const;
   type Tab = keyof typeof panels;
+  let currentTab: Tab = "sprite";
+  const statuses: Record<Tab, string> = { sprite: "", map: "", sound: "" };
   const tabButtons = (Object.keys(panels) as Tab[]).map((tab) =>
     h(
       "button",
@@ -38,11 +40,18 @@ export function mountViewer(manifest: Manifest, sounds: SoundBank): () => void {
   );
 
   function showTab(tab: Tab): void {
+    currentTab = tab;
+    status.textContent = statuses[tab];
     writePreference("viewer.tab", tab);
     (Object.keys(panels) as Tab[]).forEach((key, i) => {
       panels[key].hidden = key !== tab;
       tabButtons[i].setAttribute("aria-pressed", String(key === tab));
     });
+  }
+
+  function showStatus(tab: Tab, text: string): void {
+    statuses[tab] = text;
+    if (currentTab === tab) status.textContent = text;
   }
 
   // Sprites
@@ -91,11 +100,11 @@ export function mountViewer(manifest: Manifest, sounds: SoundBank): () => void {
     for (const paint of sheetPainters) painters.delete(paint);
     sheetPainters.clear();
     animGrid.replaceChildren();
-    status.textContent = `${dir}/${name} 불러오는 중…`;
+    showStatus("sprite", `${dir}/${name} 불러오는 중…`);
     try {
       const sheet = await loadSheet(dir, name);
       if (disposed || request !== sheetRequest) return;
-      status.textContent = "";
+      showStatus("sprite", "");
       const meta = sheet.meta;
       sheetInfo.textContent = `${meta.source} · ${meta.width}×${meta.height} · 애니메이션 ${meta.animations.length}개 · 시트 이름 "${meta.name}"`;
       meta.animations.forEach((anim, index) => animGrid.append(animationCard(sheet, anim, index)));
@@ -103,7 +112,8 @@ export function mountViewer(manifest: Manifest, sounds: SoundBank): () => void {
       image.alt = `${name} 스프라이트 시트 원본`;
       sheetImage.replaceChildren(image);
     } catch (error) {
-      status.textContent = `불러오기 실패: ${(error as Error).message}`;
+      if (disposed || request !== sheetRequest) return;
+      showStatus("sprite", `불러오기 실패: ${(error as Error).message}`);
     }
   }
 
@@ -169,17 +179,17 @@ export function mountViewer(manifest: Manifest, sounds: SoundBank): () => void {
     const id = mapSelect.value;
     writePreference("viewer.map", id);
     if (mapPainter) painters.delete(mapPainter);
-    status.textContent = `${id} 불러오는 중…`;
+    showStatus("map", `${id} 불러오는 중…`);
     try {
       const assets = await loadSceneAssets(id, []);
       if (disposed || request !== mapRequest) return;
-      status.textContent = "";
+      showStatus("map", "");
       const meta = assets.level.meta;
       const { grid } = meta;
       mapInfo.textContent = `${meta.title} · 격자 ${grid.width}×${grid.height} (칸 ${grid.cell_width}×${grid.cell_height}) · 최대 ${meta.max_players}인 · 배경 ${meta.background_image} · 오브젝트 ${meta.objects.length}개`;
       const rules = { practice: id === PRACTICE_MAP, roundSeconds: ROUND_SECONDS, medalsToWin: 1, mode: 0 as const };
       const state = createMatch(layoutFromLevel(id, meta), [], rules, 1);
-      const view = { localPlayerIds: [], hostId: null, hurryTick: null, lastRoundDraw: false, faces: new PanelFaces() };
+      const view = { localPlayerIds: [], hostId: null, hurryTick: null, lastRoundDraw: false, faces: new PanelFaces(), markers: new MarkerAnimations(), badState: new BadStateAnimation() };
       const ctx = mapCanvas.getContext("2d");
       if (!ctx) return;
       mapPainter = (tick) => {
@@ -189,7 +199,8 @@ export function mountViewer(manifest: Manifest, sounds: SoundBank): () => void {
       };
       painters.add(mapPainter);
     } catch (error) {
-      status.textContent = `불러오기 실패: ${(error as Error).message}`;
+      if (disposed || request !== mapRequest) return;
+      showStatus("map", `불러오기 실패: ${(error as Error).message}`);
     }
   }
 

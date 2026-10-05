@@ -39,6 +39,11 @@ const centre = { x: 0, y: 0 };
  */
 export function blindWindowAt(x: number, y: number, help: boolean): BlindWindow {
   if (!help) Object.assign(centre, { x, y });
+  return currentBlindWindow();
+}
+
+/** The present uses the centre saved by the background pass, even if this tick first blinds. */
+export function currentBlindWindow(): BlindWindow {
   return blindWindow(centre.x, centre.y);
 }
 

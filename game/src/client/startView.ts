@@ -6,6 +6,7 @@ import { cutBytes, typeable } from "../server/cp949.ts";
 import type { OwnAccount } from "../server/protocol.ts";
 import { SCREEN_H, SCREEN_W } from "./hudLayout.ts";
 import type { RankingAccess } from "./ranking.ts";
+import type { CursorAnim } from "./screenKit.ts";
 import { settings, sounds } from "./shell.ts";
 import type { CheckKind } from "./signUpLayout.ts";
 import type { LoginSent, ServerList, ServerRow, SignUpCommand, StartScene, StatusCommand } from "./startScreen.ts";
@@ -21,6 +22,8 @@ export interface StartActions {
   account(): OwnAccount | null;
   /** The auth connection, made at the login and again when its message box closes. */
   authConnect(): void;
+  /** The hidden server setting was committed: the previous server's session must go. */
+  serverChanged(): void;
   /** The canvas login's OK. */
   login(id: string, password: string): LoginSent;
   /** Scene 5's Go game: the server list's rows. */
@@ -53,6 +56,7 @@ export interface StartActions {
 
 export interface StartViewOptions {
   manifest: Manifest;
+  cursor?: CursorAnim;
   list: ServerList;
   status: StatusState;
   begin: StartScene;
@@ -148,6 +152,7 @@ export class StartView {
       });
     }
     this.serverInput = h("input", { id: "online-server", value: readPreference("online.server") ?? defaultServerUrl() });
+    this.serverInput.addEventListener("change", () => actions.serverChanged());
     const enter = (event: Event) => {
       event.preventDefault();
       if (!this.screen?.takesForm) return;
@@ -166,7 +171,7 @@ export class StartView {
       h(
         "p",
         { class: "keys" },
-        "로그인: 아이디를 넣고 Enter, 비밀번호를 넣고 Enter. Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 가입은 아래 회원가입 창 버튼으로 창을 열고 Tab으로 칸을 옮겨 넣은 뒤 동의함과 가입하기. 인증 서버에 닿지 않으면 로그인 없이 내 정보 화면으로 가서 연습과 2인 대전만 할 수 있습니다. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
+        "로그인: 아이디를 넣고 Enter, 비밀번호를 넣고 Enter. Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 가입은 아래 회원가입 창 버튼으로 창을 열고 Tab으로 칸을 옮겨 넣은 뒤 동의함과 가입하기. 인증 서버에 닿지 않으면 로그인 없이 내 정보 화면으로 가서 연습과 2인 대전만 할 수 있습니다. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. 목록은 한 쪽에 40줄이며, 더 있으면 서버 리플레시로 닫았다 열거나 아래 다음 서버 목록 버튼으로 다음 쪽. 마지막 쪽 뒤는 첫 쪽. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
       ),
       h(
         "div",
@@ -206,7 +211,8 @@ export class StartView {
         h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "로그인하고 첫 서버 로비 입장")),
       ),
       // The row's double click, dropped where the canvas drops it.
-      h("button", { class: "btn", type: "button", onclick: () => this.screen?.takesRowClicks && actions.local() }, "2인 대전 (한 키보드, 서버 목록의 둘째 줄)"),
+      h("button", { class: "btn", type: "button", onclick: () => this.screen?.takesRowClicks && actions.local() }, "2인 대전 (한 키보드, 서버 목록의 마지막 줄)"),
+      h("button", { class: "btn", type: "button", onclick: () => this.screen?.nextServerPage() }, "다음 서버 목록 (서버 리플레시 두 번)"),
       h(
         "details",
         {},
@@ -223,6 +229,7 @@ export class StartView {
         if (this.disposed) return;
         const screen = new StartScreen({
           canvas: this.canvas,
+          cursor: options.cursor,
           stage: this.stage,
           assets,
           sounds,
@@ -260,6 +267,7 @@ export class StartView {
       },
       (error: Error) => {
         this.loading.textContent = `시작 화면 그림을 불러오지 못했습니다: ${error.message}`;
+        this.loading.classList.add("asset-error");
       },
     );
   }
@@ -277,6 +285,14 @@ export class StartView {
   authFailed(): void {
     this.errorLine.textContent = "인증 서버에 접속하지 못했습니다. 로그인 없이 연습과 2인 대전만 할 수 있습니다.";
     this.withScreen((screen) => screen.authFailed());
+  }
+
+  /** Keep the form and its focus targets while a changed server returns the canvas to login. */
+  resetLogin(): void {
+    this.passwordInput.value = "";
+    this.errorLine.textContent = "";
+    this.pending = [];
+    this.withScreen((screen) => screen.resetLogin(this.nameInput.value));
   }
 
   loggedIn(account: OwnAccount): void {
@@ -309,6 +325,10 @@ export class StartView {
   /** A connection from the page's form: the busy cursor. */
   connecting(): void {
     this.withScreen((screen) => screen.connecting());
+  }
+
+  connected(): void {
+    this.withScreen((screen) => screen.connected());
   }
 
   formFailed(): void {

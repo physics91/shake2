@@ -93,6 +93,11 @@ export class RankingWindow {
     return element === this.idLine.element;
   }
 
+  /** MSGBOX blocks the popup's editor-to-record copy (0x460568). */
+  deferChanges(defer: boolean): void {
+    this.idLine.deferChanges(defer);
+  }
+
   /** The page may have taken the focus from the popup's editor: it goes back there. */
   focusEditor(): void {
     if (this.popup) this.idLine.focus();

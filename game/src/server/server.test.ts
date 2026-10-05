@@ -1,14 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket as WsClient } from "ws";
 
+import * as level from "../sim/level.ts";
+import { layoutFromAscii } from "../sim/testing.ts";
+import { Dir } from "../sim/types.ts";
 import { openAccountFile } from "./accountFile.ts";
+import { parseAccountData } from "./accounts.ts";
+import { openFriendFile } from "./friendFile.ts";
 import type { ServerMessage } from "./protocol.ts";
 import { PROTOCOL_VERSION } from "./protocol.ts";
 import type { RunningServer } from "./server.ts";
@@ -194,6 +199,186 @@ describe("startupWarning", () => {
   });
 });
 
+describe.skipIf(!HAS_ASSETS)("account and friend storage paths", () => {
+  async function refusesSharedFile(accountsFile: string, friendsFile: string, dir: string) {
+    const files = readdirSync(dir).sort();
+    const before = existsSync(accountsFile) ? readFileSync(accountsFile, "utf8") : null;
+    let server: RunningServer | undefined, error: unknown;
+    try {
+      server = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5, accountsFile, friendsFile });
+    } catch (caught) {
+      error = caught;
+    } finally {
+      await server?.close();
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("ACCOUNTS_FILE and FRIENDS_FILE must use different files");
+    expect(readdirSync(dir).sort()).toEqual(files);
+    if (before === null) {
+      expect(existsSync(accountsFile)).toBe(false);
+      expect(existsSync(friendsFile)).toBe(false);
+    } else {
+      expect(readFileSync(accountsFile, "utf8")).toBe(before);
+      expect(readFileSync(friendsFile, "utf8")).toBe(before);
+    }
+  }
+
+  it.each(["same path", "relative path", "directory symlink", "file symlink", "hard link"])(
+    "refuses a %s collision without moving a working account file",
+    async (alias) => {
+      const path = await accountsFileWith(["tester"]), dir = dirname(path);
+      let other = path;
+      if (alias === "relative path") other = relative(process.cwd(), path);
+      else if (alias === "directory symlink") {
+        const linked = join(dir, "alias");
+        symlinkSync(dir, linked, "dir");
+        other = join(linked, "accounts.json");
+      } else if (alias === "file symlink" || alias === "hard link") {
+        other = join(dir, "alias.json");
+        if (alias === "file symlink") symlinkSync(path, other);
+        else linkSync(path, other);
+      }
+      await refusesSharedFile(path, other, dir);
+    },
+  );
+
+  it("refuses the shared path without moving a working friend list", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shake2-server-stores-"));
+    folders.push(dir);
+    const path = join(dir, "friends.json"), file = openFriendFile(path);
+    file.book.meet("tester");
+    file.book.meet("friend");
+    file.book.add("tester", "friend");
+    file.flush();
+    await refusesSharedFile(path, path, dir);
+  });
+
+  it("refuses a directory alias even before its storage folders and file exist", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shake2-server-stores-"));
+    folders.push(dir);
+    const linked = join(dir, "alias");
+    symlinkSync(dir, linked, "dir");
+    await refusesSharedFile(join(dir, "pending", "state.json"), join(linked, "pending", "state.json"), dir);
+  });
+
+  it.each([false, true])("keeps and saves both books at separate paths (new folders: %s)", async (newFolders) => {
+    const accountsFile = newFolders
+      ? join(mkdtempSync(join(tmpdir(), "shake2-server-stores-")), "accounts", "state.json")
+      : await accountsFileWith(["tester", "bravo"]);
+    const dir = newFolders ? dirname(dirname(accountsFile)) : dirname(accountsFile);
+    if (newFolders) folders.push(dir);
+    const friendsFile = newFolders ? join(dir, "friends", "state.json") : join(dir, "friends.json");
+    if (!newFolders) {
+      const file = openFriendFile(friendsFile);
+      file.book.meet("tester");
+      file.book.meet("bravo");
+      file.book.add("tester", "bravo");
+      file.flush();
+    }
+    const accountsBefore = newFolders ? [] : JSON.parse(readFileSync(accountsFile, "utf8")).accounts;
+    const server = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5, accountsFile, friendsFile });
+    try {
+      const client = new Client(`ws://127.0.0.1:${server.port}/ws`);
+      await client.opened();
+      client.send({ type: "register", id: "fresh1", nick: "fresh1", password: PASSWORD });
+      expect(await client.waitFor(isType("registered"))).toEqual({ type: "registered", rcode: 0 });
+      await enter(client, "fresh1");
+    } finally {
+      await server.close();
+    }
+    const accounts = JSON.parse(readFileSync(accountsFile, "utf8")).accounts;
+    expect(accounts.filter((a: { id: string }) => a.id !== "fresh1")).toEqual(accountsBefore);
+    expect(accounts.some((a: { id: string }) => a.id === "fresh1")).toBe(true);
+    const friends = JSON.parse(readFileSync(friendsFile, "utf8"));
+    expect(friends.known).toEqual(newFolders ? ["fresh1"] : ["tester", "bravo", "fresh1"]);
+    expect(friends.lists).toEqual(newFolders ? {} : { tester: ["bravo"] });
+  });
+});
+
+describe.skipIf(!HAS_ASSETS)("room server shutdown", () => {
+  it("keeps candy picked up before shutdown without adding points or wins and losses", async () => {
+    const accountsFile = await accountsFileWith(["alpha", "bravo"]);
+    const layout = layoutFromAscii(["1B", ".2"]);
+    const layoutSpy = vi.spyOn(level, "layoutFromLevel").mockReturnValue(layout);
+    let now = 21_000;
+    let elapsed = 0;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const performanceSpy = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+    const schedule = globalThis.setInterval;
+    let advance: (() => void) | undefined;
+    const intervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+      if (delay === 4) {
+        advance = () => callback(...args);
+        return schedule(() => undefined, 86_400_000);
+      }
+      return schedule(callback, delay, ...args);
+    });
+    let own: RunningServer | undefined;
+    try {
+      own = await startServer({ host: "127.0.0.1", port: 0, assetsDir: ASSETS, allowedOrigins: [], maxRooms: 5, accountsFile });
+      const transport = new WsClient(`ws://127.0.0.1:${own.port}/ws`);
+      const a = new Client(transport);
+      const b = new Client(`ws://127.0.0.1:${own.port}/ws`);
+      await Promise.all([a.opened(), b.opened()]);
+      const [welcomeA] = await Promise.all([enter(a, "alpha"), enter(b, "bravo")]);
+
+      a.send({ type: "set-character", character: "shaky", hue: 0, useId: true });
+      await a.waitFor(isType("profile"));
+      a.send({ type: "create-room", title: "Candy" });
+      const created = await a.waitFor((m): m is Extract<ServerMessage, { type: "room" }> => m.type === "room" && m.room !== null);
+      b.send({ type: "join-room", code: created.room!.code });
+      await b.waitFor(isType("room"));
+      b.send({ type: "set-ready", ready: true });
+      await a.waitFor((m): m is Extract<ServerMessage, { type: "room" }> => m.type === "room" && m.room?.players.some((p) => p.id !== welcomeA.playerId && p.ready) === true);
+      a.send({ type: "start" });
+      await a.waitFor(isType("snapshot"));
+
+      let tick = 0;
+      const run = async (count: number, dir: Dir | null = null, bomb = false) => {
+        a.send({ type: "input", dir, bomb });
+        await new Promise<void>((resolve) => {
+          transport.once("pong", () => resolve());
+          transport.ping();
+        });
+        for (let i = 0; i < count; i++) {
+          now = 21_000 + Math.floor(tick * 1000 / 30);
+          elapsed += 1000 / 30 + 1e-7;
+          advance!();
+          tick++;
+          await a.waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> => m.type === "snapshot" && m.state.tick === tick);
+        }
+      };
+
+      await run(150);
+      await run(1, null, true);
+      await run(4, Dir.Down);
+      await run(6, Dir.Right);
+      await run(75);
+      await run(4, Dir.Up);
+
+      const picked = await a.waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> => m.type === "snapshot" && m.events.some((e) => e.type === "item-picked" && e.kind === 39));
+      expect(picked.state.phase).toBe("playing");
+      expect(picked.state.players.find((p) => p.id === welcomeA.playerId)?.candy).toBe(1);
+
+      await own.close();
+      own = undefined;
+      const saved = parseAccountData(readFileSync(accountsFile, "utf8"));
+      const counters = saved?.accounts.map(({ id, candy, cell, wins, losses }) => ({ id, candy, cell, wins, losses }));
+      counters?.sort((a, b) => a.id.localeCompare(b.id));
+      expect(counters).toEqual([
+        { id: "alpha", candy: 1, cell: 0, wins: 0, losses: 0 },
+        { id: "bravo", candy: 0, cell: 0, wins: 0, losses: 0 },
+      ]);
+    } finally {
+      await own?.close();
+      intervalSpy.mockRestore();
+      performanceSpy.mockRestore();
+      dateSpy.mockRestore();
+      layoutSpy.mockRestore();
+    }
+  }, 20_000);
+});
+
 describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
   let server: RunningServer;
   let url: string;
@@ -269,8 +454,8 @@ describe.skipIf(!HAS_ASSETS)("room server over WebSocket", () => {
     expect(login?.channels).toEqual([{ name: "복원판 채널", colour: "#ffffff" }]);
     expect(login?.token).toMatch(/^[\w-]{43}$/);
 
-    again.send({ type: "server-info", channel: 0 });
-    expect(await again.waitFor(isType("server-info"))).toEqual({ type: "server-info", channel: 0, name: "복원판 채널", load: 0 });
+    again.send({ type: "server-info", channel: 0, requestId: 1 });
+    expect(await again.waitFor(isType("server-info"))).toEqual({ type: "server-info", channel: 0, name: "복원판 채널", load: 0, requestId: 1 });
     again.send({ type: "login", id: "TWICE", password: PASSWORD });
     const second = await again.waitFor(isLoginOk);
     again.send({ type: "version", version: PROTOCOL_VERSION, channel: 0 });
@@ -357,7 +542,7 @@ describe.skipIf(!HAS_ASSETS)("a full channel", () => {
       const other = new Client(url);
       await other.opened();
       expect((await enter(other, "second", 1)).account.id).toBe("second");
-      other.send({ type: "server-info", channel: 0 });
+      other.send({ type: "server-info", channel: 0, requestId: 1 });
       expect((await other.waitFor(isType("server-info"))).load).toBe(100);
       first.socket.close();
       other.socket.close();
@@ -483,7 +668,7 @@ describe.skipIf(!HAS_ASSETS)("shutting down", () => {
     await client.opened();
     client.send({ type: "register", id: "fresh1", nick: "fresh1", password: "pass1234" });
     // A socket's messages are taken in order and the hash starts at once: with this answer back, it runs.
-    client.send({ type: "server-info", channel: 0 });
+    client.send({ type: "server-info", channel: 0, requestId: 1 });
     await client.waitFor((m): m is ServerMessage => m.type === "server-info");
 
     await server.close();

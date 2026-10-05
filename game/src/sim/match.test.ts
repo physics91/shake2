@@ -187,6 +187,7 @@ describe("round end", () => {
   it("awards the survivor once the loser's death animation ends, then resets for the next round", () => {
     const state = createMatch(layoutFromAscii(ARENA), setups(2), VERSUS, 1);
     run(state, TO_PLAY);
+    run(state, 1); // Establish the live body clock before starting this death.
     state.grid[7] = CellKind.Empty;
     state.players[0].firePower = 5;
     burnPlayers(state, [2]);
@@ -229,8 +230,9 @@ describe("round end", () => {
       const state = createMatch(layoutFromAscii(ARENA), cast(["doomsy", "rookie"]), { ...VERSUS, mode }, 1);
       const [p1, p2] = state.players;
       run(state, TO_PLAY);
-      killNow(state, 1);
       run(state, 1);
+      killNow(state, 1);
+      // Kill both before the next standing-frame update changes the second body's clock.
       killNow(state, 2);
       runUntil(state, () => state.phase !== "playing");
       expect([p1.gone, p2.gone]).toEqual([false, true]);
@@ -271,7 +273,7 @@ describe("round end", () => {
     step(state, { 1: space });
     expect(p1.actionLatch).toBe(true);
     killNow(state, 1, { 1: space });
-    run(state, 1, { 1: space });
+    // The shorter death must start before the next standing frame, as in the case above.
     killNow(state, 2, { 1: space });
     runUntil(state, () => state.phase !== "playing", 1000, { 1: space });
     expect(p1.gone).toBe(false);

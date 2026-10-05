@@ -9,20 +9,20 @@ import { BUBBLE_MS, CaretBlink, gameRecall, keepRecall, trimChat } from "./chat.
 import { ChatLine } from "./chatLine.ts";
 import { GameView, runFixedLoop } from "./gameView.ts";
 import { connectedPad, padFrame } from "./gamepad.ts";
-import { attachKeyboard, boundCodes, KeyState, soloKeys } from "./input.ts";
+import { attachKeyboard, boundCodes, isButtonActivation, KeyState, readKeysWhileLoading, soloKeys } from "./input.ts";
 import { macroOpens, macroSlot } from "./macro.ts";
 import type { BoxImages, BoxResult, PracticeBox } from "./practiceBox.ts";
 import { boxClick, boxHover, boxKey, boxKeyCursor, boxPointer, drawPracticeBox, openBox } from "./practiceBox.ts";
 import { MENU_SOUNDS } from "./presentation.ts";
-import { freezeCanvas } from "./screenKit.ts";
+import { CursorAnim, freezeCanvas, Pointer } from "./screenKit.ts";
 import { attachCapture } from "./screenCapture.ts";
 import type { ChatDraw } from "./renderer.ts";
-import { SCREEN_H, SCREEN_W } from "./renderer.ts";
 import { loadSceneAssets } from "./scene.ts";
 import type { Settings } from "./settings.ts";
 
 export interface PracticeGameOptions {
   canvas: HTMLCanvasElement;
+  cursor?: CursorAnim;
   local: PlayerSetup;
   /** [0x492770]: scene 5's hue, which the local sprite is read with (0x45490f); the panel face and dummies keep hue 0. */
   hue: number;
@@ -32,12 +32,18 @@ export interface PracticeGameOptions {
   announce: (text: string) => void;
   /** NO on the end box, YES on the Esc box: back to the server list (scene 2), here the main menu. */
   onExit: () => void;
+  /** The hidden exit action follows this scene's help gate. */
+  setExitAction?: (action: () => void) => void;
   /** Time-over: straight to the my-info screen (scene 5), here the practice setup. */
   onTimeUp: () => void;
   /** A start over whose pictures fail to load: the practice has stopped, told as a failed first start is. */
   onFailed: (error: unknown) => void;
   /** The account's guild and level on the player's panel row and result rows; none without an account. */
   badge?: Badge;
+  /** The screen was left during its initial load: no view, sounds or input listeners may start. */
+  cancelled?: () => boolean;
+  /** Remove initial loading input immediately when the screen is left. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -46,21 +52,27 @@ export interface PracticeGameOptions {
  * returns before the player (0x458750), so a walking player walks on.
  */
 export async function startPracticeGame(options: PracticeGameOptions): Promise<() => void> {
+  const cursor = options.cursor ?? new CursorAnim();
+  const cancelled = () => options.signal?.aborted || options.cancelled?.();
+  if (cancelled()) return () => undefined;
   const { canvas, local, sounds, announce } = options;
   // Shadows and the invisible blend read the screen back each frame (0x413620 works on the surface).
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("canvas 2d context unavailable");
-  const images: BoxImages = {
+  const keys = new KeyState();
+  const binding = soloKeys(options.settings.keys);
+  const bound = boundCodes([binding]);
+  const images: BoxImages = await readKeysWhileLoading(keys, bound, async () => ({
     panel: await loadImage("image/images.png"),
     messageBox: await loadImage("image/new_messagebox.png"),
     buttons: await loadImage("image/new_button2.png"),
-  };
-  const keys = new KeyState();
+  }), options.signal);
+  if (cancelled()) return () => undefined;
   let state: MatchState | null = null;
   let view: GameView | null = null;
   let box: PracticeBox | null = null;
   let hover: 0 | 1 | 2 = 0;
-  let pressed = false;
+  const pointer = new Pointer();
   /** The mouse in screen pixels, which the box reads even when it has not moved. */
   let mouse = { x: 0, y: 0 };
   /** F1 help ([0x492856]): shown over everything; while it is up the player's keys and box clicks do nothing (0x458750). */
@@ -75,15 +87,17 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   /** `fadeFrom`: starting over fades from the last frame (0x458a32, 0x458b5e, 0x461cfc, 0x461e4d). */
   async function begin(fadeFrom?: HTMLCanvasElement): Promise<void> {
     const first = await loadSceneAssets(PRACTICE_MAP, [local.character]);
+    if (stopped || cancelled()) return;
     // srand(time(0)) on every load (0x4542e4): the seed is the clock's second.
     const next = createPractice(layoutFromLevel(PRACTICE_MAP, first.level.meta), local, Math.floor(Date.now() / 1000));
     const tint = { id: local.id, character: local.character, hue: options.hue, face: false, head: false };
     const assets = await loadSceneAssets(PRACTICE_MAP, next.players.map((p) => p.character), [tint]);
-    if (stopped) return;
+    if (stopped || cancelled()) return;
     view?.dispose();
     state = next;
     // Practice makes no music calls, so whatever tune was playing goes on (findings 4.6).
     const nextView = new GameView(ctx as CanvasRenderingContext2D, assets, sounds, {
+      cursor,
       localPlayerIds: [local.id],
       hostId: null,
       music: null,
@@ -96,11 +110,16 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     // Browser checks steer by the live state in development; production builds drop this.
     if (import.meta.env.DEV) Object.assign(window, { shakeMatch: state });
     box = null;
+    chat.deferChanges(false);
     hover = 0;
     nextView.ingest(next, next.events);
   }
   try {
-    await begin();
+    await readKeysWhileLoading(keys, bound, begin, options.signal);
+    if (cancelled()) {
+      chat.dispose();
+      return () => undefined;
+    }
   } catch (error) {
     // Nothing else is running yet; the chat line's input and focus listener go with the failed start.
     chat.dispose();
@@ -110,6 +129,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   function show(kind: PracticeBox["kind"]): void {
     if (box) return;
     box = openBox(kind);
+    chat.deferChanges(true);
     hover = boxHover(box, mouse);
     announcePrompt(box);
   }
@@ -144,6 +164,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     bubble = null;
     if (chat.isOpen) chat.close();
     box = null;
+    chat.deferChanges(false);
     state = null;
     view?.dispose();
     view = null;
@@ -154,11 +175,10 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     });
   }
 
-  const binding = soloKeys(options.settings.keys);
   // With the joystick the keyboard's game keys are not read (0x402520 mode 1). A browser shows no
   // pad until one of its buttons is pressed, so the keys play until then.
   const joystick = options.settings.control === 1;
-  const detachKeyboard = attachKeyboard(keys, boundCodes([binding]));
+  const detachKeyboard = attachKeyboard(keys, bound);
   function sample(): ReturnType<KeyState["sample"]> {
     const pad = joystick ? connectedPad() : null;
     return pad ? padFrame(pad) : keys.sample(binding);
@@ -173,9 +193,16 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
   }
 
   const onKey = (event: KeyboardEvent) => {
+    if (isButtonActivation(event)) return;
     if (event.code === "F1") event.preventDefault();
-    // Keys the IME takes for its composition.
-    if (event.isComposing || event.keyCode === 229) return;
+    // Starting over holds the last picture until its assets arrive. Keys must not start another
+    // load or open invisible chat/help/boxes while there is no practice to draw them on.
+    if (!state) return;
+    // A paused editor/help can close before the next tick. Discard its completed taps while
+    // preserving keys still held, as the original's next DirectInput poll would read them.
+    if (box || help || chat.isOpen) keys.endTick();
+    // The IME's process key belongs to the editor; real keys retain the scene's handling.
+    if (event.keyCode === 229) return;
     const slot = macroSlot(event.code);
     if (slot !== null) {
       // 0x461a50: the macro goes into a fresh chat line, unsent; the box takes F2..F9 first.
@@ -189,13 +216,17 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     }
     if (box) {
       // Any key clears the help while the box is up (0x460097), so F1 cannot open it then.
+      // WM_CHAR drops characters/Backspace, but Delete and IME still edit the buffer (0x403a97, 0x40368b).
+      if (event.key !== "Delete") event.preventDefault();
       help = false;
       const result = boxKey(box, event.key);
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         hover = boxKeyCursor(box);
         announce(box.selection === 1 ? "예" : "아니오");
       }
-      if (result) answer(result);
+      if (result) {
+        answer(result);
+      }
       return;
     }
     if (event.code === "F1") help = !help; // 0x460264
@@ -216,26 +247,13 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
       chat.text = gameRecall(); // 0x4600d9
     }
   };
-  const toScreen = (event: PointerEvent) => {
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: Math.floor(((event.clientX - rect.left) * SCREEN_W) / rect.width),
-      y: Math.floor(((event.clientY - rect.top) * SCREEN_H) / rect.height),
-    };
-  };
-  const onMove = (event: PointerEvent) => {
-    mouse = toScreen(event);
+  const onMove = () => {
+    mouse = pointer.mouse;
     if (!box) return;
     hover = boxPointer(box, mouse.x, mouse.y);
-    pressed = (event.buttons & 1) !== 0;
   };
-  const onDown = () => {
-    pressed = true;
-  };
-  const onClick = (event: PointerEvent) => {
-    pressed = false;
+  const onClick = (x: number, y: number) => {
     if (!box || help) return;
-    const { x, y } = toScreen(event);
     const result = boxClick(box, x, y);
     if (!result) return;
     // A click on the box's buttons sounds menu2 (0x4589a9); its keys are silent (0x461bc0).
@@ -248,9 +266,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     () => box !== null,
     () => view?.composition ?? canvas,
   );
-  canvas.addEventListener("pointermove", onMove);
-  canvas.addEventListener("pointerdown", onDown);
-  canvas.addEventListener("pointerup", onClick);
+  const detachPointer = pointer.attach(canvas, { moved: onMove, pressed: onMove, released: onClick });
 
   const stopLoop = runFixedLoop(
     () => {
@@ -276,7 +292,7 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     () => {
       if (!state || !view) return;
       const shown = box;
-      const overlay = shown ? (target: CanvasRenderingContext2D) => drawPracticeBox(target, images, shown, hover, pressed) : undefined;
+      const overlay = shown ? (target: CanvasRenderingContext2D) => drawPracticeBox(target, images, shown, hover, pointer.held !== null) : undefined;
       view.render(state, { overlay, help, chat: chatDraw(shown !== null) });
     },
   );
@@ -286,7 +302,6 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
    * caret blinks only while the line is drawn.
    */
   function chatDraw(boxShown: boolean): ChatDraw {
-    chat.locked = boxShown;
     if (boxShown) return { balloons: [], line: null };
     const now = performance.now();
     if (bubble && now - bubble.since >= BUBBLE_MS) bubble = null;
@@ -306,9 +321,12 @@ export async function startPracticeGame(options: PracticeGameOptions): Promise<(
     detachKeyboard();
     detachCapture();
     window.removeEventListener("keydown", onKey);
-    canvas.removeEventListener("pointermove", onMove);
-    canvas.removeEventListener("pointerdown", onDown);
-    canvas.removeEventListener("pointerup", onClick);
+    detachPointer();
   }
+  options.setExitAction?.(() => {
+    if (help) return;
+    stop();
+    options.onExit();
+  });
   return stop;
 }

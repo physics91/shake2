@@ -3,7 +3,7 @@ import { SCREEN_H, SCREEN_W } from "./renderer.ts";
 import { SettingsStore } from "./settings.ts";
 import { h, readPreference, writePreference } from "./ui.ts";
 
-/** The option object (0x48acd0), kept in this browser: the option window and the toolbar change it. */
+/** The option object (0x48acd0), kept in this browser and changed by the option screens. */
 export const settings = new SettingsStore({ get: readPreference, set: writePreference });
 
 export const sounds = new SoundBank();
@@ -56,10 +56,13 @@ export interface GameScreen {
   announce(text: string): void;
   loaded(): void;
   failed(message: string): void;
+  /** The running scene supplies the same exit gates as its canvas input. */
+  setExitAction(action: () => void): void;
 }
 
 /** Build (but do not mount) the game screen: toolbar, canvas, key help and a live region. */
 export function gameScreen(title: string, keys: string, onExit: () => void): GameScreen {
+  let exitAction = onExit;
   const canvas = h("canvas", {
     width: SCREEN_W,
     height: SCREEN_H,
@@ -69,9 +72,6 @@ export function gameScreen(title: string, keys: string, onExit: () => void): Gam
   });
   const live = h("p", { class: "sr-only", "aria-live": "polite" });
   const loading = h("p", { class: "loading", role: "status" }, "에셋을 불러오는 중…");
-  // The original's sound options (0x44cd50), which its option window sets: the same values here.
-  const effectsButton = toggleButton("효과음", settings.current.effects, (on) => settings.update({ effects: on }));
-  const musicButton = toggleButton("음악", settings.current.music, (on) => settings.update({ music: on }));
   const stage = h("div", { class: "stage" }, canvas, loading);
   const root = h(
     "main",
@@ -79,10 +79,8 @@ export function gameScreen(title: string, keys: string, onExit: () => void): Gam
     h(
       "header",
       { class: "toolbar" },
-      h("button", { class: "btn small", type: "button", onclick: onExit }, "← 나가기"),
+      h("button", { class: "btn small", type: "button", onclick: () => exitAction() }, "← 나가기"),
       h("h1", { tabindex: "-1" }, title),
-      effectsButton,
-      musicButton,
     ),
     stage,
     h("p", { class: "keys" }, keys),
@@ -92,24 +90,16 @@ export function gameScreen(title: string, keys: string, onExit: () => void): Gam
     root,
     stage,
     canvas,
+    setExitAction: (action) => (exitAction = action),
     announce: (text) => (live.textContent = text),
     loaded: () => loading.remove(),
     // A load that fails after the start (practice starting over) brings the notice back.
     failed: (message) => {
       loading.textContent = message;
+      loading.classList.add("asset-error");
       stage.append(loading);
     },
   };
-}
-
-function toggleButton(label: string, on: boolean, onChange: (on: boolean) => void): HTMLButtonElement {
-  const button = h("button", { class: "btn small", type: "button", "aria-pressed": String(on) }, label);
-  button.addEventListener("click", () => {
-    const next = button.getAttribute("aria-pressed") !== "true";
-    button.setAttribute("aria-pressed", String(next));
-    onChange(next);
-  });
-  return button;
 }
 
 /** Replace the screen with the game canvas and start `starter`; Esc or the back button calls `onExit`. */

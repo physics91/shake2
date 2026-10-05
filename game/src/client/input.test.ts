@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Dir } from "../sim/types.ts";
-import { keyLabel, KeyState, SOLO_KEYS, soloKeys, soloKeysHelp, VERSUS_KEYS } from "./input.ts";
+import { attachKeyboard, boundCodes, keyLabel, KeyState, readKeysWhileLoading, SOLO_KEYS, soloKeys, soloKeysHelp, VERSUS_KEYS } from "./input.ts";
 
 describe("one player's keys (0x4699ac)", () => {
   it("keeps the arrows and takes the three action keys from the options by DIK", () => {
@@ -71,5 +71,91 @@ describe("KeyState", () => {
     expect(keys.sample(SOLO_KEYS)).toEqual({ dir: null, bomb: false, attack: true, evade: true });
     keys.endTick();
     expect(keys.sample(SOLO_KEYS)).toEqual({ dir: null, bomb: false, attack: true, evade: false });
+  });
+});
+
+describe("window keyboard input", () => {
+  class KeyTarget extends EventTarget {
+    readonly tagName: string;
+    private readonly direct: boolean;
+    constructor(tagName: string, direct = false) {
+      super();
+      this.tagName = tagName;
+      this.direct = direct;
+    }
+    hasAttribute(name: string) { return name === "data-direct-input" && this.direct; }
+  }
+
+  let detach: () => void;
+  beforeEach(() => {
+    detach = () => undefined;
+    vi.stubGlobal("window", new EventTarget());
+    vi.stubGlobal("HTMLElement", KeyTarget);
+  });
+  afterEach(() => {
+    detach();
+    vi.unstubAllGlobals();
+  });
+
+  function dispatch(code: string, target: KeyTarget, type = "keydown", repeat = false) {
+    const event = new Event(type, { cancelable: true });
+    Object.assign(event, { code, key: code.includes("Enter") ? "Enter" : " ", repeat });
+    Object.defineProperty(event, "target", { value: target });
+    window.dispatchEvent(event);
+    return event;
+  }
+
+  it.each(["Space", "Enter", "NumpadEnter"])("leaves %s to the button without a game action", (code) => {
+    const keys = new KeyState();
+    const changed = vi.fn();
+    detach = attachKeyboard(keys, boundCodes([SOLO_KEYS, ...VERSUS_KEYS]), changed);
+    const event = dispatch(code, new KeyTarget("BUTTON"));
+    expect(event.defaultPrevented).toBe(false);
+    expect(keys.sample(SOLO_KEYS).bomb).toBe(false);
+    expect(keys.sample(VERSUS_KEYS[1]).bomb).toBe(false);
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("still reads a key on the game editor and releases it after focus moves to a button", () => {
+    const keys = new KeyState();
+    const changed = vi.fn();
+    detach = attachKeyboard(keys, boundCodes([SOLO_KEYS]), changed);
+    const event = dispatch("ArrowRight", new KeyTarget("INPUT", true));
+    expect(event.defaultPrevented).toBe(false);
+    expect(keys.sample(SOLO_KEYS).dir).toBe(Dir.Right);
+    dispatch("ArrowRight", new KeyTarget("BUTTON"), "keyup");
+    expect(keys.sample(SOLO_KEYS).dir).toBeNull();
+    expect(changed).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["ArrowRight", "Space"])("reads %s when its first event after loading is a repeat", (code) => {
+    const keys = new KeyState();
+    detach = attachKeyboard(keys, boundCodes([SOLO_KEYS]));
+    dispatch(code, new KeyTarget("DIV"), "keydown", true);
+    expect(keys.sample(SOLO_KEYS)).toMatchObject(code === "ArrowRight" ? { dir: Dir.Right } : { bomb: true });
+  });
+
+  it("does not turn repeats of an already held action into new taps", () => {
+    const keys = new KeyState();
+    detach = attachKeyboard(keys, boundCodes([SOLO_KEYS]));
+    const target = new KeyTarget("DIV");
+    dispatch("Space", target);
+    keys.endTick();
+    dispatch("Space", target, "keydown", true);
+    dispatch("Space", target, "keyup");
+    expect(keys.sample(SOLO_KEYS).bomb).toBe(false);
+  });
+
+  it("removes loading input when the asset request fails", async () => {
+    const keys = new KeyState();
+    let fail!: (error: Error) => void;
+    const loading = readKeysWhileLoading(keys, boundCodes([SOLO_KEYS]), () => new Promise<void>((_resolve, reject) => { fail = reject; }));
+    const failed = expect(loading).rejects.toThrow("asset failed");
+    const target = new KeyTarget("DIV");
+    expect(dispatch("ControlLeft", target).defaultPrevented).toBe(true);
+    fail(new Error("asset failed"));
+    await failed;
+    expect(dispatch("Space", target).defaultPrevented).toBe(false);
+    expect(keys.sample(SOLO_KEYS).bomb).toBe(false);
   });
 });

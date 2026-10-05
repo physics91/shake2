@@ -12,7 +12,7 @@ import type { FriendRecord } from "./optionWindow.ts";
 import { DEVICE_ERRORS } from "./optionWindow.ts";
 import type { Control, Keys, SettingsStore } from "./settings.ts";
 import { assignKey, cloneSettings, MACRO_LIMIT, MACRO_SLOTS, resetSettings } from "./settings.ts";
-import { h } from "./ui.ts";
+import { h, replaceChildrenKeepingFocus } from "./ui.ts";
 
 export interface OptionPanelHost {
   settings: SettingsStore;
@@ -152,8 +152,10 @@ export class OptionPanel {
       this.friendInput.value = "";
       this.requestFriends();
     }
-    // A deleted row's button goes with the new list; the add field keeps the keyboard in the section.
-    this.friendInput.focus();
+    // A deleted row's button goes with the new list. Return from the friend controls only while
+    // they still own the keyboard; the user may have started editing elsewhere during the wait.
+    const active = document.activeElement;
+    if (active === this.friendInput || this.friendList.contains(active)) this.friendInput.focus();
   }
 
   dispose(): void {
@@ -201,6 +203,7 @@ export class OptionPanel {
 
   private save(event: Event): void {
     event.preventDefault();
+    if (this.host.busy()) return;
     const next = cloneSettings(this.host.settings.current);
     next.music = this.checks.music.checked;
     next.effects = this.checks.effects.checked;
@@ -238,7 +241,7 @@ export class OptionPanel {
 
   private renderFriends(): void {
     const { friends } = this;
-    this.friendList.replaceChildren(
+    replaceChildrenKeepingFocus(this.friendList,
       ...(friends === null
         ? [h("li", {}, "친구 목록을 서버에 묻는 중입니다.")]
         : friends.length === 0
@@ -248,7 +251,7 @@ export class OptionPanel {
                 "li",
                 {},
                 h("span", {}, `${name} · ${location || OFFLINE}`),
-                h("button", { class: "btn small", type: "button", "aria-label": `${name} 삭제`, onclick: () => this.deleteFriend(name) }, "삭제"),
+                h("button", { class: "btn small", type: "button", "aria-label": `${name} 삭제`, "data-focus-key": name, onclick: () => this.deleteFriend(name) }, "삭제"),
               ),
             )),
     );
