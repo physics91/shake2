@@ -153,6 +153,28 @@ describe("bombs", () => {
     expect(state.items).toMatchObject([{ cell: brick, kind: ItemKind.Speed }]);
   });
 
+  it("reveals simultaneous brick items in map order after existing items", () => {
+    const state = playingMatch(["1....", ".....", "...B.", "..B..", "....2"], 2);
+    const right = cellAt(state, 3, 2);
+    const below = cellAt(state, 2, 3);
+    const existing = { cell: 1, kind: ItemKind.Speed, tick: 0, dropped: false };
+    addItem(state, existing);
+    state.hidden[right] = 0x1a0b;
+    state.hidden[below] = ItemKind.Bomb;
+    expiredBomb(state, cellAt(state, 2, 2), 1);
+
+    run(state, 1);
+    expect(state.breaking.map((brick) => brick.cell)).toEqual([below, right]);
+    runUntil(state, () => state.breaking.length === 0, 100);
+
+    expect(state.items).toMatchObject([
+      existing,
+      { cell: right, kind: ItemKind.Mystery, sub: 26 },
+      { cell: below, kind: ItemKind.Bomb },
+    ]);
+    expect(state.itemSprites?.map((item) => item.cell)).toEqual([existing.cell, right, below]);
+  });
+
   it("lets a second fire pass through a crumbling brick", () => {
     const state = playingMatch(["1.....", "..BB.."]);
     removePlayers(state);

@@ -78,7 +78,8 @@ export function updateBricks(state: MatchState): void {
   for (const brick of state.breaking) state.brickSprites[brick.cell] = brick.frame;
   const now = nowMs(state.tick);
   const finished: number[] = [];
-  for (const brick of state.breaking) {
+  // Map records run in cell order, even when explosions ignite bricks in another order.
+  for (const brick of [...state.breaking].sort((a, b) => a.cell - b.cell)) {
     if (!animDue(now, brick.lastMs, brick.fps)) continue;
     brick.lastMs = now;
     brick.frame += 1;
