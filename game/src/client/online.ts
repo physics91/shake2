@@ -38,7 +38,7 @@ import { attachKeyboard, boundCodes, isButtonActivation, KeyState, soloKeys, sol
 import { banSlot, ChatTimers, chatSubmit, targetWhisper } from "./chatCommand.ts";
 import type { LocalPlayer } from "./localGame.ts";
 import { startLocalGame } from "./localGame.ts";
-import type { LocalLists } from "./localRoom.ts";
+import type { LocalLists, LocalMode } from "./localRoom.ts";
 import { answerLocal, LOCAL_IDS, localLists, localRoom, nextCharacter, VERSUS_RULES } from "./localRoom.ts";
 import { macroOpens, macroSlot } from "./macro.ts";
 import { mapChoices, mapTitle, portraitCanvas } from "./menu.ts";
@@ -71,7 +71,7 @@ function keysHelp(): string {
   const { keys, control } = settings.current;
   return (
     `${soloKeysHelp(soloKeys(keys), control === 1)} · 채팅: Enter(보내기), Esc(취소), ↑(이전 줄), F2~F10(단축 메시지) · 도움말: F1 · ` +
-    "나가기: Esc(첫 라운드 대기 화면에서는 바로, 그 밖에는 손님만 확인 상자). 위의 나가기 버튼은 언제나 됩니다."
+    "나가기: Esc(첫 라운드 대기 화면에서는 바로, 그 밖에는 손님만 확인 상자). 방장은 경기 중 나갈 수 없습니다."
   );
 }
 
@@ -86,6 +86,7 @@ const VERSUS_KEYS_HELP = `1P: WASD · 폭탄 Space(왼쪽 Shift) · 공격용 Q 
 
 /** The server list's row for two players on this PC, under the server's (AGENTS.md: a remake row, R). */
 const LOCAL_ROW: ServerRow = { name: "2인 대전", load: 0, ping: 0, colour: "#ffffff", local: true };
+const AI_ROW: ServerRow = { name: "AI 대전", load: 0, ping: 0, colour: "#ffffff", local: true, ai: true };
 
 /** hello refused (S->C 0x0a +8, 0x445970): 0 res#19, 2 and 3; another code keeps the old lines (0x44596e). */
 const REFUSALS: Readonly<Record<number, string>> = {
@@ -188,7 +189,7 @@ class OnlineSession {
   /** The fade over the screen mounted last (screenKit.fadeOver). */
   private stopVeil: (() => void) | null = null;
   /** Two players on one PC: the room kept in the page, whose choices last the session, and its chat. */
-  private local: { room: RoomInfo; lists: LocalLists; log: string[] } | null = null;
+  private local: { room: RoomInfo; lists: LocalLists; log: string[]; mode: LocalMode } | null = null;
   /** Practice or a two-player match running on this PC. */
   private localGame: { stop(): void } | null = null;
   /** The ranking's list, scene 5's and the lobby window's. */
@@ -272,13 +273,13 @@ class OnlineSession {
         check: (kind, text) => this.authSend(kind === "id" ? { type: "check-id", id: text } : { type: "check-nick", nick: text }),
         connect: () => {
           const row = this.list.rows[this.list.selected];
-          if (row?.local) this.openLocalRoom();
+          if (row?.local) this.openLocalRoom(row.ai ? "ai" : "versus");
           else this.enter(row?.channel ?? 0);
         },
         // The row's double click, dropped while a connection is under way (the busy cursor): a
         // row's, or the page form's login that goes on to one.
-        local: () => {
-          if (!this.socket && !this.enterAfterLogin) this.openLocalRoom();
+        local: (mode = "versus") => {
+          if (!this.socket && !this.enterAfterLogin) this.openLocalRoom(mode);
         },
         enter: ({ id, password }) => this.formEnter(id, password),
         // A page cannot close its window: the program starts over, silent, from its logo, logged out.
@@ -324,7 +325,7 @@ class OnlineSession {
 
   /**
    * The login's OK (C->S 0x0a to the auth server). Without the auth server, scene 5 opens with no
-   * account: practice and two players on this PC need none (R).
+   * account: practice and local versus modes need none (R).
    */
   private login(id: string, password: string): LoginSent {
     switch (this.auth.state) {
@@ -452,14 +453,14 @@ class OnlineSession {
 
   /**
    * The login's reply zeroes each row's load and ping and asks for them (0x448be3): the auth
-   * server's rows with their colours, then the remake's local row. Without the auth server the one
+   * server's rows with their colours, then the remake's AI and keyboard rows. Without the auth server the one
    * row is this address's, shown as its connect failure (−1 ms, 1000 %), still selectable.
    */
   private listServer(): void {
     this.list.rows = this.account
       ? this.channels.map((row, channel) => ({ name: row.name, colour: row.colour, channel, load: 0, ping: 0 }))
       : [{ name: serverName(this.serverUrl), colour: "#ffffff", channel: 0, load: 1000, ping: -1 }];
-    this.list.rows.push({ ...LOCAL_ROW });
+    this.list.rows.push({ ...AI_ROW }, { ...LOCAL_ROW });
     this.list.selected = -1;
     this.list.page = 0;
     this.queryServers();
@@ -1064,7 +1065,7 @@ class OnlineSession {
     this.localGame?.stop();
   }
 
-  // This PC: practice and two players on one keyboard
+  // This PC: practice, AI, and two players on one keyboard
 
   /**
    * Practice (0x4542d0, scene 9) with the character scene 5 chose. Its Esc box's YES goes to the
@@ -1098,11 +1099,12 @@ class OnlineSession {
     this.showStart({ begin: "status", fadeFrom });
   }
 
-  /** The "2인 대전" row chosen twice: the list fades out and the room in, as 2→4 does for the lobby. */
-  private openLocalRoom(): void {
+  /** A local row chosen twice: the list fades out and the room in, as 2→4 does for the lobby. */
+  private openLocalRoom(mode: LocalMode = "versus"): void {
+    if (this.local?.mode !== mode) this.local = null;
     const startView = this.startView;
     if (!startView) {
-      this.showLocalRoom(this.shownPicture());
+      this.showLocalRoom(this.shownPicture(), mode);
       return;
     }
     if (this.leavingStart) return;
@@ -1114,20 +1116,34 @@ class OnlineSession {
       this.startView = null;
       // The local row completes the same connection wait before drawing the room (R).
       this.cursor.set(false);
-      this.showLocalRoom(null);
+      this.showLocalRoom(null, mode);
     });
   }
 
   /** The local room on the GAME ROOM screen, faded in from `from` (or from black). */
-  private showLocalRoom(from: HTMLCanvasElement | null): void {
+  private showLocalRoom(from: HTMLCanvasElement | null, mode: LocalMode = this.local?.mode ?? "versus"): void {
     if (this.disposed) return;
     const saved = (key: string, fallback: string) => {
       const name = readPreference(key) ?? fallback;
       return this.manifest.characters.includes(name) ? name : this.manifest.characters[0];
     };
     const lists = localLists(this.manifest);
-    this.local ??= { lists, room: localRoom(lists, [saved("p1", "bobo"), saved("p2", "doona")]), log: [] };
+    const opponent = mode === "ai" ? (this.manifest.characters.includes("doona") ? "doona" : this.manifest.characters[0]) : saved("p2", "doona");
+    this.local ??= { lists, room: localRoom(lists, [saved("p1", "bobo"), opponent], mode), log: [], mode };
     const local = this.local;
+    if (mode === "ai") {
+      // As scene 5's Go game does for scene 8, carry the chosen character, hue and ID check.
+      const character = CHARACTER_IDS[this.status.character];
+      Object.assign(local.room.players[0], {
+        character: this.manifest.characters.includes(character) ? character : this.manifest.characters[0],
+        hue: this.status.hue,
+        useId: this.status.useId,
+      });
+      if (this.account) {
+        const { id, nick, wins, cell } = this.account;
+        Object.assign(local.room.players[0], { name: id, nick, wins, cell, badge: badgeOf(this.account) });
+      }
+    }
     const welcome: Welcome = { playerId: LOCAL_IDS[0], maps: local.lists.maps, music: local.lists.music };
     this.roomView?.dispose();
     this.roomView = new RoomView(this.manifest, welcome, structuredClone(local.room), local.log, {
@@ -1135,7 +1151,7 @@ class OnlineSession {
       send: (message) => this.localSend(message),
       say: (text) => this.localSay(text),
       kickedOut: () => undefined,
-      pickCharacter: (slot) => this.pickLocalCharacter(slot),
+      pickCharacter: mode === "versus" ? (slot) => this.pickLocalCharacter(slot) : undefined,
     });
     this.errorLine = this.roomView.errorLine;
     mount(this.roomView.root);
@@ -1172,7 +1188,7 @@ class OnlineSession {
       return;
     }
     if (submit.kind !== "chat" || !this.timers.chat(submit.text, performance.now())) return;
-    const entry = chatEntry({ kind: "talk", name: local.room.players[0].name, text: submit.text });
+    const entry = chatEntry({ kind: "talk", name: shownName(local.room.players[0]), text: submit.text });
     local.log.push(entry);
     this.roomView?.addChat(entry);
   }
@@ -1181,7 +1197,7 @@ class OnlineSession {
   private pickLocalCharacter(slot: number): void {
     const local = this.local;
     const player = local?.room.players.find((p) => p.slot === slot);
-    if (!local || !player) return;
+    if (!local || local.mode !== "versus" || !player) return;
     player.character = nextCharacter(this.manifest.characters, player.character);
     writePreference(slot === 0 ? "p1" : "p2", player.character);
     // The secondary click, as scene 5's character arrows sound (0x26).
@@ -1189,7 +1205,7 @@ class OnlineSession {
     this.roomView?.update(structuredClone(local.room));
   }
 
-  /** START: the room fades to the match; its end (5 s into the final result) or Esc fades back to the room. */
+  /** START: fade to the match; its final result or an allowed exit fades back to the room. */
   private startLocalMatch(mapId: string, music: number): void {
     const local = this.local;
     if (!local) return;
@@ -1198,22 +1214,29 @@ class OnlineSession {
     this.roomView = null;
     // As at 0x44a3d4, stop the room tune before waiting for the world's pictures.
     sounds.stopMusic();
-    const players: LocalPlayer[] = local.room.players.map((p, i) => ({
-      setup: { id: p.id, name: p.name, character: p.character },
-      binding: VERSUS_KEYS[i],
-    }));
+    const ai = local.mode === "ai";
+    const players: LocalPlayer[] = local.room.players.map((p, i) => {
+      const setup = { id: p.id, name: p.name, character: p.character };
+      return ai && i === 1 ? { setup, ai: true } : { setup, binding: ai ? soloKeys(settings.current.keys) : VERSUS_KEYS[i] };
+    });
     const back = () => this.showLocalRoom(this.shownPicture());
-    this.runLocal("2인 대전", VERSUS_KEYS_HELP, from, back, (screen, finish, cancelled, _failed, signal) =>
+    const help = ai ? `${keysHelp()} · 먼저 ${MEDALS_TO_WIN}승` : VERSUS_KEYS_HELP;
+    this.runLocal(local.room.title, help, from, back, (screen, finish, cancelled, _failed, signal) =>
       startLocalGame({
         canvas: screen.canvas,
         cursor: this.cursor,
         levelId: mapId,
         players,
+        settings: ai ? settings.current : undefined,
+        tints: ai ? local.room.players.map((p) => ({ id: p.id, character: p.character, hue: p.hue, face: true, head: true })) : undefined,
+        people: ai ? new Map(local.room.players.map((p) => [p.id, { name: shownName(p), badge: p.badge }])) : undefined,
+        candyBase: ai ? this.account?.candy : undefined,
         rules: VERSUS_RULES,
         sounds,
         music: listedTrack(this.manifest, local.lists.music, music),
         announce: screen.announce,
         onExit: () => finish(back),
+        setExitAction: screen.setExitAction,
         cancelled,
         signal,
       }),

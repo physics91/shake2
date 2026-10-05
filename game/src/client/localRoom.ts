@@ -1,4 +1,4 @@
-// Two players on one keyboard, a remake feature (AGENTS.md): the GAME ROOM screen over a room kept in
+// Local versus modes, remake features (AGENTS.md): the GAME ROOM screen over a room kept in
 // the page. The screen sends what it would send the server; this answers as the server's room does
 // for its host, and starts the match on this PC. 1P is the host in slot 0, 2P a ready guest in
 // slot 1, and the other slots stay closed; the mode is 개인전.
@@ -13,6 +13,8 @@ import { playableMaps } from "./menu.ts";
 
 /** The player ids 1P and 2P play under. */
 export const LOCAL_IDS = [1, 2] as const;
+
+export type LocalMode = "versus" | "ai";
 
 export const VERSUS_RULES: Rules = { practice: false, roundSeconds: ROUND_SECONDS, medalsToWin: MEDALS_TO_WIN, mode: 0 };
 
@@ -33,11 +35,11 @@ export function localLists(manifest: Manifest): LocalLists {
   return { maps, music };
 }
 
-export function localRoom(lists: LocalLists, characters: readonly [string, string]): RoomInfo {
+export function localRoom(lists: LocalLists, characters: readonly [string, string], mode: LocalMode = "versus"): RoomInfo {
   return {
     code: "",
     number: 0,
-    title: "2인 대전",
+    title: mode === "ai" ? "AI 대전" : "2인 대전",
     hostId: LOCAL_IDS[0],
     // The server's room starts on the first map too (room.ts).
     mapId: lists.maps[0]?.id ?? RANDOM_MAP,
@@ -45,7 +47,7 @@ export function localRoom(lists: LocalLists, characters: readonly [string, strin
     mode: 0,
     closed: Array.from({ length: MAX_PLAYERS }, (_, slot) => slot >= LOCAL_IDS.length),
     players: LOCAL_IDS.map((id, slot) => {
-      const name = `${slot + 1}P`;
+      const name = mode === "ai" && slot === 1 ? "AI" : `${slot + 1}P`;
       return { id, name, nick: name, useId: true, character: characters[slot], hue: 0, wins: 0, cell: 0, badge: NO_BADGE, ready: true, team: slot + 1, slot };
     }),
     playing: false,

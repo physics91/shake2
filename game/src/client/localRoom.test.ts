@@ -43,6 +43,16 @@ describe("local room", () => {
     expect(room.mode).toBe(0);
   });
 
+  it("uses the same room with a ready AI opponent in the second slot", () => {
+    const room = localRoom(lists, ["shark", "doona"], "ai");
+    expect(room.title).toBe("AI 대전");
+    expect(room.players.map((p) => [p.name, p.character, p.ready])).toEqual([
+      ["1P", "shark", true], ["AI", "doona", true],
+    ]);
+    expect(room.closed).toEqual([false, false, true, true, true, true]);
+    expect(answerLocal(room, lists, { type: "start" }, 0)).toEqual({ kind: "start", mapId: "Mizar01", music: 1 });
+  });
+
   it("takes the host's map and tune within the lists and leaves slots, teams and mode as they are", () => {
     const room = localRoom(lists, ["shark", "doona"]);
     expect(answerLocal(room, lists, { type: "set-map", mapId: "bella01" })).toEqual({ kind: "changed" });

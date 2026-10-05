@@ -170,6 +170,8 @@ export interface ServerRow {
   channel?: number;
   /** The remake's row for two players on this PC (AGENTS.md), after the server's. */
   local?: boolean;
+  /** The remake's AI opponent, on the same GAME ROOM screen. */
+  ai?: boolean;
 }
 
 /** The auth connect failed (0x46118f). */
@@ -680,7 +682,7 @@ export class StartScreen {
   /**
    * 0x44f920: both fields must hold something, and the busy cursor waits for the auth server. Its
    * answer cuts at once (0x448be3), here to scene 5, as Shake1's login does (R). Without the auth
-   * server, scene 5 opens with the ID as the nick: practice and two players on one PC need no account (R).
+   * server, scene 5 opens with the ID as the nick: practice and local versus need no account (R).
    */
   private login(): void {
     const id = this.idLine.view().text;

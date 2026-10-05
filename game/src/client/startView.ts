@@ -49,7 +49,7 @@ export interface StartActions {
   /** The page's form: log in and go into the first row's lobby. */
   enter(login: { id: string; password: string }): void;
   /** The server list's "2인 대전" row, for the page's button too. */
-  local(): void;
+  local(mode?: "versus" | "ai"): void;
   /** The quit box's YES: the program ends, which here starts it again. */
   exit(): void;
 }
@@ -171,7 +171,7 @@ export class StartView {
       h(
         "p",
         { class: "keys" },
-        "로그인: 아이디를 넣고 Enter, 비밀번호를 넣고 Enter. Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 가입은 아래 회원가입 창 버튼으로 창을 열고 Tab으로 칸을 옮겨 넣은 뒤 동의함과 가입하기. 인증 서버에 닿지 않으면 로그인 없이 내 정보 화면으로 가서 연습과 2인 대전만 할 수 있습니다. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. 목록은 한 쪽에 40줄이며, 더 있으면 서버 리플레시로 닫았다 열거나 아래 다음 서버 목록 버튼으로 다음 쪽. 마지막 쪽 뒤는 첫 쪽. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
+        "로그인: 아이디를 넣고 Enter, 비밀번호를 넣고 Enter. Tab은 칸 바꾸기, Shift+Tab은 아래 조작으로. 가입은 아래 회원가입 창 버튼으로 창을 열고 Tab으로 칸을 옮겨 넣은 뒤 동의함과 가입하기. 인증 서버에 닿지 않으면 로그인 없이 내 정보 화면으로 가서 연습·AI 대전·2인 대전을 할 수 있습니다. 내 정보 화면: 아래 버튼으로 Go game(서버 목록), Practice(혼자 연습), 캐릭터 바꾸기. 서버 선택: 공지 창 X, 서버 줄을 한 번 눌러 고르고 한 번 더 눌러 접속. 목록은 한 쪽에 40줄이며, 더 있으면 서버 리플레시로 닫았다 열거나 아래 다음 서버 목록 버튼으로 다음 쪽. 마지막 쪽 뒤는 첫 쪽. Esc는 메시지·공지 닫기, 서버 목록에서는 그다음 종료 상자. F1은 도움말.",
       ),
       h(
         "div",
@@ -211,6 +211,7 @@ export class StartView {
         h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "로그인하고 첫 서버 로비 입장")),
       ),
       // The row's double click, dropped where the canvas drops it.
+      h("button", { class: "btn", type: "button", onclick: () => this.screen?.takesRowClicks && actions.local("ai") }, "AI 대전 (서버 목록의 AI 대전 줄)"),
       h("button", { class: "btn", type: "button", onclick: () => this.screen?.takesRowClicks && actions.local() }, "2인 대전 (한 키보드, 서버 목록의 마지막 줄)"),
       h("button", { class: "btn", type: "button", onclick: () => this.screen?.nextServerPage() }, "다음 서버 목록 (서버 리플레시 두 번)"),
       h(
@@ -283,7 +284,7 @@ export class StartView {
 
   /** The auth connection failed or closed: the login's message box. */
   authFailed(): void {
-    this.errorLine.textContent = "인증 서버에 접속하지 못했습니다. 로그인 없이 연습과 2인 대전만 할 수 있습니다.";
+    this.errorLine.textContent = "인증 서버에 접속하지 못했습니다. 로그인 없이 연습·AI 대전·2인 대전을 할 수 있습니다.";
     this.withScreen((screen) => screen.authFailed());
   }
 

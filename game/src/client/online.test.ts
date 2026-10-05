@@ -8,10 +8,13 @@ import type { StartActions } from "./startView.ts";
 import type { RoomScreenOptions } from "./roomScreen.ts";
 import { AUTH_FAILED, type ServerList, type StartScene } from "./startScreen.ts";
 import { defaultSettings } from "./settings.ts";
+import { SOLO_KEYS, VERSUS_KEYS } from "./input.ts";
 import type { CursorAnim } from "./screenKit.ts";
+import type { StatusState } from "./statusScreen.ts";
+import { CHARACTER_IDS } from "./myInfoLayout.ts";
 
 const { views, lobbies, rooms } = vi.hoisted(() => ({
-  views: [] as { actions: StartActions; begin: StartScene; cursor?: CursorAnim; saveRefused: ReturnType<typeof vi.fn>; list: ServerList; serverInfo: ReturnType<typeof vi.fn> }[],
+  views: [] as { actions: StartActions; begin: StartScene; status: StatusState; cursor?: CursorAnim; saveRefused: ReturnType<typeof vi.fn>; list: ServerList; serverInfo: ReturnType<typeof vi.fn> }[],
   lobbies: [] as LobbyActions[],
   rooms: [] as RoomScreenOptions[],
 }));
@@ -32,9 +35,9 @@ vi.mock("./startView.ts", () => ({
     saveRefused = vi.fn();
     serverInfo = vi.fn();
     cursor?: CursorAnim;
-    constructor(options: { actions: StartActions; begin: StartScene; list: ServerList; cursor?: CursorAnim }) {
+    constructor(options: { actions: StartActions; begin: StartScene; status: StatusState; list: ServerList; cursor?: CursorAnim }) {
       this.cursor = options.cursor;
-      views.push({ actions: options.actions, begin: options.begin, cursor: options.cursor, saveRefused: this.saveRefused, list: options.list, serverInfo: this.serverInfo });
+      views.push({ actions: options.actions, begin: options.begin, status: options.status, cursor: options.cursor, saveRefused: this.saveRefused, list: options.list, serverInfo: this.serverInfo });
     }
     loggedIn() {}
     connected() { this.cursor?.set(false); }
@@ -374,6 +377,97 @@ describe("local match music before its assets load", () => {
     expect(stopOld).toHaveBeenCalledOnce();
     expect(stopMusic).toHaveBeenCalledOnce();
     expect(gameScreens[0].loaded).not.toHaveBeenCalled();
+  });
+});
+
+describe("AI match entry", () => {
+  async function startList() {
+    stop = mountOnline({
+      characters: ["bobo", "doona"], maps: [{ id: "test", title: "test", objects: 0 }], music: [],
+    } as unknown as Manifest);
+    const view = views[0];
+    view.actions.listServers();
+    return view;
+  }
+
+  it("offers the AI row offline and starts one human plus one AI without a socket", async () => {
+    localStart.mockResolvedValue(() => undefined);
+    const view = await startList();
+    expect(view.list.rows.slice(-2).map((r) => r.name)).toEqual(["AI 대전", "2인 대전"]);
+    view.list.selected = view.list.rows.findIndex((r) => r.ai);
+    view.actions.connect();
+    await Promise.resolve();
+    rooms[0].send({ type: "start" });
+    const options = localStart.mock.calls[0][0];
+    expect(options.players).toEqual([
+      { setup: { id: 1, name: "1P", character: "bobo" }, binding: SOLO_KEYS },
+      { setup: { id: 2, name: "AI", character: "doona" }, ai: true },
+    ]);
+    expect(sockets).toHaveLength(0);
+    options.onExit();
+    await Promise.resolve();
+    rooms.at(-1)!.send({ type: "start" });
+    expect(localStart.mock.calls[1][0].players[1]).toEqual(options.players[1]);
+  });
+
+  it("switches from AI to the existing keyboard mode after leaving the room", async () => {
+    localStart.mockResolvedValue(() => undefined);
+    const view = await startList();
+    view.actions.local("ai");
+    await Promise.resolve();
+    rooms[0].send({ type: "leave-room" });
+    views.at(-1)!.actions.local();
+    await Promise.resolve();
+    rooms.at(-1)!.send({ type: "start" });
+    expect(localStart.mock.calls[0][0].players.map((p: { binding: unknown }) => p.binding)).toEqual(VERSUS_KEYS);
+    expect(localStart.mock.calls[0][0].players[1].setup.name).toBe("2P");
+    expect(rooms.at(-1)!.pickCharacter).toBeTypeOf("function");
+  });
+
+  it("carries scene 5's character and hue into the AI room, faces and result heads without seat character controls", async () => {
+    localStart.mockResolvedValue(() => undefined);
+    const view = await startList();
+    view.status.character = CHARACTER_IDS.indexOf("doona");
+    view.status.hue = 135;
+    view.actions.local("ai");
+    await Promise.resolve();
+    expect(rooms[0].pickCharacter).toBeUndefined();
+    rooms[0].send({ type: "start" });
+    const options = localStart.mock.calls[0][0];
+    expect(options.players[0].setup.character).toBe("doona");
+    expect(options.tints).toEqual([
+      { id: 1, character: "doona", hue: 135, face: true, head: true },
+      { id: 2, character: "doona", hue: 0, face: true, head: true },
+    ]);
+    expect(options.settings).toEqual(defaultSettings());
+    options.onExit();
+    await Promise.resolve();
+    expect(rooms.at(-1)!.pickCharacter).toBeUndefined();
+    rooms.at(-1)!.send({ type: "leave-room" });
+    const returned = views.at(-1)!;
+    returned.status.character = CHARACTER_IDS.indexOf("bobo");
+    returned.status.hue = -90;
+    returned.actions.local("ai");
+    await Promise.resolve();
+    rooms.at(-1)!.send({ type: "start" });
+    expect(localStart.mock.calls[1][0].tints[0]).toMatchObject({ character: "bobo", hue: -90 });
+  });
+
+  it("keeps the account's selected name, badge and candy on the AI game's original panels", async () => {
+    localStart.mockResolvedValue(() => undefined);
+    const view = await startList();
+    view.actions.authConnect();
+    const auth = sockets[0];
+    auth.open();
+    auth.receive({ type: "login", ok: true, account: { id: "tester", nick: "별명", character: "bobo", hue: 30, useId: false, guild: 3, level: 5, wins: 2, cell: 100, candy: 7 }, token: "session", channels: [] });
+    view.status.useId = false;
+    view.actions.local("ai");
+    await Promise.resolve();
+    rooms[0].send({ type: "start" });
+    const options = localStart.mock.calls[0][0];
+    expect(options.people.get(1)).toEqual({ name: "별명", badge: { guild: 3, level: 5 } });
+    expect(options.candyBase).toBe(7);
+    expect(sockets).toHaveLength(1);
   });
 });
 

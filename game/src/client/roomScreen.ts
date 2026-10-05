@@ -131,7 +131,7 @@ export interface RoomScreenOptions {
   leave(): void;
   /** The kick notice's button or Esc (0x4588f3, 0x461686): the lobby. */
   kickedOut(): void;
-  /** Two players on one PC only: a seated player's slot clicked picks their next character (R). */
+  /** Local versus only: a seated player's slot clicked picks their next character (R). */
   pickCharacter?(slot: number): void;
   /** The account's items (0x45f140), which light the slot and bottom icons; none without an account. */
   items?(): readonly number[];
